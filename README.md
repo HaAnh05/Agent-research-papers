@@ -40,12 +40,31 @@ Backend phân tích, tìm kiếm và đối chiếu bài báo nghiên cứu khoa
 
 ## 🚀 Hướng Dẫn Cài Đặt & Chạy
 
-### 1. Kích hoạt môi trường Conda `langraph`
+### 1. Tạo và kích hoạt môi trường Python
 
-Môi trường Conda đã được khởi tạo sẵn tại `D:\Lib\miniconda3\envs\langraph`.
+Bạn có thể dùng venv, conda, hoặc bất kỳ trình quản lý môi trường Python nào.
+
+Ví dụ với venv:
 
 ```bash
-conda activate langraph
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
+```
+
+Ví dụ với conda:
+
+```bash
+conda create -n agentresearch python=3.11
+conda activate agentresearch
+```
+
+Sau đó cài đặt dependencies:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ### 2. Cấu hình API Keys
@@ -73,7 +92,7 @@ GITHUB_TOKEN=
 ```bash
 streamlit run app.py
 ```
-👉 Mở trình duyệt tại: `http://localhost:8501`
+👉 Mở trình duyệt tại http://localhost:8501
 
 ### 2. Chạy từ Dòng Lệnh (CLI)
 
@@ -110,7 +129,7 @@ Bộ kiểm thử bao gồm:
 ## 📂 Cấu Trúc Thư Mục
 
 ```
-d:\LABAI\agentresearch\
+project-root/
 ├── config.py                 # Cấu hình tập trung (paths, models, limits)
 ├── state.py                  # Pydantic Models & TypedDict ResearchState
 ├── graph.py                  # Lắp ráp StateGraph hoàn chỉnh
