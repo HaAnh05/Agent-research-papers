@@ -1,172 +1,144 @@
-# 📚 AI Research Paper Scout & Benchmark Assistant
+# Research Scout
 
-Backend phân tích, tìm kiếm và đối chiếu bài báo nghiên cứu khoa học xây dựng trên **LangGraph StateGraph**, hỗ trợ bóc tách PDF 2 cột, tìm kiếm mã nguồn GitHub đa tầng, trích xuất cấu trúc PMRL (Problem-Method-Result-Limitation), và tự động lập ma trận so sánh SOTA Benchmark.
+Research Scout là research assistant dạng chat chạy trên một LangGraph. React là giao diện chính; FastAPI quản lý thread trong RAM, SSE trace/answer và thư viện report. Streamlit và CLI vẫn được giữ làm fallback. [FEPlan.md](FEPlan.md) ghi các quyết định, tiến độ đã kiểm chứng và acceptance gate còn mở.
 
----
+## Workflow
 
-## 🏗️ Kiến Trúc Hệ Thống (Workflow)
-
-```
-[Start] (User Query / ArXiv Links / Local PDFs)
-   │
-   ▼
-[router] ──────────────────────────(CE1: direct_read)──────────────────────────┐
-   │ (CE1: search)                                                             │
-   ▼                                                                           │
-[search_papers] (ArXiv API + Lock & Jitter)                                    │
-   │                                                                           │
-   ▼                                                                           │
-[eval_search] ──(CE2: refine)──► [refine_query] ──► (Loop retry_count++)       │
-   │                                                                           │
-   ├──(CE2: pass / max_retries)                                                │
-   ▼                                                                           │
-[human_feedback] (Tùy chọn HITL Breakpoint)                                    │
-   │                                                                           │
-   ▼                                                                           │
-[read_paper] ◄─────────────────────────────────────────────────────────────────┘
-   │ (Two-column layout parsing + Section extractor via asyncio.to_thread)
-   ▼
-[web_enrich] (Multi-tier GitHub Search + Standard BibTeX Generator)
-   │
-   ▼
-[write_notes] (PMRL Generator với Pydantic Validation)
-   │
-   ├──(CE3: >= 2 papers)──► [compare_benchmark] (Lập bảng ma trận so sánh) ──┐
-   │                                                                         │
-   └──(CE3: 1 paper)─────────────────────────────────────────────────────────┼──► [final_report] ──► [End]
+```text
+query / ArXiv / PDF
+        │
+        ▼
+      Router ─── direct answer → END
+        ├────────────────── direct paper ───────────────┤
+        │ search                                         │
+        ▼                                                │
+  ArXiv search → relevance evaluation → refine query ─┐ │
+        │                         ▲                    │ │
+        └─────────────────────────┴────────────────────┘ │
+                                                        ▼
+PDF parsing → GitHub + BibTeX → PMRL notes → benchmark → final report
 ```
 
----
+Graph chỉ chạy một workflow tại một thời điểm. Run đang chạy được giữ trong memory của FastAPI; Markdown report hoàn tất được lưu dưới `reports/`.
 
-## 🚀 Hướng Dẫn Cài Đặt & Chạy
+## Chạy React + FastAPI
 
-### 1. Tạo và kích hoạt môi trường Python
-
-Bạn có thể dùng venv, conda, hoặc bất kỳ trình quản lý môi trường Python nào.
-
-Ví dụ với venv:
+Yêu cầu khuyến nghị: Python 3.11/3.12 và Node.js 20+.
+Các lệnh sau giả định bạn đang ở thư mục gốc của repository, không phải trong `frontend/`.
 
 ```bash
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
 source .venv/bin/activate
-```
-
-Ví dụ với conda:
-
-```bash
-conda create -n agentresearch python=3.11
-conda activate agentresearch
-```
-
-Sau đó cài đặt dependencies:
-
-```bash
 pip install -r requirements.txt
+
+cd frontend
+npm ci
 ```
 
-### 2. Cấu hình API Keys
-
-Tạo file `.env` từ `.env.example` và điền ít nhất 1 LLM API Key (vd: Google Gemini, OpenAI, hoặc OpenRouter):
+Cấu hình `.env` từ `.env.example`. Ví dụ Z.AI:
 
 ```env
-# Điền ít nhất 1 API key
-GEMINI_API_KEY=your_gemini_api_key_here
-# hoặc OPENAI_API_KEY=your_openai_key_here
-
-DEFAULT_PROVIDER=gemini
-DEFAULT_MODEL=gemini-2.5-flash
-
-# Tùy chọn: Token GitHub để tăng quota tìm kiếm repo (60 -> 5000 req/h)
-GITHUB_TOKEN=
+ZAI_API_KEY=your_key
+ZAI_API_BASE=https://api.z.ai/api/paas/v4/
+DEFAULT_PROVIDER=zai
+DEFAULT_MODEL=glm-5.3-flash
 ```
 
----
+Chạy backend ở terminal thứ nhất:
 
-## 💻 Cách Sử Dụng
+```bash
+source .venv/bin/activate
+uvicorn api:app --reload --port 8000
+```
 
-### 1. Khởi chạy Giao diện Trực quan (Streamlit UI)
+Chạy frontend ở terminal thứ hai:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Mở <http://localhost:5173>. Vite proxy `/api` sang `localhost:8000`.
+
+Sau khi build, FastAPI có thể serve cả bundle tại `localhost:8000`:
+
+```bash
+cd frontend
+npm run build
+cd ..
+uvicorn api:app --port 8000
+```
+
+## UI
+
+- `/` — Landing tối giản với một composer nhận topic, ArXiv ID/URL và PDF hợp lệ.
+- `/run/:id` — Pipeline semantic khi run đang chạy; chỉ sau snapshot hoàn tất mới thay bằng PMRL Results.
+- `/library` và `/library/:reportId` — route tương thích cũ, redirect về Landing vì UI hiện tại không có dashboard/library shell.
+
+Trace chỉ chứa operational metadata và summary đã có trong state; API không trả raw prompt, credential, local PDF path, extracted PDF text hoặc chain-of-thought.
+
+Pipeline dùng Task Rows, Activity disclosure và factual count chips lấy từ trace thật; không hiển thị Thinking/agent shell hay progress giả. Bản đồ các primitive được dùng nằm trong [`docs/beautiful-ui-component-map.md`](docs/beautiful-ui-component-map.md); copyright notice và license nằm trong `frontend/NOTICE`.
+
+## API
+
+| Endpoint | Mục đích |
+| --- | --- |
+| `GET /api/config` | Provider/model và configured status công khai |
+| `POST /api/threads` | Tạo thread trong RAM |
+| `GET /api/threads` và `GET /api/threads/{id}` | Danh sách và nội dung thread trong phiên |
+| `POST /api/threads/{id}/messages` | Gửi tin nhắn và bắt đầu LangGraph run |
+| `POST /api/runs` | Tạo run multipart; trả `409` nếu đã có run active |
+| `GET /api/runs/{id}` | Snapshot hiện tại |
+| `GET /api/runs/{id}/events` | SSE snapshot authoritative, rồi tiếp tục từ sequence mới |
+| `GET /api/reports` | Danh sách Markdown report |
+| `GET /api/reports/{id}` | Nội dung report |
+| `GET /api/reports/{id}/download` | Tải report |
+
+Upload chỉ nhận PDF có magic bytes hợp lệ, giới hạn 25 MB, được đổi sang UUID phía server. Client không thể gửi filesystem path làm paper input.
+
+## Provider
+
+Các provider hiện có: `gemini`, `zai`, `openai`, `openrouter`, `anthropic`.
+
+Z.AI dùng `ChatOpenAI` với `ZAI_API_BASE` tường minh. Các call có Pydantic output dùng JSON mode rồi validate locally. Cấu hình cũ `DEFAULT_PROVIDER=openai` + `OPENAI_API_BASE` trỏ tới Z.AI vẫn được nhận diện như một migration alias; cấu hình mới nên dùng `ZAI_*`.
+
+Frontend không nhận hoặc lưu API key.
+
+## Streamlit fallback và CLI
 
 ```bash
 streamlit run app.py
+
+python main.py --query "Mixture of Experts in Large Language Models"
+python main.py --inputs "1706.03762"
+python main.py --inputs "1706.03762" "2005.14165"
 ```
-👉 Mở trình duyệt tại http://localhost:8501
 
-### 2. Chạy từ Dòng Lệnh (CLI)
-
-- **Tìm kiếm theo chủ đề nghiên cứu (Search Flow):**
-  ```bash
-  python main.py --query "Mixture of Experts in Large Language Models"
-  ```
-
-- **Đọc và phân tích 1 bài báo trực tiếp (Direct Read):**
-  ```bash
-  python main.py --inputs "https://arxiv.org/abs/1706.03762"
-  ```
-
-- **Đối chiếu và lập ma trận so sánh nhiều bài báo (Direct Compare):**
-  ```bash
-  python main.py --inputs "1706.03762" "2005.14165"
-  ```
-
----
-
-## 🧪 Chạy Bộ Kiểm Thử Tự Động (PyTest)
+## Kiểm thử
 
 ```bash
-pytest tests/ -v
+.venv/bin/python -m pytest -q
+
+cd frontend
+npm run typecheck
+npm test
+npm run build
+npm run test:e2e
 ```
 
-Bộ kiểm thử bao gồm:
-- `test_tools.py`: Kiểm tra chuẩn hóa Cache Key, sinh BibTeX, bóc tách Regex Section.
-- `test_nodes.py`: Kiểm thử độc lập từng Node với mock state.
-- `test_graph_flow.py`: Kiểm tra toàn bộ cấu trúc StateGraph, các nhánh điều kiện CE1, CE2, CE3.
+Backend tests dùng fake graph để kiểm event order/reconnect, single-run gate, upload validation, DTO masking, report traversal và Z.AI JSON validation. Frontend tests kiểm navigation, composer validation, SSE reconciliation, trace, Markdown/GFM/KaTeX, result states và mocked desktop/mobile workflow.
 
----
+## Cấu trúc chính
 
-## 📂 Cấu Trúc Thư Mục
-
-```
-project-root/
-├── config.py                 # Cấu hình tập trung (paths, models, limits)
-├── state.py                  # Pydantic Models & TypedDict ResearchState
-├── graph.py                  # Lắp ráp StateGraph hoàn chỉnh
-├── app.py                    # Giao diện Streamlit tương tác
-├── main.py                   # Script chạy CLI
-│
-├── prompts/                  # Quản lý Prompt templates tách biệt
-│   ├── router_prompt.py
-│   ├── eval_search_prompt.py
-│   ├── refine_query_prompt.py
-│   ├── pmrl_notes_prompt.py
-│   ├── benchmark_prompt.py
-│   └── final_report_prompt.py
-│
-├── tools/                    # Công cụ chuyên biệt
-│   ├── arxiv_search.py       # Thread-safe ArXiv API (Lock + Exponential Backoff)
-│   ├── pdf_parser.py         # Bóc tách PDF 2 cột + Section extractor
-│   ├── github_enricher.py    # Tìm kiếm GitHub đa tầng (Title -> ArXiv ID -> Author)
-│   ├── bibtex_generator.py   # Format BibTeX citation
-│   ├── cache_manager.py      # Chuẩn hóa Cache key & lưu đệm
-│   └── llm_provider.py       # Adapter đa LLM (Gemini, OpenAI, OpenRouter)
-│
-├── nodes/                    # 10 Nodes độc lập của LangGraph
-│   ├── router.py
-│   ├── search.py
-│   ├── eval_search.py
-│   ├── refine_query.py
-│   ├── human_feedback.py
-│   ├── read_paper.py
-│   ├── web_enrich.py
-│   ├── write_notes.py
-│   ├── compare_benchmark.py
-│   ├── final_report.py
-│   └── error_handler.py
-│
-└── tests/                    # Bộ kiểm thử tự động với PyTest
-    ├── test_tools.py
-    ├── test_nodes.py
-    └── test_graph_flow.py
+```text
+api.py                 FastAPI bridge, registry và SSE
+graph.py               LangGraph StateGraph
+state.py               ResearchState và Pydantic models
+nodes/                 10 workflow nodes
+tools/                 ArXiv, PDF, GitHub, BibTeX, LLM adapters
+frontend/              React/Vite + TypeScript
+app.py                 Streamlit fallback
+main.py                CLI
+reports/               Markdown reports đã tạo
+tests/                 Backend tests
 ```

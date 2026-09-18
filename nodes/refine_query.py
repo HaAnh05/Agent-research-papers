@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Dict
 from state import ResearchState
 from prompts.refine_query_prompt import REFINE_QUERY_PROMPT
@@ -8,6 +9,7 @@ from tools.llm_provider import get_llm, extract_text_from_response
 
 def refine_query_node(state: ResearchState) -> Dict[str, Any]:
     """Optimizes the search query based on evaluator feedback and increments retry_count."""
+    started = time.perf_counter()
     user_query = state.get("user_query", "")
     current_search_query = state.get("search_query") or user_query
     eval_feedback = state.get("eval_feedback", "Low relevance or empty results.")
@@ -21,6 +23,7 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
         eval_feedback=eval_feedback,
     )
 
+    llm_started = time.perf_counter()
     try:
         llm = get_llm()
         response = llm.invoke(prompt)
@@ -31,6 +34,10 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
         return {
             "search_query": new_query,
             "retry_count": retry_count + 1,
+            "node_timings": {"refine_query": {
+                "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+            }},
             "trace_logs": logs
         }
     except Exception as exc:
@@ -40,5 +47,9 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
         return {
             "search_query": new_query,
             "retry_count": retry_count + 1,
+            "node_timings": {"refine_query": {
+                "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+            }},
             "trace_logs": logs
         }

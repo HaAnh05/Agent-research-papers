@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import pytest
+import json
 from tools.cache_manager import canonicalize_paper_key
 from tools.bibtex_generator import generate_bibtex
+import tools.pdf_parser as pdf_parser
+import tools.github_enricher as github_enricher
 from tools.pdf_parser import parse_structured_sections
+from state import GitHubRepoInfo
 
 
 def test_canonicalize_paper_key():
@@ -54,3 +58,77 @@ def test_parse_structured_sections():
     assert "linear kernel" in sections.get("methodology", "").lower()
     assert "88.5%" in sections.get("experiments", "").lower()
     assert "memory bandwidth" in sections.get("limitations", "").lower()
+
+
+def test_parse_structured_sections_reports_heading_or_fallback_quality():
+    matched = {}
+    parse_structured_sections("Abstract\nA.\nMethod\nM.\nExperiments\nE.", metadata=matched)
+    assert matched == {"heading": "heading", "parserStatus": "success"}
+
+    fallback = {}
+    parse_structured_sections("unstructured paper text", metadata=fallback)
+    assert fallback == {"heading": "fallback", "parserStatus": "degraded"}
+
+
+def test_github_success_cache_skips_second_request_and_does_not_cache_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(github_enricher.config, "GITHUB_CACHE_DIR", tmp_path)
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"items": [{"html_url": "https://github.com/example/repo", "full_name": "example/repo", "stargazers_count": 1, "language": "Python", "description": "official"}]}
+
+    monkeypatch.setattr(github_enricher.requests, "get", lambda *args, **kwargs: (calls.append(1) or Response()))
+    first = github_enricher.search_github_code_multitier("A Paper", arxiv_id="1706.03762")
+    first_call_count = len(calls)
+    second = github_enricher.search_github_code_multitier("A Paper", arxiv_id="1706.03762")
+    assert len(first) == len(second) == 1
+    assert len(calls) == first_call_count
+
+    error_calls = []
+
+    def flaky_get(*args, **kwargs):
+        error_calls.append(1)
+        if len(error_calls) == 1:
+            return Response()
+        raise github_enricher.requests.RequestException("network")
+
+    monkeypatch.setattr(github_enricher.requests, "get", flaky_get)
+    github_enricher.search_github_code_multitier("Another Paper", arxiv_id="2005.14165")
+    cache_files = list(tmp_path.glob("*2005.14165*"))
+    assert cache_files == []
+
+
+def test_pdf_download_refuses_non_arxiv_hosts(tmp_path, monkeypatch):
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError("unsafe URL reached requests.get")
+
+    monkeypatch.setattr(pdf_parser.requests, "get", unexpected_request)
+    with pytest.raises(ValueError, match="ArXiv"):
+        pdf_parser._download_pdf("http://127.0.0.1/private.pdf", tmp_path / "paper.pdf")
+
+
+def test_pdf_download_enforces_stream_size_and_removes_partial_file(tmp_path, monkeypatch):
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield b"%PDF-1.7\n"
+            yield b"x" * 32
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(pdf_parser, "MAX_REMOTE_PDF_BYTES", 16)
+    monkeypatch.setattr(pdf_parser.requests, "get", lambda *args, **kwargs: Response())
+    output = tmp_path / "paper.pdf"
+    with pytest.raises(ValueError, match="size limit"):
+        pdf_parser._download_pdf("https://arxiv.org/pdf/1706.03762.pdf", output)
+    assert not output.exists()
+    assert not output.with_suffix(".pdf.part").exists()

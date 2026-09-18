@@ -29,16 +29,23 @@ def test_graph_compilation():
 def test_routing_logic():
     """Test conditional edge route functions."""
     # Test route_after_router
-    assert route_after_router({"intent": "direct_read", "status": "running"}) == "read_paper"
-    assert route_after_router({"intent": "direct_compare", "status": "running"}) == "read_paper"
+    direct_paper = PaperItem(paper_id="direct", title="Direct paper")
+    assert route_after_router({"intent": "direct_read", "selected_papers": [direct_paper], "status": "running"}) == "read_paper"
+    assert route_after_router({"intent": "direct_compare", "selected_papers": [direct_paper], "status": "running"}) == "read_paper"
+    assert route_after_router({"intent": "direct_read", "selected_papers": [], "status": "running"}) == "search_papers"
     assert route_after_router({"intent": "search", "status": "running"}) == "search_papers"
     assert route_after_router({"status": "error"}) == "error_handler"
 
     # Test route_after_eval_search
     assert route_after_eval_search({"eval_passed": True, "status": "running"}) == "read_paper"
     assert route_after_eval_search({"eval_passed": False, "retry_count": 0, "status": "running"}) == "refine_query"
-    # Hard-stop at max retries
-    assert route_after_eval_search({"eval_passed": False, "retry_count": config.MAX_RETRIES, "status": "running"}) == "read_paper"
+    # Hard-stop at max retries without sending an empty selection to PDF parsing.
+    assert route_after_eval_search({
+        "eval_passed": False,
+        "retry_count": config.MAX_RETRIES,
+        "selected_papers": [],
+        "status": "running",
+    }) == "error_handler"
 
     # Test route_after_write_notes
     dummy_paper = PaperItem(paper_id="p1", title="Test Paper 1")

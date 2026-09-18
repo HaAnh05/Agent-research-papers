@@ -53,12 +53,13 @@ with st.sidebar:
     
     provider = st.selectbox(
         "LLM Provider",
-        options=["gemini", "openai", "openrouter", "anthropic"],
+        options=["gemini", "zai", "openai", "openrouter", "anthropic"],
         index=0,
     )
     
     default_models = {
         "gemini": "gemini-3.1-flash-lite",
+        "zai": "glm-5.3-flash",
         "openai": "gpt-4o-mini",
         "openrouter": "google/gemini-2.5-flash",
         "anthropic": "claude-3-5-sonnet-20241022"
@@ -70,6 +71,9 @@ with st.sidebar:
         if provider == "gemini":
             k = st.text_input("GEMINI_API_KEY", type="password", value=config.GEMINI_API_KEY)
             if k: config.GEMINI_API_KEY = k
+        elif provider == "zai":
+            k = st.text_input("ZAI_API_KEY", type="password", value=config.ZAI_API_KEY)
+            if k: config.ZAI_API_KEY = k
         elif provider == "openai":
             k = st.text_input("OPENAI_API_KEY", type="password", value=config.OPENAI_API_KEY)
             if k: config.OPENAI_API_KEY = k
@@ -163,6 +167,8 @@ if st.button("Bắt đầu phân tích", type="primary", use_container_width=Tru
             "selected_papers": [],
             "benchmark_matrix": None,
             "final_report": None,
+            "conversation_context": "",
+            "assistant_answer": "",
             "trace_logs": [],
             "error_logs": [],
         }
@@ -179,7 +185,10 @@ if st.button("Bắt đầu phân tích", type="primary", use_container_width=Tru
                     st.session_state.last_logs = logs
                     if logs:
                         log_placeholder.info(compact_message(logs[-1]))
-                st.success("Hoàn tất.")
+                if st.session_state.workflow_state.get("status") == "error":
+                    st.error(st.session_state.workflow_state.get("error_message") or "Workflow gặp lỗi.")
+                else:
+                    st.success("Hoàn tất.")
             except Exception as exc:
                 st.error(f"Lỗi: {str(exc)}")
 
@@ -194,14 +203,16 @@ tab_report, tab_benchmark, tab_pmrl, tab_trace = st.tabs([
 state = st.session_state.workflow_state
 
 with tab_report:
-    if state and state.get("final_report"):
-        st.markdown(state["final_report"])
-        st.download_button(
-            "Tải báo cáo Markdown",
-            data=state["final_report"],
-            file_name=f"research_report_{st.session_state.thread_id}.md",
-            mime="text/markdown"
-        )
+    answer = (state.get("final_report") or state.get("assistant_answer")) if state else None
+    if answer:
+        st.markdown(answer)
+        if state.get("final_report"):
+            st.download_button(
+                "Tải báo cáo Markdown",
+                data=state["final_report"],
+                file_name=f"research_report_{st.session_state.thread_id}.md",
+                mime="text/markdown"
+            )
     else:
         st.info("Chưa có báo cáo. Nhập chủ đề rồi bấm 'Bắt đầu phân tích'.")
 
@@ -228,8 +239,7 @@ with tab_pmrl:
                 if p.github_repos:
                     st.markdown("**GitHub liên quan:**")
                     for r in p.github_repos:
-                        official_badge = "Official" if r.is_official else "Community"
-                        st.markdown(f"- [{r.name}]({r.url}) — ⭐ {r.stars} | `{r.framework}` | *{official_badge}*")
+                        st.markdown(f"- [{r.name}]({r.url}) — ⭐ {r.stars} | `{r.framework}` | *Repository match*")
 
                 if p.notes:
                     st.markdown("#### PMRL:")

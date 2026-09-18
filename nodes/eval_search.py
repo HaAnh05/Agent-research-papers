@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List
 from state import ResearchState, EvalSearchOutput, PaperItem
 from config import config
 from prompts.eval_search_prompt import EVAL_SEARCH_PROMPT
-from tools.llm_provider import get_llm
+from tools.llm_provider import get_llm, invoke_structured_output
 
 
 def eval_search_node(state: ResearchState) -> Dict[str, Any]:
     """Evaluates search results against the user query, selects best papers or flags for refine."""
+    started = time.perf_counter()
     user_query = state.get("user_query", "")
     candidates = state.get("search_results", [])
     retry_count = state.get("retry_count", 0)
@@ -17,12 +19,24 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
 
     if not candidates:
         logs.append("[eval_search] Không có kết quả, cần tinh chỉnh query.")
-        return {
+        result: Dict[str, Any] = {
             "eval_passed": False,
             "eval_feedback": "Search returned 0 results from ArXiv. Need broader or different technical keywords.",
             "selected_papers": [],
-            "trace_logs": logs
+            "trace_logs": logs,
+            "node_timings": {"eval_search": {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": 0}},
         }
+        if retry_count >= config.MAX_RETRIES:
+            message = (
+                f"ArXiv không trả về bài báo nào sau {retry_count + 1} lượt tìm kiếm. "
+                "Hãy thử 2-5 từ khóa kỹ thuật bằng tiếng Anh hoặc nhập ArXiv ID trực tiếp."
+            )
+            result.update({
+                "status": "error",
+                "error_message": message,
+                "error_logs": [message],
+            })
+        return result
 
     # Format candidates for LLM prompt
     candidates_text = "\n\n".join([
@@ -41,10 +55,15 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
         top_k=config.TOP_K_PAPERS,
     )
 
+    llm_started = time.perf_counter()
     try:
         llm = get_llm()
-        structured_llm = llm.with_structured_output(EvalSearchOutput)
-        eval_result: EvalSearchOutput = structured_llm.invoke(prompt)
+        eval_result: EvalSearchOutput = invoke_structured_output(
+            prompt,
+            EvalSearchOutput,
+            llm=llm,
+            provider=config.DEFAULT_PROVIDER,
+        )
 
         # Select the chosen papers
         selected_papers: List[PaperItem] = []
@@ -65,6 +84,10 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
             "eval_passed": eval_result.passed,
             "eval_feedback": eval_result.feedback,
             "selected_papers": selected_papers,
+            "node_timings": {"eval_search": {
+                "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+            }},
             "trace_logs": logs
         }
 
@@ -74,5 +97,9 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
             "eval_passed": True,
             "eval_feedback": "Automatic fallback due to evaluation error.",
             "selected_papers": candidates[:config.TOP_K_PAPERS],
+            "node_timings": {"eval_search": {
+                "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+            }},
             "trace_logs": logs
         }

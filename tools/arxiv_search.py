@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import json
 import re
 import threading
 import time
@@ -12,6 +13,8 @@ import requests
 from config import config
 from state import PaperItem
 from tools.cache_manager import canonicalize_paper_key
+
+ARXIV_METADATA_CACHE_TTL_SEC = 24 * 60 * 60
 
 _ARXIV_LOCK = threading.Lock()
 _LAST_ARXIV_CALL = 0.0
@@ -108,15 +111,163 @@ def _extract_arxiv_id(value: str) -> str:
     return match.group(1) if match else ""
 
 
+def _canonical_arxiv_urls(arxiv_id: str) -> Dict[str, str]:
+    """Build version preserving links from a validated ArXiv identifier."""
+
+    clean_id = _extract_arxiv_id(arxiv_id)
+    if not clean_id:
+        return {}
+    return {
+        "abs_url": f"https://arxiv.org/abs/{clean_id}",
+        "html_url": f"https://arxiv.org/html/{clean_id}",
+        "pdf_url": f"https://arxiv.org/pdf/{clean_id}.pdf",
+    }
+
+
 def _entry_text(entry: ET.Element, path: str, namespaces: Dict[str, str]) -> str:
     node = entry.find(path, namespaces)
     return (node.text or "").strip() if node is not None and node.text else ""
+
+
+def _metadata_cache_path(arxiv_id: str):
+    # ``canonicalize_paper_key`` intentionally collapses versions for UI
+    # identity.  Metadata must keep the version separate: v1 and v2 can have
+    # different titles, authors, dates, and subjects.
+    clean_id = _extract_arxiv_id(arxiv_id)
+    safe_id = re.sub(r"[^A-Za-z0-9._-]", "_", clean_id or str(arxiv_id or "unknown"))
+    return config.TEXT_CACHE_DIR / f"arxiv_{safe_id}_metadata.json"
+
+
+def _metadata_status(metadata: Dict[str, Any]) -> str:
+    required = (metadata.get("title"), metadata.get("authors"), metadata.get("published"))
+    if all(required) and metadata.get("subjects"):
+        return "complete"
+    return "missing"
+
+
+def _normalise_cached_metadata(value: Dict[str, Any], requested_id: str) -> Dict[str, Any]:
+    """Keep legacy metadata safe while exposing an explicit quality state."""
+
+    metadata = dict(value)
+    clean_requested = _extract_arxiv_id(requested_id)
+    cached_id = _extract_arxiv_id(str(metadata.get("arxiv_id") or ""))
+    # A cache entry for another explicit version must never satisfy this input.
+    requested_version = re.search(r"v\d+$", clean_requested)
+    cached_version = re.search(r"v\d+$", cached_id)
+    if requested_version and requested_version.group(0) != (cached_version.group(0) if cached_version else ""):
+        return {}
+    effective_id = clean_requested if requested_version else (cached_id or clean_requested)
+    metadata["arxiv_id"] = effective_id
+    metadata.setdefault("subjects", [])
+    metadata.setdefault("abs_url", _canonical_arxiv_urls(effective_id).get("abs_url", ""))
+    metadata.setdefault("html_url", _canonical_arxiv_urls(effective_id).get("html_url", ""))
+    metadata.setdefault("pdf_url", _canonical_arxiv_urls(effective_id).get("pdf_url", ""))
+    # Recompute this for legacy cache entries instead of trusting a status that
+    # predates subjects/URL fields.
+    metadata["metadata_status"] = _metadata_status(metadata)
+    return metadata
+
+
+def get_cached_arxiv_metadata(arxiv_id: str) -> Dict[str, Any] | None:
+    """Return fresh direct-input metadata without making a network call."""
+
+    try:
+        payload = json.loads(_metadata_cache_path(arxiv_id).read_text(encoding="utf-8"))
+        if time.time() - float(payload.get("savedAt", 0)) > ARXIV_METADATA_CACHE_TTL_SEC:
+            return None
+        value = payload.get("metadata")
+        if not isinstance(value, dict):
+            return None
+        normalised = _normalise_cached_metadata(value, arxiv_id)
+        return normalised or None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def fetch_arxiv_metadata(arxiv_id: str, *, timing: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
+    """Fetch and cache one ArXiv record for direct-input title resolution."""
+
+    started = time.perf_counter()
+    clean_id = _extract_arxiv_id(arxiv_id)
+    if not clean_id:
+        if timing is not None:
+            timing.update({"durationMs": 0, "cache": "miss", "status": "invalid_id"})
+        return None
+
+    cached = get_cached_arxiv_metadata(clean_id)
+    if cached is not None:
+        if timing is not None:
+            timing.update({
+                "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                "cache": "hit",
+                "status": "ok",
+            })
+        return cached
+
+    status = "error"
+    try:
+        response = _arxiv_get(config.ARXIV_API_URL, params={"id_list": clean_id, "max_results": 1})
+        root = ET.fromstring(response.text)
+        namespaces = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "arxiv": "http://arxiv.org/schemas/atom",
+        }
+        entry = root.find(".//atom:entry", namespaces)
+        if entry is None:
+            status = "missing"
+            return None
+        response_id = _extract_arxiv_id(_entry_text(entry, "./atom:id", namespaces))
+        explicit_version = re.search(r"v\d+$", clean_id)
+        if explicit_version:
+            response_version = re.search(r"v\d+$", response_id)
+            if not response_id or not response_version or response_version.group(0) != explicit_version.group(0):
+                status = "version_mismatch"
+                return None
+        effective_id = clean_id if explicit_version else (response_id or clean_id)
+        links = entry.findall("./atom:link", namespaces)
+        urls = _canonical_arxiv_urls(effective_id)
+        subjects = [
+            str(category.get("term") or "").strip()
+            for category in entry.findall("./atom:category", namespaces)
+            if str(category.get("term") or "").strip()
+        ]
+        metadata = {
+            "arxiv_id": effective_id,
+            "title": " ".join(_entry_text(entry, "./atom:title", namespaces).split()),
+            "summary": " ".join(_entry_text(entry, "./atom:summary", namespaces).split()),
+            "authors": [_entry_text(author, "./atom:name", namespaces) for author in entry.findall("./atom:author", namespaces)],
+            "published": _entry_text(entry, "./atom:published", namespaces)[:10],
+            "subjects": subjects,
+            "abs_url": urls.get("abs_url", ""),
+            "html_url": urls.get("html_url", ""),
+            "pdf_url": urls.get("pdf_url", ""),
+        }
+        metadata["metadata_status"] = _metadata_status(metadata)
+        try:
+            path = _metadata_cache_path(effective_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = path.with_suffix(".json.part")
+            temp_path.write_text(json.dumps({"savedAt": time.time(), "metadata": metadata}, ensure_ascii=False), encoding="utf-8")
+            temp_path.replace(path)
+        except OSError:
+            pass
+        status = "ok"
+        return metadata
+    finally:
+        if timing is not None:
+            timing.update({
+                "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                "cache": "miss",
+                "status": status,
+            })
 
 
 def arxiv_search(
     query: str = "",
     max_results: int = config.MAX_SEARCH_RESULTS,
     sort_by: str = "relevance",
+    *,
+    timing: Dict[str, Any] | None = None,
 ) -> List[PaperItem]:
     """Query ArXiv API and return a list of structured PaperItem objects."""
     if not query.strip():
@@ -132,6 +283,7 @@ def arxiv_search(
         "sortOrder": "descending",
     }
 
+    started = time.perf_counter()
     resp = _arxiv_get(config.ARXIV_API_URL, params=params)
     root = ET.fromstring(resp.text)
     
@@ -157,6 +309,12 @@ def arxiv_search(
         title = _entry_text(entry, "./atom:title", namespaces).replace("\n", " ")
         authors = [_entry_text(author, "./atom:name", namespaces) for author in entry.findall("./atom:author", namespaces)]
         published = _entry_text(entry, "./atom:published", namespaces)[:10]
+        subjects = [
+            str(category.get("term") or "").strip()
+            for category in entry.findall("./atom:category", namespaces)
+            if str(category.get("term") or "").strip()
+        ]
+        urls = _canonical_arxiv_urls(arxiv_id)
 
         paper_key = canonicalize_paper_key(arxiv_id)
 
@@ -166,11 +324,22 @@ def arxiv_search(
             summary=" ".join(summary.split()),
             authors=authors,
             published=published,
+            subjects=subjects,
             source_type="arxiv",
             arxiv_id=arxiv_id,
-            pdf_url=pdf_url,
+            arxiv_abs_url=urls.get("abs_url"),
+            arxiv_html_url=urls.get("html_url"),
+            pdf_url=urls.get("pdf_url") or pdf_url,
+            metadata_status=_metadata_status({
+                "title": title,
+                "authors": authors,
+                "published": published,
+                "subjects": subjects,
+            }),
         )
         papers.append(paper)
 
     papers.sort(key=lambda p: _title_match_score(query, p.title), reverse=True)
+    if timing is not None:
+        timing.update({"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "resultCount": len(papers)})
     return papers

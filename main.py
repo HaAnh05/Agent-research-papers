@@ -13,7 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description="AI Research Paper Scout & Benchmark Assistant CLI")
     parser.add_argument("--query", type=str, default="", help="Research topic or scientific question")
     parser.add_argument("--inputs", nargs="*", default=[], help="ArXiv URLs, ArXiv IDs (e.g. 1706.03762), or local PDF file paths")
-    parser.add_argument("--provider", type=str, default=None, help="LLM Provider override (gemini, openai, openrouter, anthropic)")
+    parser.add_argument("--provider", type=str, default=None, help="LLM Provider override (gemini, zai, openai, openrouter, anthropic)")
     parser.add_argument("--model", type=str, default=None, help="LLM Model name override")
     args = parser.parse_args()
 
@@ -47,6 +47,8 @@ def main():
         "selected_papers": [],
         "benchmark_matrix": None,
         "final_report": None,
+        "conversation_context": "",
+        "assistant_answer": "",
         "trace_logs": [],
         "error_logs": [],
     }
@@ -63,9 +65,9 @@ def main():
     final_state = graph.get_state(thread_config).values
 
     print("\n" + "="*70)
-    print("📑 FINAL RESEARCH REPORT")
+    print("📑 ASSISTANT ANSWER / RESEARCH REPORT")
     print("="*70 + "\n")
-    print(final_state.get("final_report", "No report generated."))
+    print(final_state.get("final_report") or final_state.get("assistant_answer") or "No answer generated.")
     print("\n" + "="*70)
 
 

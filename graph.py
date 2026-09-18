@@ -6,6 +6,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from state import ResearchState
 from config import config
 from nodes.router import router_node
+from nodes.direct_answer import direct_answer_node
 from nodes.search import search_papers_node
 from nodes.eval_search import eval_search_node
 from nodes.refine_query import refine_query_node
@@ -20,10 +21,12 @@ from nodes.error_handler import error_handler_node
 # --- CONDITIONAL ROUTING LOGIC ---
 
 def route_after_router(state: ResearchState) -> str:
-    """CE1: Nếu có input cụ thể thì đọc ngay; nếu không thì tìm kiếm."""
+    """CE1: route a safe direct answer before entering paper research."""
     if state.get("status") == "error":
         return "error_handler"
-    if state.get("intent") in ["direct_read", "direct_compare"]:
+    if state.get("intent") == "direct_answer":
+        return "direct_answer"
+    if state.get("intent") in ["direct_read", "direct_compare"] and state.get("selected_papers"):
         return "read_paper"
     return "search_papers"
 
@@ -41,8 +44,12 @@ def route_after_eval_search(state: ResearchState) -> str:
     if state.get("retry_count", 0) < config.MAX_RETRIES:
         return "refine_query"
 
-    # 3. Đến giới hạn retry -> vẫn đọc kết quả tốt nhất thay vì dừng hẳn.
-    return "read_paper"
+    # 3. Đến giới hạn retry -> chỉ đọc khi evaluator vẫn giữ được ứng viên.
+    # Không chuyển một danh sách rỗng sang PDF parser vì điều đó che mất lỗi
+    # search thực sự bằng thông báo "No selected papers" ở node kế tiếp.
+    if state.get("selected_papers"):
+        return "read_paper"
+    return "error_handler"
 
 
 def route_after_write_notes(state: ResearchState) -> str:
@@ -64,6 +71,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
 
     # 1. Add all Nodes
     workflow.add_node("router", router_node)
+    workflow.add_node("direct_answer", direct_answer_node)
     workflow.add_node("search_papers", search_papers_node)
     workflow.add_node("eval_search", eval_search_node)
     workflow.add_node("refine_query", refine_query_node)
@@ -82,6 +90,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
         "router",
         route_after_router,
         {
+            "direct_answer": "direct_answer",
             "read_paper": "read_paper",
             "search_papers": "search_papers",
             "error_handler": "error_handler",
@@ -120,6 +129,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     )
 
     workflow.add_edge("compare_benchmark", "final_report")
+    workflow.add_edge("direct_answer", END)
     workflow.add_edge("final_report", END)
     workflow.add_edge("error_handler", END)
 

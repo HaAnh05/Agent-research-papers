@@ -25,7 +25,8 @@ def detect_response_language(text: str) -> str:
     vietnamese_markers = [
         "tôi", "mình", "này", "bài báo", "tìm", "cho tôi", "hãy", "viết", "báo cáo",
         "về", "trong", "các", "điều", "nghiên cứu", "mô hình", "học", "các bài",
-        "điều tra", "ngôn ngữ", "toán", "đại học", "tiếng việt"
+        "điều tra", "ngôn ngữ", "toán", "đại học", "tiếng việt",
+        "tổng hợp", "phân tích", "giải thích", "đánh giá"
     ]
     if any(marker in sample for marker in vietnamese_markers):
         return "Vietnamese"

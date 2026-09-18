@@ -1,24 +1,37 @@
-BENCHMARK_MATRIX_PROMPT = """You are a Principal AI Benchmarking Specialist.
-Construct a comprehensive, rigorous **Benchmark Comparison Matrix** comparing the following research papers.
+BENCHMARK_MATRIX_PROMPT = """You are a careful research benchmark analyst.
+Return one structured comparison artifact for the papers below. Keep findings
+short and preserve source evidence. Do not infer a metric, dataset, unit, or
+number that is absent from a paper's PDF source excerpt.
 
-Papers Summary & PMRL Notes:
+Paper evidence:
 {papers_pmrl_summary}
 
-Instructions:
-1. Build a detailed, beautifully formatted **Markdown Comparison Matrix Table** with columns:
-   - | Dimension / Feature | Paper 1 ({paper_1_name}) | Paper 2 ({paper_2_name}) | ... |
-   Include rows for:
-   - **Core Architecture / Novel Mechanism**
-   - **Parameter Scale / Compute Efficiency**
-   - **Primary Benchmark Datasets**
-   - **Key Quantitative SOTA Metrics (Accuracy / Speed / Loss)**
-   - **Key Strengths (Pros)**
-   - **Key Limitations / Bottlenecks (Cons)**
-   - **Open Source Code / GitHub Repo**
+For each paper, return at most 4 concise findings and metric claims. A metric
+claim must include the exact metric name, dataset, unit, value, and a short
+verbatim source_quote copied from that paper's PDF source excerpt. When any part
+is missing, leave the metric claim out.
 
-2. Write a concise **Cross-Paper Trade-off & Synthesis Analysis**:
-   - Compare computational complexity vs performance gains.
-   - Practical recommendations: Under which specific engineering/research scenario should a practitioner choose Paper A over Paper B?
+For rows, use one shared metric, dataset, and unit only when every value has
+matching evidence. Put the paper IDs in values and source_quotes. Set
+comparable=false with reason beginning "Not directly comparable" whenever the
+papers use different datasets, metrics, units, protocols, or unsupported
+evidence. Keep synthesis to 3-5 short trade-off statements.
 
-Output clean Markdown content ready to be embedded directly into the research report.
+Return JSON matching this shape:
+{{
+  "papers": [{{
+    "paper_id": "...",
+    "title": "...",
+    "findings": ["..."],
+    "metrics": [{{"metric":"...","dataset":"...","unit":"...","value":"...","source_quote":"..."}}]
+  }}],
+  "rows": [{{
+    "metric":"...", "dataset":"...", "unit":"...",
+    "values": {{"paper_id":"value"}},
+    "source_quotes": {{"paper_id":"quote"}},
+    "comparable": false,
+    "reason":"Not directly comparable: ..."
+  }}],
+  "synthesis": ["..."]
+}}
 """
