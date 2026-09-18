@@ -9,13 +9,13 @@ query / ArXiv / PDF
         │
         ▼
       Router ─── direct answer → END
-        ├────────────────── direct paper ───────────────┤
+        ├────────────────── direct paper ────────────────┐
         │ search                                         │
         ▼                                                │
-  ArXiv search → relevance evaluation → refine query ─┐ │
+  ArXiv search → relevance evaluation → refine query  ─┐ │
         │                         ▲                    │ │
         └─────────────────────────┴────────────────────┘ │
-                                                        ▼
+                                                         ▼
 PDF parsing → GitHub + BibTeX → PMRL notes → benchmark → final report
 ```
 
