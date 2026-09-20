@@ -140,7 +140,7 @@ export function LandingPage() {
       </div>
       <form ref={formRef} className="research-prompt" onSubmit={submit} noValidate>
         <label className="sr-only" htmlFor="research-request">Research request</label>
-        <textarea ref={textareaRef} id="research-request" value={text} placeholder={placeholder} rows={3}
+        <textarea ref={textareaRef} id="research-request" value={text} placeholder={placeholder} rows={1}
           aria-describedby={visibleError ? 'research-prompt-error' : undefined}
           onChange={(event) => { setText(event.target.value); setSubmitError(null) }}
           onKeyDown={(event) => {

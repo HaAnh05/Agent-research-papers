@@ -19,6 +19,7 @@ class AppConfig:
     PDF_CACHE_DIR: Path = CACHE_DIR / "pdfs"
     TEXT_CACHE_DIR: Path = CACHE_DIR / "text"
     GITHUB_CACHE_DIR: Path = CACHE_DIR / "github"
+    SUMMARY_CACHE_DIR: Path = CACHE_DIR / "summaries"
     REPORTS_DIR: Path = PROJECT_ROOT / "reports"
 
     # LLM Settings
@@ -63,6 +64,7 @@ class AppConfig:
         self.PDF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.TEXT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.GITHUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.SUMMARY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 

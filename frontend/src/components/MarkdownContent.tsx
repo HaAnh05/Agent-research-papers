@@ -29,6 +29,11 @@ function safeMarkdownHref(href: string | undefined): string | undefined {
 function normalizeMarkdown(content: string): string {
   return content
     .replace(/<br\s*\/?\s*>/gi, '\n')
+    // Strip $...$ delimiters around content that contains Vietnamese characters.
+    // The LLM sometimes wraps prose in math delimiters, which KaTeX renders as
+    // italic garbled text with no spaces.  Remove the delimiters so it renders
+    // as normal text instead.
+    .replace(/\$([^$]*[\u00C0-\u024F\u1E00-\u1EFF][^$]*)\$/g, '$1')
     .replace(/\\\[([\s\S]*?)\\\]/g, (_match, expression: string) => `\n$$\n${expression.trim()}\n$$\n`)
     .replace(/\\\(([\s\S]*?)\\\)/g, (_match, expression: string) => expression.length > 80 ? `\n$$\n${expression.trim()}\n$$\n` : `$${expression.trim()}$`)
     .replace(/(^|[^$])\$([^$\n]{80,})\$(?!\$)/g, (_match, prefix: string, expression: string) => `${prefix}\n$$\n${expression.trim()}\n$$\n`)

@@ -47,15 +47,13 @@ function event(overrides: Partial<TraceEvent> & { facts?: Record<string, unknown
 }
 
 describe('ResultsWorkspace', () => {
-  it('renders the finalized brief by default and keeps PMRL details behind View details', async () => {
-    const user = userEvent.setup()
+  it('renders the summary cards without a View details toggle', async () => {
     render(<ResultsWorkspace snapshot={snapshot()} events={[event()]} onNewResearch={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: 'Attention Is All You Need' })).toBeInTheDocument()
-    expect(screen.getByText('Attention replaces recurrence.')).toBeInTheDocument()
-    expect(screen.queryByText('Sequence transduction')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'View details' }))
-    expect(screen.getByText('Sequence transduction')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Summary' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'View details' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Hide details' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Open arXiv page/ })).toHaveAttribute('href', 'https://arxiv.org/abs/1706.03762')
     expect(screen.getByText('Copy BibTeX')).toBeInTheDocument()
   })
@@ -95,13 +93,11 @@ describe('ResultsWorkspace', () => {
     expect(screen.getByText('Supplied PDF')).toBeInTheDocument()
   })
 
-  it('suppresses fallback PMRL placeholders in the summary details', async () => {
-    const user = userEvent.setup()
+  it('keeps fallback PMRL prose out of the summary without a details toggle', async () => {
     render(<ResultsWorkspace snapshot={snapshot()} events={[event({ facts: { noteFallbackPaperIds: ['1706.03762'] } })]} onNewResearch={vi.fn()} />)
 
     expect(screen.getByText('PMRL fallback returned for this source.')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'View details' }))
-    expect(screen.getAllByText('Not extracted')).toHaveLength(4)
+    expect(screen.queryByRole('button', { name: 'View details' })).not.toBeInTheDocument()
     expect(screen.queryByText('Sequence transduction')).not.toBeInTheDocument()
   })
 

@@ -35,7 +35,7 @@ function directFixtures() {
     result: {
       reportId: 'report-e2e',
       report: '# Attention report\n\nA finalized fixture report.',
-      papers: [{ paperId: '1706.03762', arxivId: '1706.03762', title: 'Attention Is All You Need', authors: ['Ashish Vaswani'], notes: { briefSummary: 'Self attention replaces recurrence for sequence transduction.\n- Parallel training.\n- Strong translation results.\n- Attention remains costly for long sequences.', problem: 'Sequence transduction', method: 'Self attention', result: 'Strong results', limitation: 'Quadratic attention' } }],
+      papers: [{ paperId: '1706.03762', arxivId: '1706.03762', title: 'Attention Is All You Need', authors: ['Ashish Vaswani'], notes: { briefSummary: 'Self attention replaces recurrence for sequence transduction.\n- Parallel training.\n- Strong translation results.\n- Attention remains costly for long sequences.', problem: 'Sequence transduction', method: 'Self attention', result: 'Strong results', limitation: 'Quadratic attention', summary_cards: { status: 'complete', tldr: 'The Transformer replaces recurrence with self-attention for sequence transduction, training faster in parallel and reaching strong translation quality on standard benchmarks with a simpler architecture overall.', problem: 'Sequence models relied on recurrent and convolutional encoder-decoder networks that process tokens one step at a time. This recurrence blocks parallel training, slows long sequences, and weakens memory of distant context in deployed translation systems worldwide.', method: 'The architecture stacks six encoder and decoder layers built only from multi-head self-attention, positional encodings, and feed-forward blocks. Attention weights connect every token pair directly, removing recurrence entirely while preserving order information for translation without sequential bottlenecks.', key_results: 'The large model scored 28.4 BLEU on WMT 2014 English to German and 41.0 BLEU on English to French in reported official experiments, beating previous best ensembles. Training took twelve hours on eight graphics processors for the base configuration.', why_it_matters: 'Removing recurrence made training far more parallel and hardware efficient, which unlocked larger models and broader adoption. The design became the foundation for later language models across translation and generation tasks in research and industry. It remains essential reading for newcomers entering the field today.' } } }],
     },
   }
   return { running, completed, traceEvents }
@@ -132,9 +132,8 @@ test.describe('Landing to Results', () => {
 
     await expect(page).toHaveURL(/\/run\/run-e2e$/)
     await expect(page.getByRole('heading', { name: 'Attention Is All You Need' })).toBeVisible({ timeout: 8_000 })
-    await expect(page.getByText('Self attention replaces recurrence for sequence transduction.')).toBeVisible()
-    await page.getByRole('button', { name: 'View details' }).click()
-    await expect(page.getByText('Quadratic attention')).toBeVisible()
+    await expect(page.getByText('The Transformer replaces recurrence with self-attention')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'View details' })).toHaveCount(0)
     expect(await page.getByText('Discover relevant papers').count()).toBe(0)
     await expect(page.getByRole('tab', { name: 'Summary' })).toBeVisible()
     await expect(page.getByRole('tab', { name: 'Report' })).toBeVisible()

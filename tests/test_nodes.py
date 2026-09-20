@@ -246,6 +246,39 @@ def test_write_notes_two_workers_preserve_order_and_isolate_failure(monkeypatch)
     assert any("p2" in error for error in result["error_logs"])
 
 
+def test_pmrl_cache_hit_skips_llm_call(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "SUMMARY_CACHE_DIR", tmp_path)
+    paper = PaperItem(paper_id="p1", title="Cached paper", summary="cached content words here")
+
+    calls: list = []
+
+    def fake_invoke(prompt, schema, **kwargs):
+        calls.append(prompt)
+        return PMRLNotes(
+            problem="cached problem",
+            method="cached method",
+            result="cached result",
+            limitation="cached limitation",
+            brief_summary="Conclusion.\n- a\n- b\n- c",
+        )
+
+    monkeypatch.setattr(write_notes_module, "invoke_structured_output", fake_invoke)
+
+    first_paper, first_status, first_timing = write_notes_module.analyze_paper_notes(paper)
+    assert first_status == "ok"
+    assert first_timing.get("llmMs", 0) > 0 or "cache" not in first_timing
+    assert first_paper.notes is not None and first_paper.notes.problem == "cached problem"
+
+    # Second identical call must reuse the cache without touching the provider.
+    monkeypatch.setattr(write_notes_module, "get_llm", lambda: (_ for _ in ()).throw(AssertionError("LLM must not run on cache hit")))
+    second_paper, second_status, second_timing = write_notes_module.analyze_paper_notes(paper)
+    assert second_status == "ok:cache"
+    assert second_timing.get("llmMs") == 0
+    assert len(calls) == 1
+    assert second_paper.notes is not None and second_paper.notes.problem == "cached problem"
+    assert second_paper.notes_quality == "complete"
+
+
 def test_compare_artifact_rejects_unsupported_numeric_alignment(monkeypatch):
     papers = [
         PaperItem(

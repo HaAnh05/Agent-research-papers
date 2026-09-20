@@ -16,7 +16,6 @@ import {
   readBenchmark,
   readComparisonArtifact,
   readPaperId,
-  readPaperNotes,
   readPaperNotesQuality,
   readPaperPdfUrl,
   readPaperRepos,
@@ -30,7 +29,6 @@ import {
   type ComparisonPaper,
   type ComparisonRow,
   type PaperSource,
-  type PMRLNotes,
   type RunResult,
   type RunSnapshot,
   type SummaryCards,
@@ -61,13 +59,6 @@ const STAGE_LABELS: Record<string, string> = {
   final_report: 'Generate final report',
   error_handler: 'Workflow error',
 }
-
-const PMRL_FIELDS: Array<{ key: keyof PMRLNotes; label: string }> = [
-  { key: 'problem', label: 'Problem' },
-  { key: 'method', label: 'Method' },
-  { key: 'result', label: 'Result' },
-  { key: 'limitation', label: 'Limitation' },
-]
 
 function asRecord(value: unknown): FactsRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as FactsRecord : null
@@ -167,24 +158,6 @@ function summaryCardsForPaper(paper: PaperSource): ValidatedSummaryCards {
   if (summaryStatus && summaryStatus !== 'complete') {
     for (const key of Object.keys(cards) as SummaryCardKey[]) cards[key] = ''
     return { cards, issues: [...new Set(issues)] }
-  }
-
-  for (const { key, label } of SUMMARY_CARD_DEFINITIONS) {
-    const value = cards[key]
-    if (!value) continue
-    const words = summaryWordCount(value)
-    const minimum = key === 'tldr' ? 15 : 30
-    const maximum = key === 'tldr' ? 50 : 60
-    if (words < minimum || words > maximum) {
-      cards[key] = ''
-      issues.push(`${label} was omitted because its generated length was outside the expected range.`)
-    }
-  }
-
-  const totalWords = Object.values(cards).reduce((total, value) => total + summaryWordCount(value), 0)
-  if (totalWords > 0 && (totalWords < 180 || totalWords > 300)) {
-    for (const key of Object.keys(cards) as SummaryCardKey[]) cards[key] = ''
-    issues.push('The structured summary total is outside the expected 180–300 word range.')
   }
 
   const seen = new Map<string, SummaryCardKey>()
@@ -346,14 +319,20 @@ function activityEvents(events: TraceEvent[]): TraceEvent[] {
     const facts = eventFacts(event)
     const retryCount = typeof facts?.retryCount === 'number' ? facts.retryCount : undefined
     const previousRetry = retryByNode.get(event.node)
-    const lifecycleBoundary = event.type.endsWith('.started') || event.status === 'running' || event.status === 'retrying' || event.status === 'failed' || event.status === 'error' || event.status === 'skipped'
+    const lifecycleBoundary = event.type.endsWith('.started') || event.status === 'retrying' || event.status === 'failed' || event.status === 'error' || event.status === 'skipped'
     if (lifecycleBoundary || (retryCount !== undefined && previousRetry !== undefined && retryCount > previousRetry)) {
       generationByNode.set(event.node, (generationByNode.get(event.node) ?? 0) + 1)
     }
     if (retryCount !== undefined) retryByNode.set(event.node, retryCount)
-    const isCompletion = event.status === 'completed' || event.type.endsWith('.completed')
+    const isCompletion = event.status === 'completed' || event.status === 'failed' || event.status === 'error' || event.status === 'skipped' || event.type.endsWith('.completed')
     if (isCompletion) {
-      const completionGeneration = `${event.node}:${generationByNode.get(event.node) ?? 0}`
+      // Terminal run events live in their own namespace: `run.completed`
+      // must never replace the final node's `step.completed` row (or vice
+      // versa) — both rows carry distinct information.  All other channel
+      // variants (`step.*`, `node.*`, `tool.*`) still collapse per node so a
+      // retried or dual-channel completion renders exactly once.
+      const family = event.type.startsWith('run.') ? 'run' : 'step'
+      const completionGeneration = `${family}:${event.node}:${generationByNode.get(event.node) ?? 0}`
       const previousKey = completionIndex.get(completionGeneration)
       if (previousKey) unique.delete(previousKey)
       completionIndex.set(completionGeneration, `${event.seq}:${event.type}:${event.node}`)
@@ -501,23 +480,14 @@ function PaperMeta({ paper }: { paper: PaperSource }) {
   )
 }
 
-function NotesField({ label, value, field, suppressed = false }: { label: string; value: string; field: keyof PMRLNotes; suppressed?: boolean }) {
-  const content = suppressed ? '' : typeof value === 'string' ? value.trim() : ''
-  const reason = suppressed ? 'Fallback PMRL output was omitted because it was not finalized.' : 'No finalized PMRL content was returned for this field.'
-  return <article className={`results-pmrl-field results-pmrl-field--${field}`}><h3>{label}</h3>{content ? <MarkdownContent content={content} compact /> : <p>Not extracted</p>}{content ? null : <small>{reason}</small>}</article>
-}
-
 function SummaryCard({ label, className, value }: { label: string; className: string; value: string }) {
   return <article className={`results-summary-card ${className}`}><h3>{label}</h3>{value ? <MarkdownContent content={value} /> : <p className="results-summary-card__missing">Summary unavailable for this section.</p>}</article>
 }
 
 function SummaryPanel({ paper, index, total, isFallback, sourceWarnings }: { paper: PaperSource | undefined; index: number; total: number; isFallback: boolean; sourceWarnings: string[] }) {
-  const [detailsOpen, setDetailsOpen] = useState(false)
   if (!paper) return <EmptyPanel>No finalized paper output was returned for this run.</EmptyPanel>
-  const notes = readPaperNotes(paper)
   const validatedSummary = summaryCardsForPaper(paper)
   const notesQuality = readPaperNotesQuality(paper)
-  const notesUnavailable = isFallback || notesQuality === 'fallback' || notesQuality === 'invalid'
   return (
     <section className="results-summary" aria-labelledby="results-paper-heading">
       <p className="results-paper-position">Paper {index + 1} of {total}</p>
@@ -531,10 +501,8 @@ function SummaryPanel({ paper, index, total, isFallback, sourceWarnings }: { pap
         <div className="results-summary-card-grid">
           {SUMMARY_CARD_DEFINITIONS.map(({ key, label, className }) => <SummaryCard key={key} label={label} className={className} value={validatedSummary.cards[key]} />)}
         </div>
-        {validatedSummary.issues.length ? <p className="results-summary-quality" role="status"><BookOpen size={14} aria-hidden="true" />Some summary sections are unavailable because the generated content did not pass length or duplication checks.</p> : null}
+        {validatedSummary.issues.length ? <p className="results-summary-quality" role="status"><BookOpen size={14} aria-hidden="true" />Some summary sections are unavailable because the generated content did not pass validation checks.</p> : null}
       </section>
-      <button type="button" className="results-details-toggle" aria-expanded={detailsOpen} aria-controls="results-pmrl-details" onClick={() => setDetailsOpen((value) => !value)}>{detailsOpen ? 'Hide details' : 'View details'}</button>
-      {detailsOpen ? <section className="results-pmrl-details" id="results-pmrl-details" aria-labelledby="results-pmrl-details-heading"><div className="results-pmrl-heading"><h2 id="results-pmrl-details-heading">PMRL details</h2><span>Problem · Method · Result · Limitation</span></div><div className="results-pmrl-grid">{PMRL_FIELDS.map(({ key, label }) => <NotesField key={key} label={label} value={notes?.[key] ?? ''} field={key} suppressed={notesUnavailable} />)}</div></section> : null}
     </section>
   )
 }
@@ -640,7 +608,7 @@ function ReportPanel({ markdown, reportId, reportFilename, hasFallbackNotes, pap
 
   return (
     <article className="results-report" aria-labelledby="results-report-heading">
-      <header className="results-report__header"><div><p className="results-eyebrow">Finalized Markdown</p><h2 id="results-report-heading">{title}</h2></div>{reportId ? <div className="results-report__download"><button type="button" className="results-button results-button--secondary" aria-label={`Download ${filename}`} onClick={() => void handleDownload()} disabled={downloadState === 'downloading'}><Download size={15} aria-hidden="true" />{downloadState === 'downloading' ? 'Downloading…' : downloadState === 'downloaded' ? 'Downloaded' : downloadState === 'failed' ? 'Download failed' : 'Download'}</button><span className="results-report__download-meta">Filename · <code>{filename}</code></span></div> : null}</header>
+      <header className="results-report__header"><div><p className="results-eyebrow">Finalized Markdown</p><h2 id="results-report-heading">{title}</h2></div>{reportId ? <div className="results-report__download"><button type="button" className="results-button results-button--secondary" aria-label={`Download ${filename}`} onClick={() => void handleDownload()} disabled={downloadState === 'downloading'}><Download size={15} aria-hidden="true" />{downloadState === 'downloading' ? 'Downloading…' : downloadState === 'downloaded' ? 'Downloaded' : downloadState === 'failed' ? 'Download failed' : 'Download'}</button></div> : null}</header>
       {hasFallbackNotes ? <p className="results-report__warning" role="note"><BookOpen size={14} aria-hidden="true" />This report may include fallback PMRL notes. The Markdown is shown exactly as returned.</p> : null}
       <div className="results-report__body"><MarkdownContent content={withoutFirstMarkdownHeading(markdown)} /></div>
     </article>

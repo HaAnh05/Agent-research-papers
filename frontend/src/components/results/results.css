@@ -524,12 +524,13 @@
 .results-summary-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto auto;
+  align-items: stretch;
   gap: var(--space-4);
 }
 
 .results-summary-card {
   min-width: 0;
-  min-height: 180px;
   padding: var(--space-6);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -538,7 +539,6 @@
 
 .results-summary-card--tldr {
   grid-column: 1 / -1;
-  min-height: 0;
   border-color: #DDDDD6;
   background: var(--surface-subtle);
 }

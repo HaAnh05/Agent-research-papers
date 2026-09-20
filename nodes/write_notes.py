@@ -10,17 +10,12 @@ from typing import Any, Dict, List, Tuple
 from config import config
 from prompts.pmrl_notes_prompt import PMRL_NOTES_PROMPT
 from state import PMRLGeneration, PMRLNotes, PaperItem, ResearchState, SummaryCards
+from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_cache, summary_cache_path
 from tools.llm_provider import get_llm, invoke_structured_output
 
 
 _BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+(.+?)\s*$")
 
-SUMMARY_TLDR_MIN_WORDS = 15
-SUMMARY_TLDR_MAX_WORDS = 50
-SUMMARY_CARD_MIN_WORDS = 30
-SUMMARY_CARD_MAX_WORDS = 60
-SUMMARY_TOTAL_MIN_WORDS = 180
-SUMMARY_TOTAL_MAX_WORDS = 300
 SUMMARY_CARD_FIELDS = ("tldr", "problem", "method", "key_results", "why_it_matters")
 
 _SUMMARY_GENERIC_WORDS = {
@@ -73,13 +68,14 @@ def validate_summary_cards(
     value: Any,
     *,
     source_text: str = "",
-) -> Tuple[SummaryCards, str]:
+) -> Tuple[SummaryCards, str, str]:
     """Validate compact cards without truncating or inventing replacement text.
 
-    The return status is ``complete`` only when all five cards meet their
-    limits, are sufficiently distinct, and use vocabulary/numbers supported by
-    the extracted source.  Invalid cards are returned empty while detailed
-    PMRL fields remain untouched.
+    The return status is ``complete`` only when all five cards are present,
+    are sufficiently distinct, and use vocabulary/numbers supported by the
+    extracted source.  Near-duplicate cards are blanked individually rather
+    than rejecting the whole set.  The third return value is a short
+    failure reason (``""`` when complete).
     """
 
     if isinstance(value, SummaryCards):
@@ -91,50 +87,36 @@ def validate_summary_cards(
             else:  # pragma: no cover - Pydantic v1 compatibility
                 cards = SummaryCards.parse_obj(value)
         except Exception:
-            return SummaryCards(), "invalid"
+            return SummaryCards(), "invalid", "schema_mismatch"
     else:
-        return SummaryCards(), "missing"
+        return SummaryCards(), "missing", "no_structured_output"
 
     fields = {name: str(getattr(cards, name, "") or "").strip() for name in SUMMARY_CARD_FIELDS}
-    if not all(fields.values()):
-        return SummaryCards(), "missing"
+    for name in SUMMARY_CARD_FIELDS:
+        if not fields[name]:
+            return SummaryCards(), "missing", f"empty_field:{name}"
 
-    tldr_words = _word_count(fields["tldr"])
-    if not SUMMARY_TLDR_MIN_WORDS <= tldr_words <= SUMMARY_TLDR_MAX_WORDS:
-        return SummaryCards(), "invalid"
-    sentence_endings = re.findall(r"[.!?](?=\s|$)", fields["tldr"])
-    if not 1 <= len(sentence_endings) <= 2:
-        return SummaryCards(), "invalid"
-
-    card_words = [_word_count(fields[name]) for name in SUMMARY_CARD_FIELDS[1:]]
-    if any(words < SUMMARY_CARD_MIN_WORDS or words > SUMMARY_CARD_MAX_WORDS for words in card_words):
-        return SummaryCards(), "invalid"
-    total_words = tldr_words + sum(card_words)
-    if not SUMMARY_TOTAL_MIN_WORDS <= total_words <= SUMMARY_TOTAL_MAX_WORDS:
-        return SummaryCards(), "invalid"
-
-    values = list(fields.values())
-    if any(_near_duplicate(values[index], values[other]) for index in range(len(values)) for other in range(index + 1, len(values))):
-        return SummaryCards(), "invalid"
+    for index, left_name in enumerate(SUMMARY_CARD_FIELDS):
+        for right_name in SUMMARY_CARD_FIELDS[index + 1:]:
+            if _near_duplicate(fields[left_name], fields[right_name]):
+                fields[right_name] = ""
 
     source = (source_text or "").strip()
     if not source:
-        return SummaryCards(), "invalid"
+        return SummaryCards(), "invalid", "no_source_text"
     source_words = _meaningful_tokens(source)
     source_numbers = _number_tokens(source)
-    for field in values:
-        # Each card must retain at least one source-specific anchor.  This is
-        # deliberately light because implications can use connecting language.
+    for name, field in fields.items():
+        if not field:
+            continue
         if not (_meaningful_tokens(field) & source_words):
-            return SummaryCards(), "invalid"
-        # A number in generated summary text is accepted only if it occurs in
-        # the extracted source.  This blocks plausible-looking invented
-        # benchmark values without requiring exact sentence matching.
-        if not _number_tokens(field).issubset(source_numbers):
-            return SummaryCards(), "invalid"
+            return SummaryCards(), "invalid", f"no_source_overlap:{name}"
+        unsupported = _number_tokens(field) - source_numbers
+        if unsupported:
+            return SummaryCards(), "invalid", f"number_not_in_source:{name}={sorted(unsupported)[0]}"
 
     normalized = SummaryCards(**fields)
-    return normalized, "complete"
+    return normalized, "complete", ""
 
 
 def validate_brief_summary(value: Any, *, max_words: int = 150) -> str:
@@ -199,6 +181,35 @@ def _notes_prompt(paper: PaperItem) -> str:
     )
 
 
+def _pmrl_cache_entry(prompt_text: str) -> tuple[str, Any]:
+    """Resolve the PMRL cache path for the exact LLM input (fail-open)."""
+
+    key = f"pmrl_{prompt_fingerprint(prompt_text, config.DEFAULT_PROVIDER, config.DEFAULT_MODEL)}"
+    return key, summary_cache_path(key)
+
+
+def _cached_pmrl_notes(cached: Any) -> PMRLNotes | None:
+    """Rebuild validated PMRL notes from a cache entry; None when unusable."""
+
+    if not isinstance(cached, dict):
+        return None
+    try:
+        notes = PMRLNotes(
+            problem=str(cached.get("problem") or ""),
+            method=str(cached.get("method") or ""),
+            result=str(cached.get("result") or ""),
+            limitation=str(cached.get("limitation") or ""),
+            brief_summary=validate_brief_summary(cached.get("brief_summary")),
+            summary_cards=SummaryCards(),
+            summary_quality="missing",
+        )
+    except Exception:
+        return None
+    if not all([notes.problem.strip(), notes.method.strip(), notes.result.strip(), notes.limitation.strip()]):
+        return None
+    return notes
+
+
 def analyze_paper_notes(
     paper: PaperItem,
     *,
@@ -208,11 +219,26 @@ def analyze_paper_notes(
 
     result = copy.deepcopy(paper)
     started = time.perf_counter()
+    prompt_text = _notes_prompt(result)
+    _, cache_path = _pmrl_cache_entry(prompt_text)
+    cached_notes = _cached_pmrl_notes(load_json_cache(cache_path))
+    if cached_notes is not None:
+        result.notes = cached_notes
+        result.notes_quality = "complete"
+        result.processing_metadata = dict(result.processing_metadata or {})
+        result.processing_metadata["summary"] = {
+            "status": "pending",
+            "wordCount": 0,
+        }
+        total_ms = max(0, int((time.perf_counter() - started) * 1000))
+        timing = {"durationMs": total_ms, "llmMs": 0, "cache": "hit"}
+        result.processing_metadata["pmrl"] = timing
+        return result, "ok:cache", timing
     try:
         model = llm or get_llm()
         llm_started = time.perf_counter()
         generated: PMRLGeneration = invoke_structured_output(
-            _notes_prompt(result),
+            prompt_text,
             PMRLGeneration,
             llm=model,
             provider=config.DEFAULT_PROVIDER,
@@ -228,6 +254,13 @@ def analyze_paper_notes(
             summary_cards=SummaryCards(),
             summary_quality="missing",
         )
+        save_json_cache(cache_path, {
+            "problem": notes.problem,
+            "method": notes.method,
+            "result": notes.result,
+            "limitation": notes.limitation,
+            "brief_summary": notes.brief_summary,
+        })
         result.notes = notes
         result.notes_quality = "complete"
         result.processing_metadata = dict(result.processing_metadata or {})
@@ -275,7 +308,7 @@ def _run_notes_in_parallel(
         analyzed.append(paper)
         timings[paper.paper_id] = timing
         if status.startswith("ok"):
-            suffix = "; summary unavailable" if status != "ok" else ""
+            suffix = "; cache hit" if status == "ok:cache" else ""
             logs.append(f"[write_notes] {paper.paper_id}: PMRL ok{suffix}")
         else:
             logs.append(f"[write_notes] {paper.paper_id}: PMRL fallback")

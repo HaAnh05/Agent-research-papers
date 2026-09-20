@@ -786,13 +786,6 @@ def _summary_cards(value: Mapping[str, Any] | None) -> SummaryCardsDTO:
             return SummaryCardsDTO(status="missing" if not raw else "invalid")
         cards[name] = " ".join(raw.split())
 
-    counts = {name: len(re.findall(r"\S+", prose)) for name, prose in cards.items()}
-    if not 15 <= counts["tldr"] <= 50:
-        return SummaryCardsDTO(status="invalid")
-    if any(not 30 <= counts[name] <= 60 for name in ("problem", "method", "key_results", "why_it_matters")):
-        return SummaryCardsDTO(status="invalid")
-    if not 180 <= sum(counts.values()) <= 300:
-        return SummaryCardsDTO(status="invalid")
     if any(len(prose) > 1600 for prose in cards.values()):
         return SummaryCardsDTO(status="invalid")
     token_sets = [set(re.findall(r"[\w]+", prose.casefold())) for prose in cards.values()]
@@ -1528,6 +1521,31 @@ def _merge_state(target: dict[str, Any], update: Mapping[str, Any]) -> None:
             target[key] = value
 
 
+def _summary_failure_reason(state: Mapping[str, Any]) -> str:
+    """Return a short sanitized summary-cards failure reason for Activity display."""
+
+    papers = state.get("selected_papers")
+    if not isinstance(papers, (list, tuple)):
+        return ""
+    for paper in papers:
+        raw = _model_dump(paper)
+        if not isinstance(raw, Mapping):
+            continue
+        metadata = raw.get("processing_metadata")
+        if not isinstance(metadata, Mapping):
+            continue
+        summary = metadata.get("summary")
+        summary_map = _model_dump(summary) if isinstance(summary, Mapping) else None
+        if not isinstance(summary_map, Mapping):
+            continue
+        if str(summary_map.get("status") or "") == "complete":
+            continue
+        reason = re.sub(r"[^A-Za-z0-9_=:./+ -]", "", str(summary_map.get("reason") or ""))[:80].strip()
+        if reason:
+            return reason
+    return ""
+
+
 def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) -> str:
     """Describe a node without copying arbitrary trace/log content."""
 
@@ -1551,7 +1569,9 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
     if node == "compare_benchmark":
         return "Prepared benchmark comparison"
     if node == "final_report":
-        return "Prepared final research report"
+        reason = _summary_failure_reason(state)
+        base = "Prepared final research report"
+        return f"{base} (summary cards unavailable: {reason})" if reason else base
     if node == "error_handler":
         return "Workflow entered error handling"
     return NODE_LABELS.get(node, "Workflow update")
@@ -2474,6 +2494,7 @@ def _append_node_update(
     task_id: str | None = None,
     duration_ms: int | None = None,
     timings: Mapping[str, Any] | None = None,
+    emit_updated: bool = True,
 ) -> None:
     node = _public_node(node)
     if node == "workflow":
@@ -2497,19 +2518,24 @@ def _append_node_update(
             if key in measured_timings:
                 measured_duration = measured_timings[key]
                 break
-    registry_instance.append_event(
-        run_id,
-        "step.updated",
-        node=node,
-        status="error" if failed else "running",
-        summary=operational_summary,
-        details=operational_details,
-        facts=operational_facts,
-        links=_step_links(node, state) if links is None else links,
-        duration_ms=measured_duration,
-        timings=measured_timings,
-        progress=0.0,
-    )
+    # A task-end completion already carries the authoritative duration; the
+    # accompanying state update (when one exists) owns the operational
+    # ``step.updated`` row.  Emitting a second ``step.updated`` with the task
+    # summary would render as a duplicated "completed" line in Activity.
+    if emit_updated:
+        registry_instance.append_event(
+            run_id,
+            "step.updated",
+            node=node,
+            status="error" if failed else "running",
+            summary=operational_summary,
+            details=operational_details,
+            facts=operational_facts,
+            links=_step_links(node, state) if links is None else links,
+            duration_ms=measured_duration,
+            timings=measured_timings,
+            progress=0.0,
+        )
     record = registry_instance.get(run_id)
     if record is None:
         return
@@ -2722,6 +2748,7 @@ def _execute_run(
                     task_id=task_id or None,
                     duration_ms=duration_ms,
                     timings=_timings_from_mapping(task),
+                    emit_updated=False,
                 )
                 if node in {"direct_answer", "final_report"} and not failed:
                     _append_assistant_completed(run_id, node, registry_instance, record)
@@ -2843,6 +2870,7 @@ def _execute_run(
                     completed=True,
                     summary=_task_summary(node, True, True),
                     details={"message": message},
+                    emit_updated=False,
                 )
             registry_instance.finalize_thread(run_id)
             registry_instance.append_event(

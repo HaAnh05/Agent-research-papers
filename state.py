@@ -11,11 +11,11 @@ from typing_extensions import TypedDict
 class SummaryCards(BaseModel):
     """Compact five-card summary shown before the full PMRL disclosure."""
 
-    tldr: str = Field(default="", description="One or two sentences stating the contribution and conclusion.")
-    problem: str = Field(default="", description="The specific problem addressed, in 30-60 words.")
-    method: str = Field(default="", description="The core mechanism, in 30-60 words.")
-    key_results: str = Field(default="", description="One to three source-backed findings, in 30-60 words.")
-    why_it_matters: str = Field(default="", description="A concise implication distinct from measured results, in 30-60 words.")
+    tldr: str = Field(default="", description="One to three sentences stating the contribution and conclusion, in 15-80 words.")
+    problem: str = Field(default="", description="The specific problem addressed, in 30-80 words.")
+    method: str = Field(default="", description="The core mechanism, in 30-80 words.")
+    key_results: str = Field(default="", description="One to three source-backed findings, in 30-80 words.")
+    why_it_matters: str = Field(default="", description="A concise implication distinct from measured results, in 30-80 words.")
 
 
 class PMRLGeneration(BaseModel):
