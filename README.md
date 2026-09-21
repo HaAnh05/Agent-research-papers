@@ -8,9 +8,8 @@ Research Scout là research assistant dạng chat chạy trên một LangGraph. 
 query / ArXiv / PDF
         │
         ▼
-      Router ─── direct answer → END
-        ├────────────────── direct paper ────────────────┐
-        │ search                                         │
+      Router ───────────── direct paper ────────────────┐
+        │ search                                        │
         ▼                                                │
   ArXiv search → relevance evaluation → refine query  ─┐ │
         │                         ▲                    │ │

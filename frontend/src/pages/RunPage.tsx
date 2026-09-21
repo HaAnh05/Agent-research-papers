@@ -51,7 +51,7 @@ function Pipeline({ snapshot, view, connectionLost, onEdit, onRestart, onReconne
   return <main id="main-content" className="pipeline-page">
     <section className={`pipeline-panel ${view.phase !== 'running' ? 'pipeline-panel--terminal' : ''}`} aria-labelledby="pipeline-heading">
       <header className="pipeline-panel__header">
-        <h1 id="pipeline-heading" ref={headingRef} tabIndex={-1}>{view.phase === 'running' ? 'Running research' : view.phase === 'no_research' ? 'Research request needed' : 'Research stopped'}</h1>
+        <h1 id="pipeline-heading" ref={headingRef} tabIndex={-1}>{view.phase === 'running' ? 'Running research' : 'Research stopped'}</h1>
         {view.phase === 'running' && !connectionLost && !view.finalizing ? <span className="pipeline-panel__elapsed">{elapsedSince(snapshot, now)}</span> : null}
       </header>
       <p className="pipeline-panel__headline" aria-live="polite" aria-atomic="true">{view.headline}</p>
@@ -75,7 +75,7 @@ function Pipeline({ snapshot, view, connectionLost, onEdit, onRestart, onReconne
       {view.error ? <p className="pipeline-panel__error" role="alert">{view.error}</p> : null}
       {view.phase !== 'running' ? <div className="pipeline-panel__actions">
         <button type="button" className="action-button action-button--primary" onClick={onEdit}>Edit request</button>
-        {canRestart && view.phase !== 'no_research' ? <button type="button" className="action-button" onClick={onRestart}>Start again</button> : null}
+        {canRestart ? <button type="button" className="action-button" onClick={onRestart}>Start again</button> : null}
       </div> : null}
       <Activity view={view} />
     </section>

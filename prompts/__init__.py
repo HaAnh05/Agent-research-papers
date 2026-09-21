@@ -5,7 +5,6 @@ from prompts.pmrl_notes_prompt import PMRL_NOTES_PROMPT
 from prompts.benchmark_prompt import BENCHMARK_MATRIX_PROMPT
 from prompts.final_report_prompt import FINAL_REPORT_PROMPT
 from prompts.results_summary_prompt import RESULTS_SUMMARY_PROMPT
-from prompts.direct_answer_prompt import DIRECT_ANSWER_PROMPT
 
 __all__ = [
     "ROUTER_SYSTEM_PROMPT",
@@ -15,5 +14,4 @@ __all__ = [
     "BENCHMARK_MATRIX_PROMPT",
     "FINAL_REPORT_PROMPT",
     "RESULTS_SUMMARY_PROMPT",
-    "DIRECT_ANSWER_PROMPT",
 ]

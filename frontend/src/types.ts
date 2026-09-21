@@ -66,7 +66,7 @@ export interface TraceEvent {
 
 /** Allowlisted measurements emitted by the API from completed graph updates. */
 export interface TraceFacts {
-  intent?: 'search' | 'direct_read' | 'direct_compare' | 'direct_answer'
+  intent?: 'search' | 'direct_read' | 'direct_compare'
   resultCount?: number
   selectedCount?: number
   retryCount?: number

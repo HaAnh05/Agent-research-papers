@@ -152,24 +152,6 @@ describe('runAdapter', () => {
     expect(view.comparisonReady).toBe(true)
   })
 
-  it('keeps a completed direct answer in the request-needed state for editing', () => {
-    const view = deriveUiRun(snapshot({
-      status: 'success',
-      traceEvents: [
-        event(1, 'router', 'step.updated', { intent: 'direct_answer' }, 'completed'),
-        event(2, 'direct_answer', 'step.completed', undefined, 'completed'),
-        event(3, 'run.completed', 'run.completed', undefined, 'completed'),
-      ],
-      seq: 3,
-    }, { answer: 'A direct answer.', papers: [] }))
-
-    expect(view.route).toBe('direct_answer')
-    expect(view.phase).toBe('no_research')
-    expect(view.stages.map((stage) => stage.id)).toEqual(['understand'])
-    expect(view.headline).toMatch(/No paper research was run/i)
-    expect(view.error).toMatch(/Add a paper/i)
-  })
-
   it('gates the completed results phase on a usable final report', () => {
     const terminal = [
       event(1, 'router', 'step.updated', { intent: 'direct_read' }, 'completed'),

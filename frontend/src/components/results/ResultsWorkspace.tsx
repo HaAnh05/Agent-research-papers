@@ -50,7 +50,6 @@ type FactsRecord = Record<string, unknown>
 
 const STAGE_LABELS: Record<string, string> = {
   router: 'Understand request',
-  direct_answer: 'Answer request',
   search_papers: 'Discover relevant papers',
   eval_search: 'Discover relevant papers',
   refine_query: 'Discover relevant papers',

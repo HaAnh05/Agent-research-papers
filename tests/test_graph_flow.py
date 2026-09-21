@@ -17,6 +17,19 @@ def test_graph_compilation():
     graph = build_research_graph()
     assert graph is not None
     assert "router" in graph.nodes
+    assert set(graph.nodes) == {
+        "__start__",
+        "router",
+        "search_papers",
+        "eval_search",
+        "refine_query",
+        "read_paper",
+        "web_enrich",
+        "write_notes",
+        "compare_benchmark",
+        "final_report",
+        "error_handler",
+    }
     assert "search_papers" in graph.nodes
     assert "eval_search" in graph.nodes
     assert "read_paper" in graph.nodes

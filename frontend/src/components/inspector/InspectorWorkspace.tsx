@@ -84,7 +84,6 @@ const TABS: Array<{ id: InspectorTab; label: string; icon: LucideIcon }> = [
 
 const NODE_ORDER = [
   'router',
-  'direct_answer',
   'search_papers',
   'eval_search',
   'refine_query',
@@ -98,7 +97,6 @@ const NODE_ORDER = [
 
 const NODE_META: Record<string, { label: string; subtitle: string }> = {
   router: { label: 'Router', subtitle: 'understand request' },
-  direct_answer: { label: 'Direct answer', subtitle: 'answer without papers' },
   search_papers: { label: 'ArXiv search', subtitle: 'retrieve candidates' },
   eval_search: { label: 'Relevance', subtitle: 'evaluate candidates' },
   refine_query: { label: 'Refine query', subtitle: 'retry search branch' },
@@ -112,7 +110,6 @@ const NODE_META: Record<string, { label: string; subtitle: string }> = {
 
 /** The graph topology mirrors graph.py; statuses are filled only from events. */
 const GRAPH_EDGES: Array<{ from: string; to: string; label?: string }> = [
-  { from: 'router', to: 'direct_answer', label: 'direct answer' },
   { from: 'router', to: 'search_papers', label: 'search' },
   { from: 'router', to: 'read_paper', label: 'direct paper' },
   { from: 'router', to: 'error_handler', label: 'error' },
@@ -131,7 +128,6 @@ const GRAPH_EDGES: Array<{ from: string; to: string; label?: string }> = [
 
 const FLOW_POSITIONS: Record<string, { x: number; y: number }> = {
   router: { x: 50, y: 7 },
-  direct_answer: { x: 12, y: 21 },
   search_papers: { x: 50, y: 21 },
   eval_search: { x: 50, y: 36 },
   refine_query: { x: 83, y: 36 },
@@ -144,7 +140,6 @@ const FLOW_POSITIONS: Record<string, { x: number; y: number }> = {
 }
 
 const FLOW_PATHS: Record<string, string> = {
-  'router>direct_answer': 'M50 10 C36 11 20 15 12 19',
   'router>search_papers': 'M50 10 L50 19',
   'router>read_paper': 'M50 10 C63 22 63 35 50 48',
   'router>error_handler': 'M50 10 C72 22 84 39 84 62',
@@ -369,7 +364,6 @@ function ToolChips({ events }: { events: TraceEvent[] }) {
       search_papers: ['ArXiv API'],
       read_paper: ['PDF parser'],
       web_enrich: ['GitHub search', 'BibTeX generator'],
-      direct_answer: ['LLM'],
       write_notes: ['LLM · PMRL'],
       final_report: ['LLM · report'],
     }

@@ -59,7 +59,7 @@ class TraceFacts(TypedDict, total=False):
     the corresponding node update did not provide that measurement.
     """
 
-    intent: Literal["direct_answer", "direct_read", "direct_compare", "search"]
+    intent: Literal["direct_read", "direct_compare", "search"]
     resultCount: int
     selectedCount: int
     retryCount: int
@@ -332,7 +332,6 @@ class ThreadSnapshot(ThreadSummary):
 
 NODE_LABELS: dict[str, str] = {
     "router": "Router",
-    "direct_answer": "Direct answer",
     "search_papers": "ArXiv search",
     "eval_search": "Relevance evaluation",
     "refine_query": "Refined query",
@@ -346,7 +345,6 @@ NODE_LABELS: dict[str, str] = {
 
 NODE_KINDS: dict[str, str] = {
     "router": "info",
-    "direct_answer": "answer",
     "search_papers": "source",
     "eval_search": "evaluation",
     "refine_query": "info",
@@ -1124,10 +1122,9 @@ _REPORT_ERROR_MARKERS = (
     "error generating final report",
     "research workflow execution notice",
 )
-_PUBLIC_INTENTS = frozenset({"direct_answer", "direct_read", "direct_compare", "search"})
+_PUBLIC_INTENTS = frozenset({"direct_read", "direct_compare", "search"})
 _PUBLIC_FAILURE_MESSAGES = {
     "router": "Could not understand the request. Check the request and start again.",
-    "direct_answer": "Could not answer this request. The language-model provider did not respond. Start again.",
     "search_papers": "Could not find papers. The search service did not respond. Start again.",
     "eval_search": "Could not evaluate search results. The language-model provider did not respond. Start again.",
     "refine_query": "Could not refine the search query. The language-model provider did not respond. Start again.",
@@ -1142,7 +1139,6 @@ _PUBLIC_FAILURE_MESSAGES = {
 _SAFE_ERROR_PREFIXES = (
     "Không có bài báo nào trong danh sách được chọn.",
     "Tất cả các bài báo đều gặp lỗi khi đọc/tải PDF.",
-    "Direct answer provider unavailable.",
 )
 _ARXIV_NO_RESULTS_RE = re.compile(
     r"^ArXiv không trả về bài báo nào sau (\d+) lượt tìm kiếm\.",
@@ -1520,7 +1516,7 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
         report=report_content,
         reportId=_report_id_from_state(state) if report_valid else None,
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
-        answer=_safe_answer(answer or state.get("assistant_answer") or (report_content if report_valid else None), 100_000)
+        answer=_safe_answer(answer or (report_content if report_valid else None), 100_000)
         or None,
     )
 
@@ -1574,8 +1570,6 @@ def _normalise_updates(payload: Any) -> list[tuple[str, dict[str, Any]]]:
                 inferred = "final_report"
             elif "comparison_artifact" in state or "comparisonArtifact" in state or "benchmark_matrix" in state:
                 inferred = "compare_benchmark"
-            elif "assistant_answer" in state:
-                inferred = "direct_answer"
     return [(inferred, state)]
 
 
@@ -1638,8 +1632,6 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
 
     if node == "router":
         return f"Routed request ({_safe_text(state.get('intent') or 'search', 40)})"
-    if node == "direct_answer":
-        return "Prepared direct answer"
     if node == "search_papers":
         return f"Collected {len(state.get('search_results') or [])} paper source(s)"
     if node == "eval_search":
@@ -1672,8 +1664,6 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
             "intent": _safe_text(state.get("intent"), 60),
             "inputCount": len(state.get("raw_inputs") or []),
         }
-    if node == "direct_answer":
-        return {"contextUsed": bool(state.get("conversation_context"))}
     if node == "search_papers":
         return {
             "resultCount": len(state.get("search_results") or []),
@@ -2412,7 +2402,6 @@ def _initial_state(
         # thread-aware/future graph schemas.  Current ResearchState ignores
         # unknown channels, while injected graphs can consume them directly.
         "conversation_context": _safe_text(conversation_context, 12_000),
-        "assistant_answer": "",
     }
 
 
@@ -2730,7 +2719,7 @@ def _append_assistant_completed(
     """Flush a final delta and publish one public completion marker per node."""
 
     node = _public_node(node)
-    if node not in {"direct_answer", "final_report"} or node in record.assistant_completed_nodes:
+    if node != "final_report" or node in record.assistant_completed_nodes:
         return
     _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
     registry_instance.append_event(
@@ -2807,7 +2796,7 @@ def _execute_run(
                 node = _message_node(metadata)
                 # LangGraph also forwards internal model/tool messages.  Only
                 # the public answer-producing nodes are allowed through.
-                if node not in {"direct_answer", "final_report"}:
+                if node != "final_report":
                     continue
                 text = _message_text(message)
                 if not text:
@@ -2815,7 +2804,6 @@ def _execute_run(
                 merged_answer = _merge_answer(record.assistant_answer, text)
                 if merged_answer == record.assistant_answer:
                     continue
-                current_state["assistant_answer"] = merged_answer
                 registry_instance.set_assistant_answer(run_id, merged_answer)
                 _append_node_started(run_id, node, registry_instance, record)
                 now = time.monotonic()
@@ -2881,7 +2869,7 @@ def _execute_run(
                     timings=_timings_from_mapping(task),
                     emit_updated=False,
                 )
-                if node in {"direct_answer", "final_report"} and not failed:
+                if node == "final_report" and not failed:
                     _append_assistant_completed(run_id, node, registry_instance, record)
                 continue
 
@@ -2897,20 +2885,6 @@ def _execute_run(
                 if node != "workflow":
                     record.current_node = node
                     _append_node_started(run_id, node, registry_instance, record)
-                    # A state update may carry the authoritative completed
-                    # answer, so update the reconnectable snapshot without
-                    # emitting its full content in the trace.
-                    candidate_answer = update.get("assistant_answer")
-                    # A streamed final_report already owns the authoritative
-                    # answer text.  Do not concatenate its state snapshot a
-                    # second time after message chunks have arrived.
-                    if not candidate_answer and node != "final_report":
-                        candidate_answer = update.get("final_report")
-                    if candidate_answer:
-                        merged_answer = _merge_answer(record.assistant_answer, _safe_answer(candidate_answer))
-                        if merged_answer != record.assistant_answer:
-                            current_state["assistant_answer"] = merged_answer
-                            registry_instance.set_assistant_answer(run_id, merged_answer)
                     _append_node_update(
                         run_id,
                         node,
@@ -2927,22 +2901,16 @@ def _execute_run(
                             if node_error
                             else f"{NODE_LABELS.get(node, node)} failed; check provider/network input"
                         )
-                    elif node in {"direct_answer", "final_report"} and candidate_answer:
-                        _append_assistant_completed(run_id, node, registry_instance, record)
 
         current_state = _final_graph_state(graph, graph_config, current_state)
         # Checkpointer values are authoritative for the final DTO, but never
         # expose their raw task input/result payloads.
-        candidate_answer = current_state.get("assistant_answer")
-        if not candidate_answer and not record.assistant_answer:
-            candidate_answer = current_state.get("final_report")
+        candidate_answer = None if record.assistant_answer else current_state.get("final_report")
         if candidate_answer:
             registry_instance.set_assistant_answer(run_id, _safe_answer(candidate_answer))
-            answer_node = record.current_node if record.current_node in {"direct_answer", "final_report"} else (
-                "direct_answer" if current_state.get("assistant_answer") else "final_report"
-            )
-            _append_node_started(run_id, answer_node, registry_instance, record)
-            _append_assistant_completed(run_id, answer_node, registry_instance, record)
+        if candidate_answer or record.assistant_answer:
+            _append_node_started(run_id, "final_report", registry_instance, record)
+            _append_assistant_completed(run_id, "final_report", registry_instance, record)
         registry_instance.set_state(run_id, current_state, current_node=record.current_node)
         state_status = str(current_state.get("status") or "success").lower()
         errors = current_state.get("error_logs") or []

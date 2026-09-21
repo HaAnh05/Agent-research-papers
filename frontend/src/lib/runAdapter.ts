@@ -2,8 +2,8 @@ import type { RunSnapshot, TraceEvent, TraceFacts } from '../types'
 
 export type StageId = 'understand' | 'discover' | 'read' | 'enrich' | 'notes' | 'compare' | 'report'
 export type StageStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed'
-export type RouteKind = 'unknown' | 'search' | 'direct_read' | 'direct_compare' | 'direct_answer'
-export type ViewPhase = 'running' | 'failed' | 'completed' | 'no_research' | 'missing_report'
+export type RouteKind = 'unknown' | 'search' | 'direct_read' | 'direct_compare'
+export type ViewPhase = 'running' | 'failed' | 'completed' | 'missing_report'
 
 export interface UiStage {
   id: StageId
@@ -99,7 +99,7 @@ function factsOf(event: TraceEvent): TraceFacts | null {
 
 function routeFromDetails(event: TraceEvent): RouteKind | null {
   if (event.node !== 'router' || typeof event.details !== 'string') return null
-  const intent = event.details.match(/(?:^| · )intent: (search|direct_read|direct_compare|direct_answer)(?: · |$)/)?.[1]
+  const intent = event.details.match(/(?:^| · )intent: (search|direct_read|direct_compare)(?: · |$)/)?.[1]
   return (intent as RouteKind | undefined) ?? null
 }
 
@@ -145,10 +145,6 @@ function publicFailureCopy(rawMessage: string | null | undefined, stage: StageId
   if (/benchmark comparison unavailable|(?:could not|unable to|failed to) generate benchmark/i.test(message)) {
     return DEFAULT_FAILURE_COPY.compare
   }
-  if (/direct answer provider unavailable|could not answer this request/i.test(message)) {
-    return 'Could not answer this request. The language-model provider did not respond. Start again.'
-  }
-
   // Vietnamese graph/provider messages are not suitable public copy. This
   // intentionally catches accented text after the deterministic guards above.
   if (/[À-ỹ]/u.test(message)) return DEFAULT_FAILURE_COPY[stage]
@@ -218,8 +214,7 @@ export function deriveUiRun(snapshot: RunSnapshot, incoming: TraceEvent[] = []):
   }
 
   if (route === 'unknown') {
-    if (seen.has('direct_answer')) route = 'direct_answer'
-    else if (seen.has('search_papers') || seen.has('eval_search') || seen.has('refine_query')) route = 'search'
+    if (seen.has('search_papers') || seen.has('eval_search') || seen.has('refine_query')) route = 'search'
     else if (seen.has('read_paper')) route = 'direct_read'
   }
   if (notesFallbackCount) warnings.push(`Structured notes were unavailable for ${notesFallbackCount} paper(s).`)
@@ -233,7 +228,6 @@ export function deriveUiRun(snapshot: RunSnapshot, incoming: TraceEvent[] = []):
   const terminalEvent = [...events].reverse().find((event) => event.type === 'run.completed' || event.type === 'run.failed')
   const finalizing = snapshot.status === 'running' && terminalEvent?.type === 'run.completed'
   const phase: ViewPhase = snapshot.status === 'error' ? 'failed'
-    : terminalSuccess && route === 'direct_answer' ? 'no_research'
     : terminalSuccess && !reportReady ? 'missing_report'
     : terminalSuccess && reportReady ? 'completed'
     : 'running'
@@ -242,7 +236,7 @@ export function deriveUiRun(snapshot: RunSnapshot, incoming: TraceEvent[] = []):
   // the optional benchmark node ran. Keep the row only when routing or a real
   // compare trace says it belongs in this run.
   const showCompare = compareSeen || route === 'direct_compare'
-  const ids: StageId[] = route === 'unknown' || route === 'direct_answer' ? ['understand']
+  const ids: StageId[] = route === 'unknown' ? ['understand']
     : route === 'search' ? ['understand', 'discover', 'read', 'enrich', 'notes', ...(showCompare ? ['compare' as const] : []), 'report']
     : ['understand', 'read', 'enrich', 'notes', ...(showCompare ? ['compare' as const] : []), 'report']
   const reached = new Set<StageId>()
@@ -297,14 +291,12 @@ export function deriveUiRun(snapshot: RunSnapshot, incoming: TraceEvent[] = []):
     : current === 'report' ? 'prepare the research report'
     : 'complete research'
   const headline = finalizing ? 'Finalizing research outputs…'
-    : phase === 'no_research' ? 'No paper research was run for this request.'
     : phase === 'missing_report' ? 'The final report is unavailable.'
     : phase === 'failed' ? `Could not ${failureAction}.`
     : currentStage ? (currentStage === 'read' && route !== 'search' ? 'Reading supplied source(s)…' : STAGE_COPY[currentStage])
     : 'Starting research…'
   const error = phase === 'failed' ? publicFailureCopy(snapshot.error, failedStage ?? 'understand')
     : phase === 'missing_report' ? 'The workflow finished without a usable report. Start again.'
-    : phase === 'no_research' ? 'Add a paper, PDF, or ask to find research papers, then start again.'
     : null
 
   const activity: UiActivity[] = []

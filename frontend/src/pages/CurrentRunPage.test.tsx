@@ -120,22 +120,6 @@ describe('RunPage semantic pipeline transitions', () => {
     expect(screen.getByText('selected · 2 papers')).toBeInTheDocument()
   })
 
-  it('keeps a direct answer in Pipeline with an edit path instead of opening Results', async () => {
-    const user = userEvent.setup()
-    const events = [
-      event(1, 'router', 'step.updated', { intent: 'direct_answer' }, 'completed'),
-      event(2, 'direct_answer', 'step.completed', undefined, 'completed'),
-      event(3, 'run.completed', 'run.completed', undefined, 'completed'),
-    ]
-    renderRun(snapshot({ status: 'success', traceEvents: events, seq: 3 }, { answer: 'Direct answer', papers: [] }), events)
-
-    expect(screen.getByRole('heading', { name: 'Research request needed' })).toBeInTheDocument()
-    expect(screen.getByText('No paper research was run for this request.')).toBeInTheDocument()
-    expect(screen.queryByRole('tab', { name: 'Summary' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Edit request' }))
-    expect(screen.getByTestId('location')).toHaveTextContent('/')
-  })
-
   it.each([
     ['read_paper', 'Could not read source PDFs.', 'Fixture PDF parser failed.'],
     ['write_notes', 'Could not write structured notes.', 'The language-model provider did not respond.'],

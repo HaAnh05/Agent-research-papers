@@ -155,7 +155,7 @@ function normalizeFacts(value: unknown): TraceFacts | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = asRecord(value)
   const facts: TraceFacts = {}
-  if (raw.intent === 'search' || raw.intent === 'direct_read' || raw.intent === 'direct_compare' || raw.intent === 'direct_answer') facts.intent = raw.intent
+  if (raw.intent === 'search' || raw.intent === 'direct_read' || raw.intent === 'direct_compare') facts.intent = raw.intent
   for (const key of ['resultCount', 'selectedCount', 'retryCount', 'paperCount', 'failedPdfCount', 'repositoryCount', 'bibtexCount'] as const) {
     const count = raw[key]
     if (typeof count === 'number' && Number.isInteger(count) && count >= 0) facts[key] = count

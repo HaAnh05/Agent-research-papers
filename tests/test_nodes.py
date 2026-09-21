@@ -100,6 +100,43 @@ def test_router_downgrades_direct_intent_without_a_paper_input(monkeypatch):
     assert result["search_query"] == "attention is all you need"
 
 
+def test_text_only_question_always_routes_to_paper_search(monkeypatch):
+    prompts: list[str] = []
+    monkeypatch.setattr(router_module, "get_llm", lambda: object())
+    monkeypatch.setattr(
+        router_module,
+        "invoke_structured_output",
+        lambda prompt, schema, **kwargs: (prompts.append(prompt) or router_module.RouterDecision(
+            intent="search",
+            reasoning="Every text-only request requires paper discovery",
+            search_query="BibTeX scholarly publishing",
+        )),
+    )
+
+    result = router_node({
+        "user_query": "What is BibTeX?",
+        "raw_inputs": [],
+        "conversation_context": "Previous paper notes are available.",
+    })
+
+    assert result["intent"] == "search"
+    assert result["search_query"] == "BibTeX scholarly publishing"
+    assert prompts
+
+
+def test_direct_input_trace_and_display_label_hide_local_path():
+    local_path = "/srv/private/uploads/secret.pdf"
+    result = router_node({
+        "user_query": "Summarize this PDF",
+        "raw_inputs": [local_path],
+        "conversation_context": "",
+    })
+
+    assert local_path not in " ".join(result["trace_logs"])
+    assert local_path not in result["selected_papers"][0].title
+    assert result["selected_papers"][0].local_pdf_path == local_path
+
+
 def test_router_node_multi_links():
     """Test router deterministic matching for multiple arXiv links."""
     state: ResearchState = {

@@ -182,13 +182,12 @@ class ResearchState(TypedDict):
     raw_inputs: List[str]                    # URLs, ArXiv IDs, or local PDF paths
     
     # Router & Execution Flow
-    intent: Literal["direct_answer", "direct_read", "search", "direct_compare"]
+    intent: Literal["direct_read", "search", "direct_compare"]
     status: Literal["running", "success", "degraded", "error"]
     error_message: Optional[str]
 
-    # Compact context supplied by the API for a follow-up question.  This is
-    # deliberately separate from the internal paper text/cache fields so the
-    # answer node can be constrained to safe, already-produced artifacts.
+    # Compact context supplied by the API to help optimize follow-up searches.
+    # It remains separate from internal paper text/cache fields.
     conversation_context: str
     
     # Search & Evaluation
@@ -205,7 +204,6 @@ class ResearchState(TypedDict):
     benchmark_matrix: Optional[str]          # Markdown benchmark comparison table
     comparison_artifact: Optional[Dict[str, Any]]  # Structured comparison for Results UI
     final_report: Optional[str]              # Comprehensive research report (Markdown)
-    assistant_answer: str                    # Direct/follow-up answer (not a report)
 
     # Append-only measured timings.  Each node writes its own key, preserving
     # the existing LangGraph topology while making timing visible to API

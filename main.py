@@ -48,7 +48,6 @@ def main():
         "benchmark_matrix": None,
         "final_report": None,
         "conversation_context": "",
-        "assistant_answer": "",
         "trace_logs": [],
         "error_logs": [],
     }
@@ -67,7 +66,7 @@ def main():
     print("\n" + "="*70)
     print("📑 ASSISTANT ANSWER / RESEARCH REPORT")
     print("="*70 + "\n")
-    print(final_state.get("final_report") or final_state.get("assistant_answer") or "No answer generated.")
+    print(final_state.get("final_report") or "No report generated.")
     print("\n" + "="*70)
 
 

@@ -168,7 +168,6 @@ if st.button("Bắt đầu phân tích", type="primary", use_container_width=Tru
             "benchmark_matrix": None,
             "final_report": None,
             "conversation_context": "",
-            "assistant_answer": "",
             "trace_logs": [],
             "error_logs": [],
         }
@@ -203,7 +202,7 @@ tab_report, tab_benchmark, tab_pmrl, tab_trace = st.tabs([
 state = st.session_state.workflow_state
 
 with tab_report:
-    answer = (state.get("final_report") or state.get("assistant_answer")) if state else None
+    answer = state.get("final_report") if state else None
     if answer:
         st.markdown(answer)
         if state.get("final_report"):
