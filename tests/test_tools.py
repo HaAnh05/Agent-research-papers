@@ -63,11 +63,32 @@ def test_parse_structured_sections():
 def test_parse_structured_sections_reports_heading_or_fallback_quality():
     matched = {}
     parse_structured_sections("Abstract\nA.\nMethod\nM.\nExperiments\nE.", metadata=matched)
-    assert matched == {"heading": "heading", "parserStatus": "success"}
+    assert matched["heading"] == "heading"
+    assert matched["parserStatus"] == "success"
 
     fallback = {}
     parse_structured_sections("unstructured paper text", metadata=fallback)
-    assert fallback == {"heading": "fallback", "parserStatus": "degraded"}
+    assert fallback["heading"] == "fallback"
+    assert fallback["parserStatus"] == "degraded"
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "Experimental Results",
+        "Experimental Setup",
+        "Experiments and Results",
+        "Evaluation and Analysis",
+        "Implementation and Evaluation",
+        "Quantitative Evaluation",
+        "Experiments on ImageNet",
+    ],
+)
+def test_parse_structured_sections_accepts_common_experiment_headings(heading):
+    text = f"Abstract\nA supported abstract.\n2. Proposed Approach\nA supported method.\n4. {heading}\nA measured result.\n5. Conclusion\nDone."
+    sections = parse_structured_sections(text)
+    assert "supported method" in sections["methodology"].lower()
+    assert "measured result" in sections["experiments"].lower()
 
 
 def test_github_success_cache_skips_second_request_and_does_not_cache_errors(tmp_path, monkeypatch):

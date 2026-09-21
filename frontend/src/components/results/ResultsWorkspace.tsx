@@ -32,6 +32,8 @@ import {
   type RunResult,
   type RunSnapshot,
   type SummaryCards,
+  type SummaryCardStatus,
+  type SummaryCardStatusField,
   type TraceEvent,
 } from '../../types'
 import './results.css'
@@ -123,6 +125,8 @@ const SUMMARY_CARD_DEFINITIONS: Array<{ key: SummaryCardKey; label: string; clas
 
 type ValidatedSummaryCards = {
   cards: Record<SummaryCardKey, string>
+  statuses: Partial<Record<SummaryCardKey, SummaryCardStatus>>
+  reasons: Partial<Record<SummaryCardKey, string>>
   issues: string[]
 }
 
@@ -142,6 +146,44 @@ function summaryCardValue(summary: SummaryCards | null, key: SummaryCardKey): st
   return normalizeSummaryText(summary[key])
 }
 
+function summaryCardStatus(summary: SummaryCards | null, key: SummaryCardKey): SummaryCardStatus | undefined {
+  const statuses = summary?.cardStatuses ?? summary?.card_statuses
+  if (!statuses || typeof statuses !== 'object' || Array.isArray(statuses)) return undefined
+
+  const statusKeys: SummaryCardStatusField[] = key === 'keyResults'
+    ? ['keyResults', 'key_results']
+    : key === 'whyItMatters'
+      ? ['whyItMatters', 'why_it_matters']
+      : [key]
+
+  for (const statusKey of statusKeys) {
+    if (!Object.prototype.hasOwnProperty.call(statuses, statusKey)) continue
+    const rawStatus = (statuses as Record<string, unknown>)[statusKey]
+    if (typeof rawStatus !== 'string') return 'unknown'
+    const normalized = rawStatus.trim().toLowerCase()
+    if (normalized === 'complete' || normalized === 'unsupported' || normalized === 'missing' || normalized === 'invalid' || normalized === 'unknown') {
+      return normalized
+    }
+    return 'unknown'
+  }
+  return undefined
+}
+
+function summaryCardReason(summary: SummaryCards | null, key: SummaryCardKey): string | undefined {
+  const reasons = summary?.cardReasons ?? summary?.card_reasons
+  if (!reasons || typeof reasons !== 'object' || Array.isArray(reasons)) return undefined
+  const reasonKeys: SummaryCardStatusField[] = key === 'keyResults'
+    ? ['keyResults', 'key_results']
+    : key === 'whyItMatters'
+      ? ['whyItMatters', 'why_it_matters']
+      : [key]
+  for (const reasonKey of reasonKeys) {
+    const raw = (reasons as Record<string, unknown>)[reasonKey]
+    if (typeof raw === 'string' && raw.trim()) return raw.trim()
+  }
+  return undefined
+}
+
 function normalizedSummaryForComparison(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -149,31 +191,55 @@ function normalizedSummaryForComparison(value: string): string {
 function summaryCardsForPaper(paper: PaperSource): ValidatedSummaryCards {
   const summary = readPaperSummaryCards(paper)
   const cards = Object.fromEntries(SUMMARY_CARD_DEFINITIONS.map(({ key }) => [key, summaryCardValue(summary, key)])) as Record<SummaryCardKey, string>
+  const statuses: Partial<Record<SummaryCardKey, SummaryCardStatus>> = {}
+  const reasons: Partial<Record<SummaryCardKey, string>> = {}
   const issues: string[] = []
-  const summaryStatus = String(summary?.status ?? '').toLowerCase()
+  const summaryStatus = String(summary?.status ?? '').trim().toLowerCase()
   if (!summary) issues.push('The structured summary is unavailable for this run.')
   if (summaryStatus === 'invalid') issues.push('The structured summary was marked invalid.')
   if (summaryStatus === 'missing' || summaryStatus === 'unknown') issues.push('The structured summary is unavailable for this run.')
+  if (summaryStatus === 'partial') issues.push('Some structured summary sections are unavailable.')
   if (summary && !Object.values(cards).some(Boolean)) issues.push('The structured summary did not contain any displayable sections.')
-  if (summaryStatus && summaryStatus !== 'complete') {
-    for (const key of Object.keys(cards) as SummaryCardKey[]) cards[key] = ''
-    return { cards, issues: [...new Set(issues)] }
+  if (summaryStatus && summaryStatus !== 'complete' && summaryStatus !== 'partial') {
+    for (const key of Object.keys(cards) as SummaryCardKey[]) {
+      cards[key] = ''
+      statuses[key] = summaryStatus === 'missing' || summaryStatus === 'invalid' || summaryStatus === 'unknown'
+        ? summaryStatus
+        : 'unknown'
+    }
+    return { cards, statuses, reasons, issues: [...new Set(issues)] }
   }
 
-  const seen = new Map<string, SummaryCardKey>()
   for (const { key, label } of SUMMARY_CARD_DEFINITIONS) {
-    const value = cards[key]
-    if (!value) continue
-    const normalized = normalizedSummaryForComparison(value)
-    const previous = [...seen.entries()].find(([other]) => other === normalized || (summaryWordCount(value) >= 12 && (other.includes(normalized) || normalized.includes(other))))
-    if (previous) {
+    const status = summaryCardStatus(summary, key)
+    const reason = summaryCardReason(summary, key)
+    if (status) statuses[key] = status
+    if (reason) reasons[key] = reason
+    if (status && status !== 'complete') {
       cards[key] = ''
-      issues.push(`${label} repeated another summary section and was omitted.`)
-      continue
+      issues.push(`${label} was marked ${status} and was omitted.`)
+    } else if (status === 'complete' && !cards[key]) {
+      issues.push(`${label} was marked complete but did not contain displayable text.`)
     }
-    seen.set(normalized, key)
   }
-  return { cards, issues: [...new Set(issues)] }
+
+  const hasCardStatuses = Boolean(summary?.cardStatuses ?? summary?.card_statuses)
+  if (!hasCardStatuses) {
+    const seen = new Map<string, SummaryCardKey>()
+    for (const { key, label } of SUMMARY_CARD_DEFINITIONS) {
+      const value = cards[key]
+      if (!value) continue
+      const normalized = normalizedSummaryForComparison(value)
+      const previous = [...seen.entries()].find(([other]) => other === normalized || (summaryWordCount(value) >= 12 && (other.includes(normalized) || normalized.includes(other))))
+      if (previous) {
+        cards[key] = ''
+        issues.push(`${label} repeated another summary section and was omitted.`)
+        continue
+      }
+      seen.set(normalized, key)
+    }
+  }
+  return { cards, statuses, reasons, issues: [...new Set(issues)] }
 }
 
 function paperScore(paper: PaperSource): number | null {
@@ -367,6 +433,17 @@ function parserWarningsForEvent(event: TraceEvent): string[] {
   return [...new Set(values.filter((value): value is string => typeof value === 'string' && Boolean(value.trim())).map((value) => value.trim()))]
 }
 
+function summaryReasonsForEvent(event: TraceEvent): string[] {
+  const facts = eventFacts(event)
+  const raw = asRecord(facts?.summaryCardReasons)
+  if (!raw) return []
+  return Object.entries(raw)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && Boolean(entry[1].trim()))
+    .map(([card, reason]) => safeSummary(`${card}: ${reason}`))
+    .filter(Boolean)
+    .sort()
+}
+
 function EmptyPanel({ children }: { children: React.ReactNode }) {
   return <div className="results-empty">{children}</div>
 }
@@ -480,8 +557,18 @@ function PaperMeta({ paper }: { paper: PaperSource }) {
   )
 }
 
-function SummaryCard({ label, className, value }: { label: string; className: string; value: string }) {
-  return <article className={`results-summary-card ${className}`}><h3>{label}</h3>{value ? <MarkdownContent content={value} /> : <p className="results-summary-card__missing">Summary unavailable for this section.</p>}</article>
+function unavailableSummaryCopy(label: string, status?: SummaryCardStatus, reason?: string): string {
+  if (label === 'Key Results' && (status === 'unsupported' || reason?.startsWith('number_not_in_source:'))) {
+    return 'No source-supported result was available.'
+  }
+  if (status === 'unsupported' || reason === 'no_source_overlap') return 'No source-supported summary was available.'
+  if (status === 'invalid') return 'This summary section did not pass validation.'
+  if (status === 'missing') return 'No summary was generated for this section.'
+  return 'This summary section is unavailable.'
+}
+
+function SummaryCard({ label, className, value, status, reason }: { label: string; className: string; value: string; status?: SummaryCardStatus; reason?: string }) {
+  return <article className={`results-summary-card ${className}`}><h3>{label}</h3>{value ? <MarkdownContent content={value} /> : <p className="results-summary-card__missing">{unavailableSummaryCopy(label, status, reason)}</p>}</article>
 }
 
 function SummaryPanel({ paper, index, total, isFallback, sourceWarnings }: { paper: PaperSource | undefined; index: number; total: number; isFallback: boolean; sourceWarnings: string[] }) {
@@ -499,7 +586,7 @@ function SummaryPanel({ paper, index, total, isFallback, sourceWarnings }: { pap
       <section className="results-summary-cards" aria-labelledby="results-summary-heading">
         <div className="results-pmrl-heading"><h2 id="results-summary-heading">Summary</h2><span>Source-grounded overview</span></div>
         <div className="results-summary-card-grid">
-          {SUMMARY_CARD_DEFINITIONS.map(({ key, label, className }) => <SummaryCard key={key} label={label} className={className} value={validatedSummary.cards[key]} />)}
+          {SUMMARY_CARD_DEFINITIONS.map(({ key, label, className }) => <SummaryCard key={key} label={label} className={className} value={validatedSummary.cards[key]} status={validatedSummary.statuses[key]} reason={validatedSummary.reasons[key]} />)}
         </div>
         {validatedSummary.issues.length ? <p className="results-summary-quality" role="status"><BookOpen size={14} aria-hidden="true" />Some summary sections are unavailable because the generated content did not pass validation checks.</p> : null}
       </section>
@@ -622,7 +709,7 @@ function ActivityDisclosure({ events }: { events: TraceEvent[] }) {
     <details className="results-activity">
       <summary><span>Activity</span><span className="results-activity__count">{entries.length} events</span></summary>
       <ol className="results-activity__list">
-        {entries.map((event, index) => { const duration = durationLabel(event.durationMs); const parserWarnings = parserWarningsForEvent(event); return <li key={`${event.seq}-${event.type}-${event.node}-${index}`}><time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time><span><strong>{stageLabel(event)}</strong><span className="results-activity__copy">{activityCopy(event)}</span>{duration ? <small className="results-activity__duration">Duration · {duration}</small> : null}{parserWarnings.map((warning) => <small className="results-activity__warning" role="note" key={warning}>Extraction warning · {warning}</small>)}</span></li> })}
+        {entries.map((event, index) => { const duration = durationLabel(event.durationMs); const parserWarnings = parserWarningsForEvent(event); const summaryReasons = summaryReasonsForEvent(event); return <li key={`${event.seq}-${event.type}-${event.node}-${index}`}><time dateTime={event.timestamp}>{formatTimestamp(event.timestamp)}</time><span><strong>{stageLabel(event)}</strong><span className="results-activity__copy">{activityCopy(event)}</span>{duration ? <small className="results-activity__duration">Duration · {duration}</small> : null}{parserWarnings.map((warning) => <small className="results-activity__warning" role="note" key={warning}>Extraction warning · {warning}</small>)}{summaryReasons.map((reason) => <small className="results-activity__warning" role="note" key={reason}>Summary validation · {reason}</small>)}</span></li> })}
       </ol>
     </details>
   )

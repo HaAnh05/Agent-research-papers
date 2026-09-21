@@ -79,6 +79,7 @@ export interface TraceFacts {
   comparedPaperIds?: string[]
   reportAvailable?: boolean
   reportId?: string | null
+  summaryCardReasons?: Record<string, string>
   /** Measured parser metadata surfaced by the API for source-specific UI. */
   parserWarning?: string | null
   parserWarnings?: string[]
@@ -127,6 +128,17 @@ export interface PaperSource {
 }
 
 /** Five short, source grounded cards shown in the default Results summary. */
+export type SummaryCardStatus = 'complete' | 'unsupported' | 'missing' | 'invalid' | 'unknown'
+
+export type SummaryCardStatusField =
+  | 'tldr'
+  | 'problem'
+  | 'method'
+  | 'keyResults'
+  | 'key_results'
+  | 'whyItMatters'
+  | 'why_it_matters'
+
 export interface SummaryCards {
   tldr?: string
   problem?: string
@@ -135,7 +147,13 @@ export interface SummaryCards {
   key_results?: string
   whyItMatters?: string
   why_it_matters?: string
-  status?: 'complete' | 'missing' | 'invalid' | 'unknown' | string
+  status?: 'complete' | 'partial' | 'missing' | 'invalid' | 'unknown' | string
+  /** Per-card validation status, accepted in either API naming convention. */
+  cardStatuses?: Partial<Record<SummaryCardStatusField, SummaryCardStatus>>
+  card_statuses?: Partial<Record<SummaryCardStatusField, SummaryCardStatus>>
+  /** Stable local-validator reason codes, accepted in either API naming convention. */
+  cardReasons?: Partial<Record<SummaryCardStatusField, string>>
+  card_reasons?: Partial<Record<SummaryCardStatusField, string>>
 }
 
 export interface PMRLNotes {

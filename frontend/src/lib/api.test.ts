@@ -8,11 +8,14 @@ const event = (seq: number, status: TraceEvent['status'], summary = `event ${seq
 
 describe('API DTO normalization', () => {
   it('normalizes backend snake/camel fields and 0..1 progress', () => {
-    const normalized = normalizeTraceEvent({ run_id: 'run-1', seq: 4, type: 'step.updated', node: 'eval_search', status: 'running', summary: 'Scoring papers', details: { score: 0.81, selected: 2, links: [{ label: 'ArXiv', href: 'https://arxiv.org/abs/1706.03762' }] }, progress: 0.32, timestamp: '2026-09-15T10:00:00Z' })
+    const normalized = normalizeTraceEvent({ run_id: 'run-1', seq: 4, type: 'step.updated', node: 'eval_search', status: 'running', summary: 'Scoring papers', details: { score: 0.81, selected: 2, links: [{ label: 'ArXiv', href: 'https://arxiv.org/abs/1706.03762' }] }, facts: { summaryCardReasons: { '1706.03762.keyResults': 'number_not_in_source:62.5%' } }, progress: 0.32, timestamp: '2026-09-15T10:00:00Z' })
     expect(normalized.runId).toBe('run-1')
     expect(normalized.progress).toBe(32)
     expect(normalized.details).toEqual({ score: 0.81, selected: 2, links: [{ label: 'ArXiv', href: 'https://arxiv.org/abs/1706.03762' }] })
     expect(normalized.links).toEqual([{ label: 'ArXiv', href: 'https://arxiv.org/abs/1706.03762' }])
+    expect(normalized.facts?.summaryCardReasons).toEqual({
+      '1706.03762.keyResults': 'number_not_in_source:62.5%',
+    })
     expect(normalizeTraceEvent({ seq: 5, type: 'step.completed', node: 'router', status: 'running' }).status).toBe('completed')
   })
 

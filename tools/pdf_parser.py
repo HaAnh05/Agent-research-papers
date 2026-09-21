@@ -18,10 +18,18 @@ from tools.cache_manager import (
     save_cached_text_data,
 )
 
+_EXPERIMENT_HEADING = (
+    r"(?:experiments?(?:\s+(?:and|&)\s+results?|\s+on[^\r\n]*)?"
+    r"|experimental(?:\s+(?:evaluation|results?|setup))?"
+    r"|evaluations?(?:\s+and\s+analysis)?"
+    r"|implementation\s+and\s+evaluation"
+    r"|quantitative\s+evaluation|results?|benchmarks?)"
+)
+
 SECTION_PATTERNS = {
     "abstract": r"(?i)(?:abstract|tóm tắt)\s*[\r\n]+(.*?)(?=(?:(?:1|i)\.?\s+)?introduction|giới thiệu|\Z)",
-    "methodology": r"(?i)(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:method|methodology|proposed method|architecture|model|approach|framework|system|phương pháp)\s*[\r\n]+(.*?)(?=(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:experiments?|experimental evaluation|results?|evaluations?|benchmarks?)|thực nghiệm|\Z)",
-    "experiments": r"(?i)(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:experiments?|experimental evaluation|evaluations?|results?|benchmarks?|kết quả)\s*[\r\n]+(.*?)(?=(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:limitations?|discussion|related work|conclusion)|\Z)",
+    "methodology": rf"(?i)(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:method|methodology|proposed method|proposed approach|architecture|model|approach|framework|system|phương pháp)\s*[\r\n]+(.*?)(?=(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?{_EXPERIMENT_HEADING}|thực nghiệm|\Z)",
+    "experiments": rf"(?i)(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:{_EXPERIMENT_HEADING}|kết quả)\s*[\r\n]+(.*?)(?=(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:limitations?|discussion|related work|conclusion)|\Z)",
     "limitations": r"(?i)(?:(?:\d+|[ivxlcdm]+)[.)]?\s+)?(?:limitations?|discussion|future work|giới hạn)\s*[\r\n]+(.*?)(?=(?:references|acknowledgments|tài liệu tham khảo)|\Z)",
 }
 

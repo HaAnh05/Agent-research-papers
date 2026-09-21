@@ -72,6 +72,7 @@ class TraceFacts(TypedDict, total=False):
     comparedPaperIds: list[str]
     reportAvailable: bool
     reportId: str
+    summaryCardReasons: dict[str, str]
     # Numeric measurements emitted by nodes/tools.  Keys are an allowlisted
     # timing name (for example ``llm`` or ``github.search``), never a prompt,
     # URL, cache path, or provider payload.
@@ -139,7 +140,11 @@ class SummaryCardsDTO(APIModel):
     method: str = ""
     key_results: str = Field(default="", alias="keyResults")
     why_it_matters: str = Field(default="", alias="whyItMatters")
-    status: Literal["complete", "missing", "invalid", "unknown"] = "unknown"
+    status: Literal["complete", "partial", "missing", "invalid", "unknown"] = "unknown"
+    card_statuses: dict[
+        str, Literal["complete", "unsupported", "missing", "invalid", "unknown"]
+    ] = Field(default_factory=dict, alias="cardStatuses")
+    card_reasons: dict[str, str] = Field(default_factory=dict, alias="cardReasons")
 
 
 class SourceQualityDTO(APIModel):
@@ -762,16 +767,61 @@ def _brief_summary_status(value: Any) -> tuple[str | None, Literal["valid", "mis
     return _safe_text(text, 5000), "valid"
 
 
+_SUMMARY_PUBLIC_KEYS = {
+    "tldr": "tldr",
+    "problem": "problem",
+    "method": "method",
+    "key_results": "keyResults",
+    "why_it_matters": "whyItMatters",
+}
+_SUMMARY_REASON_RE = re.compile(
+    r"^(?:empty_field|no_source_overlap|insufficient_source_text|schema_mismatch|"
+    r"no_structured_output|too_long|near_duplicate:(?:tldr|problem|method|key_results|"
+    r"keyResults|why_it_matters|whyItMatters)|number_not_in_source:[+-]?\d+(?:[.,]\d+)?%?)$"
+)
+
+
+def _safe_summary_card_reason(value: Any) -> str | None:
+    """Allow only bounded validator reason codes across the API boundary."""
+
+    reason = str(value or "").strip()
+    if len(reason) > 96 or not _SUMMARY_REASON_RE.fullmatch(reason):
+        return None
+    return reason
+
+
+def _declared_summary_card_reasons(value: Mapping[str, Any]) -> dict[str, str]:
+    raw = value.get("summary_card_reasons") or value.get("summaryCardReasons")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    for internal, public in _SUMMARY_PUBLIC_KEYS.items():
+        reason = _safe_summary_card_reason(raw.get(internal) or raw.get(public))
+        if reason:
+            result[public] = reason
+    return result
+
+
 def _summary_cards(value: Mapping[str, Any] | None) -> SummaryCardsDTO:
-    """Only publish complete, distinct short prose; never slice model output."""
+    """Publish independently validated cards without letting one erase four."""
 
     if not value:
         return SummaryCardsDTO(status="missing")
     declared = str(value.get("summary_quality") or value.get("summaryQuality") or "").casefold()
+    card_reasons = _declared_summary_card_reasons(value)
     if declared in {"invalid", "missing"}:
-        return SummaryCardsDTO(status=declared)
+        return SummaryCardsDTO(
+            status=declared,
+            cardStatuses={
+                key: declared
+                for key in ("tldr", "problem", "method", "keyResults", "whyItMatters")
+            },
+            cardReasons=card_reasons,
+        )
     nested = _model_dump(value.get("summary_cards") or value.get("summaryCards"))
     cards_raw = nested if isinstance(nested, Mapping) else value
+    declared_statuses_raw = value.get("summary_card_statuses") or value.get("summaryCardStatuses")
+    declared_statuses = declared_statuses_raw if isinstance(declared_statuses_raw, Mapping) else {}
     keys = {
         "tldr": ("tldr",),
         "problem": ("problem", "summary_problem", "summaryProblem"),
@@ -779,27 +829,66 @@ def _summary_cards(value: Mapping[str, Any] | None) -> SummaryCardsDTO:
         "key_results": ("key_results", "keyResults"),
         "why_it_matters": ("why_it_matters", "whyItMatters"),
     }
+    public_keys = _SUMMARY_PUBLIC_KEYS
     cards: dict[str, str] = {}
+    card_statuses: dict[str, Literal["complete", "unsupported", "missing", "invalid", "unknown"]] = {}
     for name, aliases in keys.items():
-        raw = next((cards_raw.get(alias) for alias in aliases if cards_raw.get(alias)), None)
-        if not isinstance(raw, str) or not raw.strip():
-            return SummaryCardsDTO(status="missing" if not raw else "invalid")
-        cards[name] = " ".join(raw.split())
+        raw = next((cards_raw.get(alias) for alias in aliases if alias in cards_raw), None)
+        declared_card = str(
+            declared_statuses.get(name)
+            or declared_statuses.get(public_keys[name])
+            or ""
+        ).casefold()
+        public_name = public_keys[name]
+        if declared_card in {"unsupported", "invalid", "missing"}:
+            cards[name] = ""
+            card_statuses[public_name] = declared_card  # type: ignore[assignment]
+        elif isinstance(raw, str) and raw.strip():
+            cards[name] = " ".join(raw.split())
+            card_statuses[public_name] = "complete"
+        else:
+            cards[name] = ""
+            card_statuses[public_name] = "missing" if not raw else "invalid"
 
-    if any(len(prose) > 1600 for prose in cards.values()):
-        return SummaryCardsDTO(status="invalid")
-    token_sets = [set(re.findall(r"[\w]+", prose.casefold())) for prose in cards.values()]
-    for index, left in enumerate(token_sets):
-        for right in token_sets[index + 1:]:
-            if left and right and len(left & right) / min(len(left), len(right)) >= 0.86:
-                return SummaryCardsDTO(status="invalid")
+    for name, prose in cards.items():
+        if len(prose) > 1600:
+            cards[name] = ""
+            card_statuses[public_keys[name]] = "invalid"
+            card_reasons[public_keys[name]] = "too_long"
+    # Current pipeline output already carries the validator's per-card
+    # decisions. Keep the duplicate guard only for legacy payloads that lack
+    # that metadata instead of applying a second semantic policy.
+    if not declared_statuses:
+        names = list(keys)
+        for index, left_name in enumerate(names):
+            left = set(re.findall(r"[\w]+", cards[left_name].casefold()))
+            if not left:
+                continue
+            for right_name in names[index + 1:]:
+                right = set(re.findall(r"[\w]+", cards[right_name].casefold()))
+                if left and right and len(left & right) / min(len(left), len(right)) >= 0.86:
+                    cards[right_name] = ""
+                    card_statuses[public_keys[right_name]] = "invalid"
+                    card_reasons[public_keys[right_name]] = f"near_duplicate:{public_keys[left_name]}"
+
+    valid_count = sum(bool(prose) for prose in cards.values())
+    if valid_count == len(cards):
+        status = "complete"
+    elif valid_count:
+        status = "partial"
+    elif any(item in {"unsupported", "invalid"} for item in card_statuses.values()):
+        status = "invalid"
+    else:
+        status = "missing"
     return SummaryCardsDTO(
         tldr=cards["tldr"],
         problem=cards["problem"],
         method=cards["method"],
         keyResults=cards["key_results"],
         whyItMatters=cards["why_it_matters"],
-        status="complete",
+        status=status,
+        cardStatuses=card_statuses,
+        cardReasons=card_reasons,
     )
 
 
@@ -989,8 +1078,6 @@ def _paper_dto(value: Any) -> PaperDTO | None:
 
     quality_raw = raw.get("source_quality") or raw.get("sourceQuality") or raw.get("extraction_quality") or raw.get("extractionQuality")
     source_quality = _source_quality(quality_raw)
-    if source_quality.coverage_status != "complete" and summary_cards.status == "complete":
-        summary_cards = SummaryCardsDTO(status="invalid")
 
     try:
         return PaperDTO(
@@ -1633,6 +1720,27 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
     return {}
 
 
+def _summary_card_reasons_from_papers(value: Any) -> dict[str, str]:
+    """Collect safe card reasons without exposing source text or model prose."""
+
+    result: dict[str, str] = {}
+    for paper in _sequence_items(value):
+        raw = _model_dump(paper)
+        if not isinstance(raw, Mapping):
+            continue
+        paper_id = _public_identifier(raw.get("paper_id") or raw.get("paperId"))
+        notes = raw.get("notes")
+        if not paper_id or not isinstance(notes, Mapping):
+            continue
+        cards = _summary_cards(notes)
+        for card, reason in cards.card_reasons.items():
+            if reason:
+                result[f"{paper_id}.{card}"] = reason
+            if len(result) >= 64:
+                return result
+    return result
+
+
 def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) -> dict[str, Any]:
     """Build sparse, measured facts for a public state-update event.
 
@@ -1729,6 +1837,13 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
             report_id = _report_id_from_state(state)
             if report_id:
                 facts["reportId"] = report_id
+        reasons = _summary_card_reasons_from_papers(
+            update.get("selected_papers")
+            if "selected_papers" in update
+            else state.get("selected_papers")
+        )
+        if reasons:
+            facts["summaryCardReasons"] = reasons
 
     measured_timings = _timings_from_mapping(update)
     if measured_timings:
@@ -1779,6 +1894,22 @@ def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
     for key in ("comparisonAvailable", "reportAvailable"):
         if isinstance(facts.get(key), bool):
             clean[key] = facts[key]
+
+    raw_reasons = facts.get("summaryCardReasons")
+    if isinstance(raw_reasons, Mapping):
+        reasons: dict[str, str] = {}
+        key_re = re.compile(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,255}\.(?:tldr|problem|method|keyResults|whyItMatters)"
+        )
+        for raw_key, raw_reason in raw_reasons.items():
+            key = str(raw_key or "").strip()
+            reason = _safe_summary_card_reason(raw_reason)
+            if key_re.fullmatch(key) and reason:
+                reasons[key] = reason
+            if len(reasons) >= 64:
+                break
+        if reasons:
+            clean["summaryCardReasons"] = reasons
 
     timings = _numeric_timings(facts.get("timings")) if isinstance(facts.get("timings"), Mapping) else {}
     if timings:

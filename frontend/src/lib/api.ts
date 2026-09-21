@@ -165,6 +165,15 @@ function normalizeFacts(value: unknown): TraceFacts | null {
   if (typeof raw.comparisonAvailable === 'boolean') facts.comparisonAvailable = raw.comparisonAvailable
   if (typeof raw.reportAvailable === 'boolean') facts.reportAvailable = raw.reportAvailable
   if (typeof raw.reportId === 'string') facts.reportId = raw.reportId
+  if (raw.summaryCardReasons && typeof raw.summaryCardReasons === 'object' && !Array.isArray(raw.summaryCardReasons)) {
+    const reasons = Object.fromEntries(
+      Object.entries(asRecord(raw.summaryCardReasons))
+        .filter(([key, reason]) => Boolean(key.trim()) && typeof reason === 'string' && Boolean(reason.trim()))
+        .slice(0, 64)
+        .map(([key, reason]) => [key, (reason as string).trim()]),
+    )
+    if (Object.keys(reasons).length) facts.summaryCardReasons = reasons
+  }
   if (typeof raw.parserWarning === 'string') facts.parserWarning = raw.parserWarning
   if (Array.isArray(raw.parserWarnings)) facts.parserWarnings = asStringArray(raw.parserWarnings)
   if (Array.isArray(raw.headingFallbackPaperIds)) facts.headingFallbackPaperIds = asStringArray(raw.headingFallbackPaperIds)

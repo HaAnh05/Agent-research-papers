@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import copy
 import re
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Literal, Tuple
 
 from config import config
 from prompts.pmrl_notes_prompt import PMRL_NOTES_PROMPT
@@ -41,11 +43,117 @@ def _meaningful_tokens(value: str) -> set[str]:
     }
 
 
-def _number_tokens(value: str) -> set[str]:
-    return {
-        token.replace(",", "")
-        for token in re.findall(r"\b\d+(?:[.,]\d+)?%?\b", value or "")
-    }
+def _decimal_text(value: Decimal) -> str:
+    normalized = value.normalize()
+    rendered = format(normalized, "f")
+    return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
+
+
+@dataclass(frozen=True)
+class _NumberMention:
+    display: str
+    value: Decimal
+    unit: Literal["plain", "percent"]
+    start: int
+    end: int
+    decimal_places: int
+    context_id: int
+
+
+_NUMBER_CONTEXT_BOUNDARY_RE = re.compile(
+    r"[!?;]|(?<!\d)\.(?!\d)|(?<=\d)\.(?=\s|$)|\n\s*\n"
+)
+
+
+def _number_mentions(value: str) -> list[_NumberMention]:
+    """Parse numeric claims while retaining units and source position."""
+
+    mentions: list[_NumberMention] = []
+    pattern = re.compile(
+        r"(?<![\w.])([+-]?(?:\d{1,3}(?:,\d{3})+|\d+(?:[.,]\d+)?))(\s*%|percent\b)?",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(value or ""):
+        raw_number = match.group(1)
+        unsigned = raw_number.lstrip("+-")
+        if re.fullmatch(r"\d{1,3}(?:,\d{3})+", unsigned):
+            parsed_number = raw_number.replace(",", "")
+            decimal_places = 0
+        else:
+            parsed_number = raw_number.replace(",", ".")
+            decimal_places = len(parsed_number.partition(".")[2])
+        try:
+            number = Decimal(parsed_number)
+        except InvalidOperation:
+            continue
+        mentions.append(
+            _NumberMention(
+                display=match.group(0).strip(),
+                value=number,
+                unit="percent" if match.group(2) else "plain",
+                start=match.start(),
+                end=match.end(),
+                decimal_places=decimal_places,
+                context_id=sum(
+                    1 for _ in _NUMBER_CONTEXT_BOUNDARY_RE.finditer((value or "")[:match.start()])
+                ),
+            )
+        )
+    return mentions
+
+
+def _equivalent_ratio(mention: _NumberMention) -> Decimal:
+    return mention.value / Decimal(100) if mention.unit == "percent" else mention.value
+
+
+def _within_claim_precision(actual: Decimal, claim: _NumberMention) -> bool:
+    tolerance = Decimal("0.5") * (Decimal(10) ** -claim.decimal_places)
+    return abs(actual - claim.value) <= tolerance
+
+
+def _classify_number_claim(
+    claim: _NumberMention,
+    source_mentions: list[_NumberMention],
+    *,
+    allow_arithmetic: bool,
+) -> Literal["reported", "derived", "unsupported"]:
+    """Classify a number as directly reported, equivalent, or calculated.
+
+    Unit conversion (for example ``0.054`` to ``5.4%``) is derived evidence.
+    For Key Results only, a percentage may also be derived from two nearby
+    reported values using relative change.  The proximity bound prevents
+    unrelated numbers in distant sections from being combined.
+    """
+
+    if any(item.unit == claim.unit and item.value == claim.value for item in source_mentions):
+        return "reported"
+    if any(
+        item.unit != claim.unit and _equivalent_ratio(item) == _equivalent_ratio(claim)
+        for item in source_mentions
+    ):
+        return "derived"
+    if not allow_arithmetic or claim.unit != "percent":
+        return "unsupported"
+
+    plain = [item for item in source_mentions if item.unit == "plain"]
+    for index, left in enumerate(plain):
+        for right in plain[index + 1:]:
+            if left.context_id != right.context_id:
+                continue
+            if max(left.start, right.start) - min(left.end, right.end) > 160:
+                continue
+            for baseline in (left.value, right.value):
+                if baseline == 0:
+                    continue
+                relative_change = abs(left.value - right.value) / abs(baseline) * Decimal(100)
+                if _within_claim_precision(relative_change, claim):
+                    return "derived"
+    return "unsupported"
+
+
+def _number_reason_value(mention: _NumberMention) -> str:
+    suffix = "%" if mention.unit == "percent" else ""
+    return f"{_decimal_text(mention.value)}{suffix}"
 
 
 def _near_duplicate(left: str, right: str) -> bool:
@@ -68,14 +176,13 @@ def validate_summary_cards(
     value: Any,
     *,
     source_text: str = "",
-) -> Tuple[SummaryCards, str, str]:
+) -> Tuple[SummaryCards, str, str, Dict[str, str], Dict[str, str]]:
     """Validate compact cards without truncating or inventing replacement text.
 
-    The return status is ``complete`` only when all five cards are present,
-    are sufficiently distinct, and use vocabulary/numbers supported by the
-    extracted source.  Near-duplicate cards are blanked individually rather
-    than rejecting the whole set.  The third return value is a short
-    failure reason (``""`` when complete).
+    Each card is validated independently. Supported cards survive when a
+    sibling is missing, duplicated, or ungrounded; the aggregate status is
+    then ``partial``. The final mappings record per-card status and a stable
+    rejection reason for API/UI consumers.
     """
 
     if isinstance(value, SummaryCards):
@@ -87,36 +194,86 @@ def validate_summary_cards(
             else:  # pragma: no cover - Pydantic v1 compatibility
                 cards = SummaryCards.parse_obj(value)
         except Exception:
-            return SummaryCards(), "invalid", "schema_mismatch"
+            statuses = {name: "invalid" for name in SUMMARY_CARD_FIELDS}
+            return SummaryCards(), "invalid", "schema_mismatch", statuses, {
+                name: "schema_mismatch" for name in SUMMARY_CARD_FIELDS
+            }
     else:
-        return SummaryCards(), "missing", "no_structured_output"
+        statuses = {name: "missing" for name in SUMMARY_CARD_FIELDS}
+        return SummaryCards(), "missing", "no_structured_output", statuses, {
+            name: "no_structured_output" for name in SUMMARY_CARD_FIELDS
+        }
 
     fields = {name: str(getattr(cards, name, "") or "").strip() for name in SUMMARY_CARD_FIELDS}
-    for name in SUMMARY_CARD_FIELDS:
-        if not fields[name]:
-            return SummaryCards(), "missing", f"empty_field:{name}"
-
-    for index, left_name in enumerate(SUMMARY_CARD_FIELDS):
-        for right_name in SUMMARY_CARD_FIELDS[index + 1:]:
-            if _near_duplicate(fields[left_name], fields[right_name]):
-                fields[right_name] = ""
+    statuses: Dict[str, str] = {
+        name: "complete" if fields[name] else "missing" for name in SUMMARY_CARD_FIELDS
+    }
+    reasons = [f"empty_field:{name}" for name in SUMMARY_CARD_FIELDS if not fields[name]]
+    card_reasons: Dict[str, str] = {
+        name: "empty_field" for name in SUMMARY_CARD_FIELDS if not fields[name]
+    }
 
     source = (source_text or "").strip()
-    if not source:
-        return SummaryCards(), "invalid", "no_source_text"
     source_words = _meaningful_tokens(source)
-    source_numbers = _number_tokens(source)
-    for name, field in fields.items():
+    if len(source_words) < 5:
+        statuses = {name: "invalid" for name in SUMMARY_CARD_FIELDS}
+        return SummaryCards(), "invalid", "insufficient_source_text", statuses, {
+            name: "insufficient_source_text" for name in SUMMARY_CARD_FIELDS
+        }
+    source_numbers = _number_mentions(source)
+
+    for name in SUMMARY_CARD_FIELDS:
+        field = fields[name]
         if not field:
             continue
-        if not (_meaningful_tokens(field) & source_words):
-            return SummaryCards(), "invalid", f"no_source_overlap:{name}"
-        unsupported = _number_tokens(field) - source_numbers
-        if unsupported:
-            return SummaryCards(), "invalid", f"number_not_in_source:{name}={sorted(unsupported)[0]}"
+        # Why-it-matters is commonly translated. Lexical overlap between an
+        # English source and Vietnamese summary is not a grounding signal.
+        if name != "why_it_matters" and not (_meaningful_tokens(field) & source_words):
+            fields[name] = ""
+            statuses[name] = "unsupported"
+            reasons.append(f"no_source_overlap:{name}")
+            card_reasons[name] = "no_source_overlap"
+            continue
+        unsupported = next(
+            (
+                mention
+                for mention in _number_mentions(field)
+                if _classify_number_claim(
+                    mention,
+                    source_numbers,
+                    allow_arithmetic=name == "key_results",
+                ) == "unsupported"
+            ),
+            None,
+        )
+        if unsupported is not None:
+            reason_value = _number_reason_value(unsupported)
+            fields[name] = ""
+            statuses[name] = "unsupported"
+            reasons.append(f"number_not_in_source:{name}={reason_value}")
+            card_reasons[name] = f"number_not_in_source:{reason_value}"
+
+    for index, left_name in enumerate(SUMMARY_CARD_FIELDS):
+        if not fields[left_name]:
+            continue
+        for right_name in SUMMARY_CARD_FIELDS[index + 1:]:
+            if fields[right_name] and _near_duplicate(fields[left_name], fields[right_name]):
+                fields[right_name] = ""
+                statuses[right_name] = "invalid"
+                reasons.append(f"near_duplicate:{right_name}")
+                card_reasons[right_name] = f"near_duplicate:{left_name}"
 
     normalized = SummaryCards(**fields)
-    return normalized, "complete", ""
+    valid_count = sum(bool(fields[name]) for name in SUMMARY_CARD_FIELDS)
+    if valid_count == len(SUMMARY_CARD_FIELDS):
+        aggregate = "complete"
+    elif valid_count:
+        aggregate = "partial"
+    elif any(status in {"invalid", "unsupported"} for status in statuses.values()):
+        aggregate = "invalid"
+    else:
+        aggregate = "missing"
+    return normalized, aggregate, ";".join(reasons), statuses, card_reasons
 
 
 def validate_brief_summary(value: Any, *, max_words: int = 150) -> str:

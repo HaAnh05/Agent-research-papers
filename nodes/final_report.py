@@ -10,13 +10,16 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from config import config
+from nodes.write_notes import SUMMARY_CARD_FIELDS, validate_summary_cards
 from prompts.final_report_prompt import FINAL_REPORT_PROMPT
 from prompts.results_summary_prompt import RESULTS_SUMMARY_PROMPT
 from state import PaperItem, ResearchState, SummaryCards
 from text_utils import detect_response_language
 from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_cache, summary_cache_path
 from tools.llm_provider import extract_text_from_response, get_llm, invoke_structured_output
-from nodes.write_notes import SUMMARY_CARD_FIELDS, validate_summary_cards
+
+
+SUMMARY_PIPELINE_VERSION = "v4"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -140,6 +143,32 @@ def _paper_source_text(paper: PaperItem) -> str:
     return paper.extracted_text or paper.summary or ""
 
 
+def _summary_source_evidence(paper: PaperItem) -> str:
+    """Return claim-bearing evidence; metadata such as the title is not evidence."""
+
+    if paper.sections:
+        body = "\n".join(
+            str(paper.sections.get(section) or "")
+            for section in ("abstract", "methodology", "experiments", "limitations")
+        )
+    else:
+        body = paper.extracted_text or ""
+    return f"{paper.summary}\n{body}".strip()
+
+
+def _summary_source_quality(paper: PaperItem) -> str:
+    quality = paper.source_quality if isinstance(paper.source_quality, dict) else {}
+    coverage = str(quality.get("coverageStatus") or quality.get("coverage_status") or "unknown")
+    missing = quality.get("missingSections") or quality.get("missing_sections") or []
+    missing_text = ", ".join(str(item) for item in missing if str(item).strip()) if isinstance(missing, list) else ""
+    warning = str(quality.get("warning") or "").strip()
+    return (
+        f"Coverage status: {coverage}\n"
+        f"Missing verified sections: {missing_text or 'none reported'}\n"
+        f"Parser warning: {warning or 'none'}"
+    )
+
+
 def _summary_prompt(paper: PaperItem, report_text: str, language_mode: str) -> str:
     notes = paper.notes
     pmrl_text = (
@@ -158,7 +187,8 @@ def _summary_prompt(paper: PaperItem, report_text: str, language_mode: str) -> s
         language_mode=language_mode,
         pmrl_notes=pmrl_text[:9000],
         final_report=report_text[:12000],
-        source_text=f"{paper.title}\n{paper.summary}\n{_paper_source_text(paper)}"[:14000],
+        source_quality=_summary_source_quality(paper),
+        source_text=f"{paper.summary}\n{_paper_source_text(paper)}"[:14000],
     )
 
 
@@ -167,6 +197,13 @@ def _mark_summary_status(paper: PaperItem, status: str, reason: str = "") -> Pap
     if result.notes is not None:
         result.notes.summary_cards = SummaryCards()
         result.notes.summary_quality = status  # type: ignore[assignment]
+        result.notes.summary_card_statuses = {
+            field: status if status in {"invalid", "missing"} else "unknown"
+            for field in SUMMARY_CARD_FIELDS
+        }
+        result.notes.summary_card_reasons = {
+            field: reason for field in SUMMARY_CARD_FIELDS if reason
+        }
     result.processing_metadata = dict(result.processing_metadata or {})
     result.processing_metadata["summary"] = {"status": status, "wordCount": 0, "reason": reason}
     return result
@@ -189,19 +226,22 @@ def _summarize_one(
             provider=config.DEFAULT_PROVIDER,
         )
         llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
-        validated, status, reason = validate_summary_cards(
+        validated, status, reason, card_statuses, card_reasons = validate_summary_cards(
             cards,
-            source_text=f"{result.title}\n{result.summary}\n{_paper_source_text(result)}",
+            source_text=_summary_source_evidence(result),
         )
         if result.notes is None:
             return result, "missing", {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms, "reason": reason or "no_pmrl_notes"}
         result.notes.summary_cards = validated
         result.notes.summary_quality = status  # type: ignore[assignment]
+        result.notes.summary_card_statuses = card_statuses  # type: ignore[assignment]
+        result.notes.summary_card_reasons = card_reasons
         result.processing_metadata = dict(result.processing_metadata or {})
         result.processing_metadata["summary"] = {
             "status": status,
             "wordCount": sum(len(str(getattr(validated, field, "") or "").split()) for field in SUMMARY_CARD_FIELDS),
             "reason": reason,
+            "cardReasons": card_reasons,
         }
         return result, status, {
             "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
@@ -240,6 +280,10 @@ def _post_report_summary(
         timings[paper.paper_id] = timing
         if status == "complete":
             logs.append(f"[final_report] Summary cards ready: {paper.paper_id}")
+        elif status == "partial":
+            failed = True
+            reason = str((timing or {}).get("reason") or status)
+            logs.append(f"[final_report] Summary cards partially ready: {paper.paper_id} ({reason})")
         else:
             failed = True
             reason = str((timing or {}).get("reason") or status)
@@ -290,9 +334,13 @@ def _report_cache_key(
     language_mode: str,
     breakdown: str,
     benchmark_section: str,
+    papers: List[PaperItem],
 ) -> tuple[str, Any]:
     """Resolve the report cache entry for the exact synthesis input (fail-open)."""
 
+    summary_inputs = "\n\n".join(
+        _summary_prompt(paper, "", language_mode) for paper in papers
+    )
     key = (
         "report_"
         + prompt_fingerprint(
@@ -304,6 +352,9 @@ def _report_cache_key(
             language_mode,
             breakdown,
             benchmark_section,
+            RESULTS_SUMMARY_PROMPT,
+            SUMMARY_PIPELINE_VERSION,
+            summary_inputs,
         )
     )
     return key, summary_cache_path(key)
@@ -328,13 +379,29 @@ def _restore_report_cache(papers: List[PaperItem], cached: Any) -> tuple[str, Li
         except Exception:
             return None
         quality = str(entry.get("quality") or "")
-        if quality not in {"complete", "invalid", "missing"}:
+        # Failed summaries are retryable and must not become durable cache
+        # hits. Complete and partial entries passed per-card validation.
+        if quality not in {"complete", "partial"}:
             return None
         result = copy.deepcopy(paper)
         if result.notes is None:
             return None
         result.notes.summary_cards = cards
         result.notes.summary_quality = quality  # type: ignore[assignment]
+        statuses = entry.get("card_statuses")
+        if isinstance(statuses, dict):
+            result.notes.summary_card_statuses = {
+                str(name): str(status)  # type: ignore[dict-item]
+                for name, status in statuses.items()
+                if name in SUMMARY_CARD_FIELDS and status in {"complete", "unsupported", "invalid", "missing", "unknown"}
+            }
+        reasons = entry.get("card_reasons")
+        if isinstance(reasons, dict):
+            result.notes.summary_card_reasons = {
+                str(name): str(reason)
+                for name, reason in reasons.items()
+                if name in SUMMARY_CARD_FIELDS and isinstance(reason, str) and reason
+            }
         result.processing_metadata = dict(result.processing_metadata or {})
         result.processing_metadata["summary"] = {
             "status": quality,
@@ -402,7 +469,9 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
         # report and cards without any LLM call.  Skipped for empty runs so
         # degenerate states keep unique per-run artifacts.
         if papers:
-            _, cache_path = _report_cache_key(user_query, title, language_mode, breakdown, benchmark_section)
+            _, cache_path = _report_cache_key(
+                user_query, title, language_mode, breakdown, benchmark_section, papers
+            )
             assert cache_path is not None
             restored = _restore_report_cache(papers, load_json_cache(cache_path))
             if restored is not None:
@@ -438,22 +507,18 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
         summary_failed = False
         with ThreadPoolExecutor(max_workers=2) as executor:
             report_future = executor.submit(_synthesize_report, llm_synth, prompt, title)
-            if incomplete_sources:
-                summary_future = None
-            else:
-                summary_future = executor.submit(
-                    _post_report_summary, papers, "", language_mode, llm_summary
-                )
+            summary_future = executor.submit(
+                _post_report_summary, papers, "", language_mode, llm_summary
+            )
             report_text, llm_ms = report_future.result()
-            if summary_future is None:
-                summarized_papers = [_mark_summary_status(paper, "missing", "source_incomplete") for paper in papers]
-                summary_logs.append("[final_report] Bỏ qua Summary cards vì trích xuất nguồn chưa hoàn chỉnh")
-                summary_failed = True
-            else:
-                summarized_papers, summary_logs, summary_timings, summary_failed = summary_future.result()
+            summarized_papers, summary_logs, summary_timings, summary_failed = summary_future.result()
         logs.extend(summary_logs)
 
-        if papers:
+        cacheable_summaries = all(
+            paper.notes is not None and paper.notes.summary_quality in {"complete", "partial"}
+            for paper in summarized_papers
+        )
+        if papers and cacheable_summaries:
             assert cache_path is not None
             save_json_cache(cache_path, {
                 "report_text": report_text,
@@ -461,6 +526,8 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                     paper.paper_id: {
                         "cards": paper.notes.summary_cards.model_dump(mode="json") if paper.notes else {},
                         "quality": paper.notes.summary_quality if paper.notes else "missing",
+                        "card_statuses": paper.notes.summary_card_statuses if paper.notes else {},
+                        "card_reasons": paper.notes.summary_card_reasons if paper.notes else {},
                     }
                     for paper in summarized_papers
                 },

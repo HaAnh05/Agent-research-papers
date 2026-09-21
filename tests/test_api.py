@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 import api
 from config import config
-from state import GitHubRepoInfo, PMRLNotes, PaperItem
+from state import GitHubRepoInfo, PMRLNotes, PaperItem, SummaryCards
 
 
 class FakeGraph:
@@ -354,7 +354,8 @@ def test_paper_dto_validates_brief_and_marks_legacy_quality_unknown():
     assert valid_payload["notes"]["status"] == "complete"
     assert valid_payload["pmrlStatus"] == "complete"
     assert valid_payload["notesQuality"] == "complete"
-    assert valid_payload["sourceQuality"] == {"heading": "heading", "parserStatus": "success"}
+    assert valid_payload["sourceQuality"]["heading"] == "heading"
+    assert valid_payload["sourceQuality"]["parserStatus"] == "success"
 
     invalid = PaperItem(
         paper_id="arxiv_2005.14165",
@@ -375,7 +376,66 @@ def test_paper_dto_validates_brief_and_marks_legacy_quality_unknown():
     assert legacy_payload["notes"]["briefSummary"] is None
     assert legacy_payload["pmrlStatus"] == "unknown"
     assert legacy_payload["notesQuality"] == "unknown"
-    assert legacy_payload["sourceQuality"] == {"heading": "unknown", "parserStatus": "unknown"}
+    assert legacy_payload["sourceQuality"]["heading"] == "unknown"
+    assert legacy_payload["sourceQuality"]["parserStatus"] == "unknown"
+    assert legacy_payload["sourceQuality"]["coverageStatus"] == "unknown"
+
+
+def test_paper_dto_keeps_complete_summary_when_source_coverage_is_incomplete():
+    cards = SummaryCards(
+        tldr="Alpha contribution improves sequence learning.",
+        problem="Beta problem limits parallel recurrent training.",
+        method="Gamma method uses a self attention architecture.",
+        key_results="Delta benchmark evidence improves the reported baseline.",
+        why_it_matters="Epsilon impact enables faster practical modeling.",
+    )
+    paper = PaperItem(
+        paper_id="incomplete-source",
+        title="Incomplete source",
+        source_quality={"coverageStatus": "incomplete", "missingSections": ["experiments"]},
+        notes=PMRLNotes(
+            problem="p", method="m", result="r", limitation="l",
+            summary_cards=cards, summary_quality="complete",
+        ),
+    )
+
+    payload = api._paper_dto(paper).model_dump(mode="json", by_alias=True)
+
+    assert payload["summaryCards"]["status"] == "complete"
+    assert payload["summaryCards"]["tldr"] == cards.tldr
+    assert payload["sourceQuality"]["coverageStatus"] == "incomplete"
+
+
+def test_paper_dto_preserves_valid_cards_from_partial_summary():
+    paper = PaperItem(
+        paper_id="partial-summary",
+        title="Partial summary",
+        source_quality={"coverageStatus": "incomplete"},
+        notes=PMRLNotes(
+            problem="p", method="m", result="r", limitation="l",
+            summary_cards=SummaryCards(
+                tldr="Alpha contribution improves sequence learning.",
+                problem="Beta problem limits parallel recurrent training.",
+                method="Gamma method uses a self attention architecture.",
+                key_results="",
+                why_it_matters="Epsilon impact enables faster practical modeling.",
+            ),
+            summary_quality="partial",
+            summary_card_statuses={
+                "tldr": "complete", "problem": "complete", "method": "complete",
+                "key_results": "missing", "why_it_matters": "complete",
+            },
+            summary_card_reasons={"key_results": "number_not_in_source:62.5%"},
+        ),
+    )
+
+    cards = api._paper_dto(paper).model_dump(mode="json", by_alias=True)["summaryCards"]
+
+    assert cards["status"] == "partial"
+    assert cards["tldr"]
+    assert cards["keyResults"] == ""
+    assert cards["cardStatuses"]["keyResults"] == "missing"
+    assert cards["cardReasons"]["keyResults"] == "number_not_in_source:62.5%"
 
 
 def test_structured_comparison_artifact_is_safe_and_gates_metric_comparability():
@@ -580,11 +640,35 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
         {"benchmark_matrix": "*(Không thể tạo ma trận so sánh tự động: api_key=secret)*"},
     ) == {"comparisonAvailable": False}
     assert api._valid_benchmark("| Paper | Result |\n| A | error unavailable metric is documented |") is True
+    paper_with_reason = paper_one.model_copy(update={
+        "notes": PMRLNotes(
+            problem="p", method="m", result="r", limitation="l",
+            summary_quality="partial",
+            summary_card_statuses={"key_results": "unsupported"},
+            summary_card_reasons={"key_results": "number_not_in_source:62.5%"},
+        )
+    })
     assert api._step_facts(
         "final_report",
         {"status": "success", "trace_logs": ["[final_report] saved: run.md"]},
-        {"final_report": "# Run", "status": "success"},
-    ) == {"reportAvailable": True, "reportId": "run.md"}
+        {"final_report": "# Run", "status": "success", "selected_papers": [paper_with_reason]},
+    ) == {
+        "reportAvailable": True,
+        "reportId": "run.md",
+        "summaryCardReasons": {
+            "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
+        },
+    }
+    assert api._sanitize_facts({
+        "summaryCardReasons": {
+            "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
+            "arxiv_1706.03762.method": "/tmp/private source text",
+        }
+    }) == {
+        "summaryCardReasons": {
+            "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
+        }
+    }
     assert api._valid_report("# Findings\n\nThe report explains an error in the final report.") is True
     assert api._valid_report("# Error Generating Final Report\n\nProvider unavailable.") is False
 

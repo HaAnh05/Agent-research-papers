@@ -58,6 +58,59 @@ describe('ResultsWorkspace', () => {
     expect(screen.getByText('Copy BibTeX')).toBeInTheDocument()
   })
 
+  it('keeps available summary cards when the aggregate summary status is partial', () => {
+    const summaryCards = {
+      tldr: 'A concise overview of the attention architecture.',
+      problem: 'The paper addresses sequence modeling without recurrence.',
+      method: 'The authors use self attention across sequence positions.',
+      keyResults: '',
+      whyItMatters: 'Parallel attention makes sequence training more efficient.',
+      status: 'partial' as const,
+      cardStatuses: {
+        tldr: 'complete' as const,
+        problem: 'complete' as const,
+        method: 'complete' as const,
+        keyResults: 'missing' as const,
+        whyItMatters: 'complete' as const,
+      },
+      cardReasons: {
+        keyResults: 'number_not_in_source:62.5%',
+      },
+    }
+    const basePaper = snapshot().result?.papers?.[0]
+    const paper = { ...(basePaper ?? {}), title: basePaper?.title ?? 'Attention Is All You Need', summaryCards }
+    render(<ResultsWorkspace snapshot={snapshot({ papers: [paper] })} events={[event()]} onNewResearch={vi.fn()} />)
+
+    expect(screen.getByText(summaryCards.tldr)).toBeInTheDocument()
+    expect(screen.getByText(summaryCards.problem)).toBeInTheDocument()
+    expect(screen.getByText(summaryCards.method)).toBeInTheDocument()
+    expect(screen.getByText(summaryCards.whyItMatters)).toBeInTheDocument()
+    expect(screen.getByText('No source-supported result was available.')).toBeInTheDocument()
+    expect(screen.queryByText('Summary unavailable for this section.')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['missing', 'No summary was generated for this section.'],
+    ['invalid', 'This summary section did not pass validation.'],
+    ['unknown', 'This summary section is unavailable.'],
+  ] as const)('keeps aggregate %s summaries fail-closed for legacy payloads', (status, unavailableCopy) => {
+    const summaryCards = {
+      tldr: 'Legacy TLDR text.',
+      problem: 'Legacy problem text.',
+      method: 'Legacy method text.',
+      keyResults: 'Legacy key results text.',
+      whyItMatters: 'Legacy impact text.',
+      status,
+    }
+    const basePaper = snapshot().result?.papers?.[0]
+    const paper = { ...(basePaper ?? {}), title: basePaper?.title ?? 'Attention Is All You Need', summaryCards }
+    render(<ResultsWorkspace snapshot={snapshot({ papers: [paper] })} events={[event()]} onNewResearch={vi.fn()} />)
+
+    expect(screen.queryByText('Legacy TLDR text.')).not.toBeInTheDocument()
+    expect(screen.getAllByText(unavailableCopy)).toHaveLength(5)
+    expect(screen.queryByText('Summary unavailable for this section.')).not.toBeInTheDocument()
+  })
+
   it('only exposes Comparison when benchmark evidence is explicitly available', async () => {
     const user = userEvent.setup()
     const papers = [
@@ -152,7 +205,7 @@ describe('ResultsWorkspace', () => {
     const user = userEvent.setup()
     render(<ResultsWorkspace snapshot={snapshot({ report: '# Final report\n\n## Findings\n\nMarkdown' })} events={[event()]} onNewResearch={vi.fn()} />)
     await user.click(screen.getByRole('tab', { name: 'Report' }))
-    expect(screen.getAllByRole('heading', { name: 'Final report' })).toHaveLength(1)
+    expect(screen.getAllByRole('heading', { name: 'Research Report: Attention Is All You Need' })).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument()
   })
 
@@ -166,5 +219,13 @@ describe('ResultsWorkspace', () => {
     expect(screen.getByText('Notes completed again')).toBeInTheDocument()
     expect(screen.getByText('Duration · 1.3s')).toBeInTheDocument()
     expect(screen.queryByText('private model reasoning')).not.toBeInTheDocument()
+  })
+
+  it('shows per-card validation reasons in Activity debug details', async () => {
+    const user = userEvent.setup()
+    render(<ResultsWorkspace snapshot={snapshot()} events={[event({ facts: { summaryCardReasons: { '1706.03762.keyResults': 'number_not_in_source:62.5%' } } })]} onNewResearch={vi.fn()} />)
+
+    await user.click(screen.getByText('Activity'))
+    expect(screen.getByText('Summary validation · 1706.03762.keyResults: number_not_in_source:62.5%')).toBeInTheDocument()
   })
 })
