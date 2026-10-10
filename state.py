@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import operator
 from typing import Annotated, Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing_extensions import TypedDict
 
 
@@ -16,6 +16,56 @@ class SummaryCards(BaseModel):
     method: str = Field(default="", description="The core mechanism, in 30-80 words.")
     key_results: str = Field(default="", description="One to three source-backed findings, in 30-80 words.")
     why_it_matters: str = Field(default="", description="A concise implication distinct from measured results, in 30-80 words.")
+
+
+class _LenientModel(BaseModel):
+    """Base for LLM-produced records: ``null`` falls back to the default and
+    bare numbers become strings, so one sloppy field does not discard the record."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_llm_values(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned: Dict[str, Any] = {}
+        for key, value in data.items():
+            if value is None:
+                continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and key != "higher_is_better":
+                value = str(value)
+            cleaned[key] = value
+        return cleaned
+
+
+class Insight(_LenientModel):
+    """One finding a reader would not get from skimming the abstract."""
+
+    finding: str = Field(default="", description="What we learn from the paper, in one or two sentences. Not a restated number.")
+    why_it_matters: str = Field(default="", description="Why a researcher should care: the consequence for design, practice or follow-up work.")
+
+
+class EvalSetting(_LenientModel):
+    """One key benchmark/metric row: the paper's method against its strongest baseline."""
+
+    benchmark: str = Field(default="", description="Dataset, task or benchmark name as the paper writes it.")
+    metric: str = Field(default="", description="Metric name as the paper writes it.")
+    metric_meaning: str = Field(default="", description="One short sentence: what this metric measures.")
+    higher_is_better: Optional[bool] = Field(default=None, description="true if a higher value is better, false if lower is better, null if unclear.")
+    unit: str = Field(default="", description="Unit such as %, ms, score; empty if the paper gives none.")
+    method_value: str = Field(default="", description="The paper's own method value, copied exactly from the source.")
+    baseline_name: str = Field(default="", description="Name of the strongest baseline in the same row or column.")
+    baseline_value: str = Field(default="", description="That baseline's value, copied exactly from the source; empty if none.")
+    table_label: str = Field(default="", description='Source table label such as "Table 2"; empty if the value comes from prose.')
+    source_quote: str = Field(default="", description="A short exact quote or table row from the source that holds the values.")
+
+
+class Setup(_LenientModel):
+    """Experimental setup; every field stays an empty string when the paper does not state it."""
+
+    datasets: str = Field(default="", description="Datasets or benchmarks used for evaluation.")
+    training_config: str = Field(default="", description="Key training configuration: optimizer, learning rate, batch size, steps, horizon, and similar.")
+    hardware: str = Field(default="", description="Hardware exactly as the paper states it (GPU/TPU model and count). Empty string if not stated. Never guess.")
+    compute: str = Field(default="", description="Compute budget such as training time or GPU hours. Empty string if not stated.")
 
 
 class PMRLGeneration(BaseModel):
@@ -33,6 +83,13 @@ class PMRLGeneration(BaseModel):
         default="",
         description="Legacy compact conclusion plus 3 or 4 bullets, at most 150 words; empty when unavailable.",
     )
+    # Structured evidence generated in the same PMRL call.  ``eval_settings`` and
+    # ``setup.hardware`` are checked against the paper source in code
+    # (nodes.write_notes.ground_structured_notes) before they are used.
+    method_name: str = Field(default="", description="Short name the paper gives its own method (for example a model name); empty if none.")
+    insights: List[Insight] = Field(default_factory=list)
+    eval_settings: List[EvalSetting] = Field(default_factory=list)
+    setup: Setup = Field(default_factory=Setup)
 
 
 class PMRLNotes(BaseModel):
@@ -73,6 +130,13 @@ class PMRLNotes(BaseModel):
             "points, at most 150 words in total."
         ),
     )
+    # Structured evidence generated in the same PMRL call.  ``eval_settings`` and
+    # ``setup.hardware`` are checked against the paper source in code
+    # (nodes.write_notes.ground_structured_notes) before they are used.
+    method_name: str = Field(default="", description="Short name the paper gives its own method (for example a model name); empty if none.")
+    insights: List[Insight] = Field(default_factory=list)
+    eval_settings: List[EvalSetting] = Field(default_factory=list)
+    setup: Setup = Field(default_factory=Setup)
 
 
 class GitHubRepoInfo(BaseModel):

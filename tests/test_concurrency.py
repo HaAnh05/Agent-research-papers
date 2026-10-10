@@ -408,7 +408,7 @@ def test_single_paper_english_mode_headings(monkeypatch, tmp_path):
 
 def test_parallel_cache_key_includes_version(monkeypatch):
     paper = _paper("p1", "First Paper", "2303.04137")
-    assert final_report.PARALLEL_REPORT_VERSION == "p7"
+    assert final_report.PARALLEL_REPORT_VERSION == "p8"
     first, _ = final_report._report_cache_key("q", "T", "English", "b", [paper], parallel=True)
     monkeypatch.setattr(final_report, "PARALLEL_REPORT_VERSION", "next")
     second, _ = final_report._report_cache_key("q", "T", "English", "b", [paper], parallel=True)

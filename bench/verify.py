@@ -75,6 +75,10 @@ def _source_text(data: dict[str, Any]) -> str:
     sections = data.get("sections") or {}
     if isinstance(sections, dict):
         parts.extend(str(v) for v in sections.values() if isinstance(v, str))
+    for table in data.get("tables") or []:  # structured HTML tables (caption + rows)
+        if isinstance(table, dict):
+            parts.append(str(table.get("caption") or ""))
+            parts.extend(" | ".join(str(c) for c in row) for row in table.get("rows") or [] if isinstance(row, list))
     return "\n".join(parts)
 
 
@@ -220,6 +224,77 @@ def check_report_structure(report: str, n_papers: int) -> Check:
     if found < n_papers:
         problems.append(f"### headings in section 2: {found} < {n_papers} papers")
     return Check("report_structure", "HARD", "FAIL" if problems else "PASS", "; ".join(problems) or f"H1, ## 1-4, {found} paper headings")
+
+
+# "Key results" sub-bullets every paper block must carry (Vietnamese or English label).
+RESULT_SUB_BULLETS = {
+    "Insight": r"insights?",
+    "Metrics": r"đại lượng đo|metrics?",
+    "Setup": r"thiết lập|setup",
+}
+
+
+def check_results_format(report: str) -> Check:
+    """Every paper block has the Insight, Metrics and Setup sub-bullets."""
+
+    blocks = paper_blocks(split_sections(report).get(2, ""))
+    if not blocks:
+        return Check("results_format", "HARD", "FAIL", "no paper blocks in section 2")
+    missing = [
+        f"{block.splitlines()[0][:40]}: {name}"
+        for block in blocks
+        for name, pattern in RESULT_SUB_BULLETS.items()
+        if not re.search(rf"(?mi)^[ \t]*[-*•][ \t]*\**[ \t]*(?:{pattern})[ \t]*\**[ \t]*:", block)
+    ]
+    return Check("results_format", "HARD", "FAIL" if missing else "PASS",
+                 f"missing={missing[:4]}" if missing else f"{len(blocks)} blocks have Insight/Metrics/Setup")
+
+
+def table_value_cells(block: str) -> list[str]:
+    """Value cells (method and baseline columns) of the markdown tables in one paper block."""
+
+    cells: list[str] = []
+    in_table = False
+    for line in block.splitlines():
+        if not re.match(r"^\s*\|", line):
+            in_table = False
+            continue
+        if re.match(r"^\s*\|[\s:|-]+\|\s*$", line):
+            continue
+        if not in_table:  # first row of a table is the header
+            in_table = True
+            continue
+        row = re.split(r"(?<!\\)\|", line.strip().strip("|"))
+        for cell in row[2:]:
+            # a baseline cell reads "value (baseline name)": the name is not a number claim
+            cells.append(re.sub(r"(?<=\S)\s*\([^)]*\)\s*$", "", cell.strip()))
+    return cells
+
+
+def check_table_numbers(report: str, run: Run) -> Check:
+    """Every number in a rendered results table occurs in that paper's source text."""
+
+    blocks = paper_blocks(split_sections(report).get(2, ""))
+    ids_by_paper = {pid: run.arxiv_ids.get(pid) or _arxiv_id(pid) for pid in run.paper_ids}
+    bad: list[str] = []
+    checked = 0
+    for index, block in enumerate(blocks):
+        cells = table_value_cells(block)
+        if not cells:
+            continue
+        pid = next((p for p, a in ids_by_paper.items() if a and a in block), None) or (
+            run.paper_ids[index] if index < len(run.paper_ids) else None)
+        source = source_number_set({pid: run.sources[pid]}) if pid in run.sources else None
+        if source is None:
+            bad.append(f"{block.splitlines()[0][:40]}: no source text")
+            continue
+        for cell in cells:
+            for match in _NUMBER_RE.finditer(cell):
+                checked += 1
+                if not number_variants(match.group(1), bool(match.group(2))) & source:
+                    bad.append(f"{block.splitlines()[0][:30]}: {match.group(0).strip()}")
+    return Check("results_table_numbers", "HARD", "FAIL" if bad else "PASS",
+                 f"not in source: {bad[:5]}" if bad else f"{checked} table numbers found in source")
 
 
 def check_arxiv_links(report: str, run: Run) -> Check:
@@ -431,6 +506,8 @@ def verify(baseline: Run, candidate: Run, th: Thresholds | None = None, *, stric
         check_paper_ids(baseline, candidate),
         check_notes_nonempty(candidate),
         check_report_structure(candidate.report, len(candidate.paper_ids)),
+        check_results_format(candidate.report),
+        check_table_numbers(candidate.report, candidate),
         check_arxiv_links(candidate.report, candidate),
         check_no_internal_lines(candidate.report),
         check_summary_quality(baseline, candidate, strict),

@@ -88,6 +88,11 @@ class AppConfig:
     HTML_SETUP_MAX_CHARS: int = int(os.getenv("HTML_SETUP_MAX_CHARS", "6000"))
     HTML_ABSTRACT_MAX_CHARS: int = int(os.getenv("HTML_ABSTRACT_MAX_CHARS", "3000"))
     HTML_LIMITATIONS_MAX_CHARS: int = int(os.getenv("HTML_LIMITATIONS_MAX_CHARS", "3000"))
+    # Upper bound for the paper text sent to the PMRL call (sections + setup +
+    # tables).  The HTML section caps above sum to 32,000 characters and the
+    # labelled tables come after the sections, so 40,000 keeps typical papers
+    # whole (~10k tokens) and trims only the trailing tables of very table-heavy ones.
+    PMRL_INPUT_MAX_CHARS: int = int(os.getenv("PMRL_INPUT_MAX_CHARS", "40000"))
 
 
     def __init__(self) -> None:
