@@ -19,8 +19,14 @@ references of the selected papers come from the HTML bibliography):
 2. pool = citers of every seed and of the selected works; keep the ``pool_size``
    works that cite the most seeds; fetch their details (with ``referenced_works``);
 3. score = cosine bibliographic coupling ``|refs & seeds| / sqrt(|refs| |seeds|)``
-   + ``DIRECT_CITE_BONUS`` when the work cites a selected work
-   + ``INDEX_BONUS`` when its arXiv id is in the local cs.* index;
+   + ``CITATION_SIMILARITY_DIRECT_BONUS`` when the work cites a selected work
+   + ``CITATION_SIMILARITY_INDEX_BONUS`` when the work is in the local cs.* index
+   (arXiv id from the seed DOI map, the OpenAlex DOI, or an exact title match);
+   candidates sharing fewer than ``CITATION_SIMILARITY_MIN_SHARED`` seeds are dropped
+   unless they cite a selected work.  Title, year and abstract come from the local
+   index when the paper is in it (OpenAlex titles of arXiv preprints can be wrong),
+   else from the HTML bibliography title of a seed, else from OpenAlex;
+   ``title_source`` records which one;
 4. edges = cosine of reference sets between graph nodes (origin = its seeds);
    each node keeps its ``edges_per_node`` strongest edges >= ``EDGE_MIN_WEIGHT``;
 5. prior works = most referenced by the graph nodes; derivative works = pool works
@@ -41,8 +47,6 @@ from state import PaperItem
 from tools.openalex import OpenAlexClient, arxiv_id_of_work, short_id
 from tools.ref_resolver import RefResolver, clean_arxiv_id
 
-DIRECT_CITE_BONUS = 0.10
-INDEX_BONUS = 0.05
 EDGE_MIN_WEIGHT = 0.05
 LIST_SIZE = 10
 BATCH = 50
@@ -125,6 +129,9 @@ def build_similarity_graph(
     pool_size: Optional[int] = None,
     edges_per_node: Optional[int] = None,
     budget_sec: Optional[float] = None,
+    index_bonus: Optional[float] = None,
+    direct_bonus: Optional[float] = None,
+    min_shared: Optional[int] = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
@@ -132,6 +139,9 @@ def build_similarity_graph(
     pool_size = config.CITATION_SIMILARITY_POOL if pool_size is None else pool_size
     edges_per_node = config.CITATION_SIMILARITY_EDGES_PER_NODE if edges_per_node is None else edges_per_node
     budget_sec = config.CITATION_SIMILARITY_BUDGET_SEC if budget_sec is None else budget_sec
+    index_bonus = config.CITATION_SIMILARITY_INDEX_BONUS if index_bonus is None else index_bonus
+    direct_bonus = config.CITATION_SIMILARITY_DIRECT_BONUS if direct_bonus is None else direct_bonus
+    min_shared = config.CITATION_SIMILARITY_MIN_SHARED if min_shared is None else min_shared
     if client is None or not client.has_key:
         return _empty("no_key", started)
 
@@ -152,12 +162,15 @@ def build_similarity_graph(
 
     ref_arxiv: Dict[int, List[str]] = {}               # paper index -> resolved reference arXiv ids
     all_ref_arxiv: List[str] = []
+    ref_titles: Dict[str, str] = {}                    # arxiv id -> title in the HTML bibliography
     for idx, paper in enumerate(selected_papers):
         found: List[str] = []
         for ref in paper.references:
             res = resolver.resolve(ref)
             if res is not None and res.arxiv_id not in found and res.arxiv_id != sel_ids[idx]:
                 found.append(res.arxiv_id)
+                if ref.title and res.arxiv_id not in ref_titles:
+                    ref_titles[res.arxiv_id] = " ".join(ref.title.split())
         ref_arxiv[idx] = found
         all_ref_arxiv.extend(a for a in found if a not in all_ref_arxiv)
     arxiv_to_w: Dict[str, str] = {}
@@ -167,6 +180,9 @@ def build_similarity_graph(
             arxiv = clean_arxiv_id(arxiv_id_of_work(work))
             if arxiv and work.get("id"):
                 arxiv_to_w[arxiv] = short_id(work["id"])
+
+    w_arxiv: Dict[str, str] = {short_id(w.get("id")): a for a, w in sel_works.items()}
+    w_arxiv.update({w: a for a, w in arxiv_to_w.items()})     # W id -> arXiv id for selected works and seeds
 
     origins: List[Dict[str, Any]] = []                 # one per selected paper
     seen_origin: Set[str] = set()
@@ -208,20 +224,32 @@ def build_similarity_graph(
             if wid and wid not in sel_wids:
                 details[wid] = work
 
-    # --- 4. scoring ----------------------------------------------------------------------
+    # --- 4. identity (arXiv id, index record) and scoring --------------------------------
+    ident_cache: Dict[str, Tuple[Optional[str], Optional[Dict[str, str]]]] = {}
+
+    def identify(wid: str, work: Dict[str, Any], hint: Optional[str] = None) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+        if wid not in ident_cache:
+            arxiv = hint or w_arxiv.get(wid) or clean_arxiv_id(arxiv_id_of_work(work))
+            record = resolver.lookup_record(arxiv) if arxiv else None
+            if arxiv is None:
+                arxiv = resolver.resolve_title(str(work.get("title") or ""))
+                record = resolver.lookup_record(arxiv) if arxiv else None
+            ident_cache[wid] = (arxiv, record)
+        return ident_cache[wid]
+
     sel_arxiv_set = set(sel_arxiv)
     scored: List[Tuple[float, float, str]] = []
     for wid, work in details.items():
         refs = _refs_of(work)
-        arxiv = clean_arxiv_id(arxiv_id_of_work(work))
+        arxiv, record = identify(wid, work)
         if arxiv in sel_arxiv_set or not refs:
             continue
-        cos = _cosine(refs, seeds)
+        shared = len(refs & seeds)
         is_direct = wid in direct
-        if cos <= 0 and not is_direct:
+        if shared < max(1, min_shared) and not is_direct:
             continue
-        in_index = bool(arxiv and resolver.lookup_record(arxiv))
-        score = cos + (DIRECT_CITE_BONUS if is_direct else 0.0) + (INDEX_BONUS if in_index else 0.0)
+        cos = _cosine(refs, seeds)
+        score = cos + (direct_bonus if is_direct else 0.0) + (index_bonus if record else 0.0)
         scored.append((score, cos, wid))
     scored.sort(key=lambda t: (-t[0], -(_count(details[t[2]]) or 0), t[2]))
     top = scored[:max(0, max_nodes)]
@@ -229,11 +257,18 @@ def build_similarity_graph(
     # --- 5. nodes ----------------------------------------------------------------------------
     def node_dict(wid: str, work: Dict[str, Any], role: str, similarity: float,
                   paper: Optional[PaperItem] = None, arxiv_hint: Optional[str] = None) -> Dict[str, Any]:
-        arxiv = clean_arxiv_id(arxiv_id_of_work(work)) or arxiv_hint or None
-        record = resolver.lookup_record(arxiv) if arxiv else None
-        title = " ".join(str(work.get("title") or "").split()) or (paper.title if paper else "") \
-            or (record["title"] if record else "") or wid
-        year = _year(work) or (int(record["year"]) if record and record["year"].isdigit() else None)
+        arxiv, record = identify(wid, work, arxiv_hint)
+        openalex_title = " ".join(str(work.get("title") or "").split())
+        if record and record["title"]:
+            title, title_source = record["title"], "index"
+        elif arxiv and ref_titles.get(arxiv):
+            title, title_source = ref_titles[arxiv], "reference"
+        elif paper and paper.title:
+            title, title_source = paper.title, "paper"
+        else:
+            title, title_source = openalex_title or wid, "openalex"
+        year = int(record["year"]) if record and record["year"].isdigit() else None
+        year = year or _year(work)
         if year is None and paper and paper.published[:4].isdigit():
             year = int(paper.published[:4])
         if arxiv:
@@ -241,7 +276,7 @@ def build_similarity_graph(
         else:
             url = str(work.get("doi") or "") or (f"https://openalex.org/{wid}" if wid.startswith("W") else "")
         return {
-            "id": wid, "arxiv_id": arxiv, "title": title, "year": year, "cited_by_count": _count(work),
+            "id": wid, "arxiv_id": arxiv, "title": title, "title_source": title_source, "year": year, "cited_by_count": _count(work),
             "first_author": _first_author(work) or (paper.authors[0] if paper and paper.authors else ""),
             "abstract": (record["abstract"] if record else "") or (paper.summary if paper else ""),
             "similarity": round(similarity, 4), "role": role, "url": url,

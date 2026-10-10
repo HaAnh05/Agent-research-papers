@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research Scout v2 — mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<style>
+/* Cyanotype: Prussian-blue ink on cool paper. One bold element: the paper map. */
+:root{
+  --paper:#F2F5F6; --sheet:#FFFFFF; --wash:#E7EEF1;
+  --ink:#14232B; --ink-2:#4A5C66; --ink-3:#7D8E97;
+  --rule:#D3DDE2; --rule-strong:#B7C6CD;
+  --prussian:#1F4E79; --prussian-ink:#183F63; --prussian-wash:#E3ECF4;
+  --verified:#2F7D5B; --verified-wash:#E4F1EA;
+  --absent:#A4502A; --absent-wash:#F6E9E2;
+  --sans:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --serif:"Source Serif 4",Georgia,serif;
+  --r-s:4px; --r-m:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font:400 15px/1.55 var(--sans);font-feature-settings:"tnum" 0;-webkit-font-smoothing:antialiased}
+a{color:var(--prussian-ink)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--prussian);outline-offset:2px;border-radius:var(--r-s)}
+.num{font-variant-numeric:tabular-nums}
+
+/* Mockup chrome: state switcher (not part of the product) */
+.mock{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;padding:8px 20px;background:var(--ink);color:#DCE6EA;font-size:13px}
+.mock p{margin:0;opacity:.8}
+.mock ol{display:flex;gap:4px;margin:0 0 0 auto;padding:0;list-style:none}
+.mock button{background:transparent;border:1px solid #3B5260;border-radius:999px;padding:4px 12px;cursor:pointer;color:#DCE6EA}
+.mock button[aria-pressed="true"]{background:#DCE6EA;color:var(--ink);border-color:#DCE6EA}
+
+.app-bar{display:flex;align-items:center;gap:12px;padding:14px 28px;border-bottom:1px solid var(--rule);background:var(--paper)}
+.brand{font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.brand svg{width:22px;height:22px}
+.app-bar nav{margin-left:auto;display:flex;gap:20px;font-size:14px;color:var(--ink-2)}
+.app-bar nav a{color:inherit;text-decoration:none}
+
+.screen{display:none}
+.screen.on{display:block}
+
+/* ---------- Screen 1: input ---------- */
+.intake{max-width:760px;margin:0 auto;padding:12vh 24px 80px}
+.intake h1{font:700 clamp(34px,5vw,54px)/1.08 var(--sans);letter-spacing:-.025em;margin:0 0 16px;max-width:15ch}
+.intake .lede{font:400 18px/1.6 var(--serif);color:var(--ink-2);margin:0 0 36px;max-width:56ch}
+.ask{display:flex;gap:8px;background:var(--sheet);border:1.5px solid var(--rule-strong);border-radius:var(--r-m);padding:8px}
+.ask:focus-within{border-color:var(--prussian)}
+.ask input{flex:1;border:0;outline:0;font:500 17px var(--sans);padding:10px 12px;background:transparent;color:var(--ink)}
+.btn{border:0;border-radius:8px;padding:10px 18px;font-weight:600;cursor:pointer}
+.btn-primary{background:var(--prussian);color:#fff}
+.btn-primary:hover{background:var(--prussian-ink)}
+.btn-quiet{background:transparent;border:1px solid var(--rule-strong);color:var(--ink)}
+.btn-quiet:hover{background:var(--wash)}
+.tries{margin-top:20px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:var(--ink-3);font-size:14px}
+.chip{border:1px solid var(--rule);background:var(--sheet);border-radius:999px;padding:5px 12px;cursor:pointer;color:var(--ink-2);font-size:14px}
+.chip:hover{border-color:var(--prussian);color:var(--prussian-ink)}
+.promise{margin-top:64px;display:grid;grid-template-columns:repeat(3,1fr);gap:28px;border-top:1px solid var(--rule);padding-top:24px}
+.promise h3{margin:0 0 4px;font-size:15px}
+.promise p{margin:0;color:var(--ink-2);font-size:14px}
+
+/* ---------- Screen 2: pipeline ---------- */
+.run{max-width:820px;margin:0 auto;padding:48px 24px 80px}
+.run header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;border-bottom:1px solid var(--rule);padding-bottom:20px}
+.run h2{margin:0;font:600 24px/1.25 var(--sans);letter-spacing:-.01em}
+.run .src{color:var(--ink-3);font-size:14px;margin-top:4px}
+.clock{font:600 28px var(--sans);font-variant-numeric:tabular-nums;color:var(--prussian-ink)}
+.stages{list-style:none;margin:8px 0 0;padding:0;counter-reset:st}
+.stage{display:grid;grid-template-columns:36px 1fr auto;gap:16px;padding:18px 0;border-bottom:1px solid var(--rule);align-items:start}
+.stage .dot{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:600;font-size:13px;border:1.5px solid var(--rule-strong);color:var(--ink-3);background:var(--sheet)}
+.stage.done .dot{background:var(--prussian);border-color:var(--prussian);color:#fff}
+.stage.now .dot{border-color:var(--prussian);color:var(--prussian)}
+.stage h4{margin:2px 0 4px;font-size:16px}
+.stage p{margin:0;color:var(--ink-2);font-size:14px}
+.stage .facts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.fact{background:var(--wash);border-radius:var(--r-s);padding:2px 8px;font-size:13px;color:var(--ink-2)}
+.stage .t{color:var(--ink-3);font-size:13px;font-variant-numeric:tabular-nums;padding-top:4px}
+.stage.wait h4,.stage.wait p{color:var(--ink-3)}
+.bar{height:3px;background:var(--rule);border-radius:3px;margin-top:10px;overflow:hidden;max-width:360px}
+.bar i{display:block;height:100%;width:62%;background:var(--prussian);transform-origin:left;animation:fill 2.4s ease-in-out infinite alternate}
+@keyframes fill{from{transform:scaleX(.55)}to{transform:scaleX(1)}}
+.honest{margin-top:20px;font-size:13px;color:var(--ink-3)}
+
+/* ---------- Screen 3: workspace ---------- */
+.paper-head{padding:22px 28px 18px;border-bottom:1px solid var(--rule);background:var(--paper);display:grid;grid-template-columns:1fr auto;gap:20px;align-items:end}
+.paper-head h2{margin:0;font:600 clamp(20px,2.4vw,27px)/1.25 var(--sans);letter-spacing:-.015em;max-width:44ch}
+.byline{margin-top:6px;color:var(--ink-2);font-size:14px}
+.byline a{margin-left:10px}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.ws{display:grid;grid-template-columns:200px minmax(0,1fr) minmax(380px,44%);min-height:calc(100vh - 160px)}
+.outline{padding:24px 18px 24px 28px;border-right:1px solid var(--rule);position:sticky;top:44px;align-self:start;max-height:calc(100vh - 44px);overflow:auto}
+.outline ol{list-style:none;margin:0;padding:0;counter-reset:o}
+.outline li{counter-increment:o}
+.outline a{display:block;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--ink-2);font-size:14px}
+.outline a::before{content:counter(o) ". ";color:var(--ink-3)}
+.outline a.cur{background:var(--prussian-wash);color:var(--prussian-ink);font-weight:600}
+.outline dl{margin:28px 0 0;font-size:13px;color:var(--ink-2)}
+.outline dt{color:var(--ink-3);margin-top:10px}
+.outline dd{margin:0}
+
+.read{padding:28px 40px 120px;background:var(--sheet);border-right:1px solid var(--rule)}
+.read section{max-width:68ch;margin:0 auto 40px}
+.read .results{margin-left:-24px;margin-right:-24px}
+.read h3{font:600 20px/1.3 var(--sans);letter-spacing:-.01em;margin:8px 0 14px;scroll-margin-top:60px}
+.read h4{font:600 15px var(--sans);margin:22px 0 8px;color:var(--ink)}
+.read p,.read li{font:400 16.5px/1.7 var(--serif)}
+.read p{margin:0 0 12px}
+.read ul,.read ol{padding-left:20px;margin:0 0 12px}
+.lead-insight{font:400 19px/1.6 var(--serif);margin:0 0 18px}
+.insights{list-style:none;padding:0;margin:0;counter-reset:ins}
+.insights li{counter-increment:ins;display:grid;grid-template-columns:28px 1fr;gap:10px;padding:12px 0;border-top:1px solid var(--rule)}
+.insights li::before{content:counter(ins);font:700 15px var(--sans);color:var(--prussian);padding-top:3px}
+.insights b{font-family:var(--sans);font-weight:600;font-size:15.5px;display:block;margin-bottom:2px}
+.measures{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0 0 12px;font-size:15px}
+.measures dt{font-weight:600}
+.measures dd{margin:0;color:var(--ink-2);font:400 15.5px/1.55 var(--serif)}
+.setup{border-left:3px solid var(--rule-strong);padding:4px 0 4px 14px;margin:0 0 14px}
+.setup p{font-size:15.5px;margin:0 0 6px}
+.absent{background:var(--absent-wash);color:var(--absent);border-radius:var(--r-s);padding:1px 6px;font:500 13px var(--sans);white-space:nowrap}
+.results{margin:18px 0 6px;overflow-x:auto}
+.results table{border-collapse:collapse;width:100%;font:400 14px var(--sans);font-variant-numeric:tabular-nums}
+.results caption{text-align:left;font:600 14px var(--sans);padding-bottom:8px}
+.results th,.results td{padding:8px 10px;border-bottom:1px solid var(--rule);text-align:right;white-space:nowrap}
+.results th:first-child,.results td:first-child{text-align:left;white-space:normal;min-width:170px}
+.results th:nth-child(2),.results td:nth-child(2){text-align:left}
+.results thead th{font-weight:600;color:var(--ink-2);border-bottom:1.5px solid var(--ink);font-size:13px}
+.results td.win{font-weight:700;color:var(--prussian-ink)}
+.delta{color:var(--verified);font-weight:600}
+.prov{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font:400 13px var(--sans);color:var(--ink-3);margin:6px 0 16px}
+.ok{display:inline-flex;align-items:center;gap:5px;background:var(--verified-wash);color:var(--verified);border-radius:var(--r-s);padding:2px 8px;font-weight:500}
+.ok svg{width:12px;height:12px}
+.remark{background:var(--wash);border-radius:var(--r-m);padding:12px 16px;font:400 15px/1.6 var(--serif);color:var(--ink-2)}
+.remark b{font-family:var(--sans);color:var(--ink);font-size:14px}
+.priorlist{list-style:none;padding:0;margin:0}
+.priorlist li{padding:8px 0;border-top:1px solid var(--rule);font:400 15px/1.5 var(--sans)}
+.priorlist small{color:var(--ink-3)}
+
+/* The map: the one bold element */
+.map{position:sticky;top:44px;align-self:start;height:calc(100vh - 44px);display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--paper)}
+.map-head{display:flex;align-items:baseline;gap:12px;padding:18px 20px 8px}
+.map-head h3{margin:0;font:600 17px var(--sans)}
+.map-head p{margin:0;color:var(--ink-3);font-size:13px}
+.tabs{display:flex;gap:2px;margin-left:auto;background:var(--wash);border-radius:8px;padding:2px}
+.tabs button{border:0;background:transparent;padding:4px 10px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--ink-2)}
+.tabs button[aria-selected="true"]{background:var(--sheet);color:var(--ink);font-weight:600}
+.canvas{position:relative;min-height:0}
+.canvas svg{width:100%;height:100%;display:block}
+.edge{stroke:var(--prussian);stroke-linecap:round}
+.node circle{stroke:#fff;stroke-width:1.2;cursor:pointer;transition:opacity .15s}
+.node text{font:500 11px var(--sans);fill:var(--ink-2);pointer-events:none;paint-order:stroke;stroke:var(--paper);stroke-width:3px}
+.node.origin circle{stroke:var(--absent);stroke-width:3}
+.node.origin text{font-weight:700;fill:var(--ink)}
+.canvas.focus .edge{opacity:.06!important}
+.canvas.focus .edge.hl{opacity:.75!important}
+.canvas.focus .node circle{opacity:.22}
+.canvas.focus .node.hl circle{opacity:1}
+.node:focus-visible circle{stroke:var(--ink);stroke-width:3}
+.legend{position:absolute;left:16px;bottom:12px;display:flex;gap:18px;align-items:center;font-size:12px;color:var(--ink-3);background:color-mix(in srgb,var(--paper) 85%,transparent);padding:6px 8px;border-radius:6px}
+.ramp{width:90px;height:8px;border-radius:4px;background:linear-gradient(90deg,#C3D8E5,#1F4E79)}
+.sizes{display:flex;align-items:center;gap:4px}
+.sizes i{display:inline-block;border-radius:50%;background:#7FA3BF}
+.detail{border-top:1px solid var(--rule);background:var(--sheet);padding:14px 20px 16px;min-height:150px}
+.detail h4{margin:0 0 4px;font:600 15px/1.35 var(--sans)}
+.detail .meta{color:var(--ink-3);font-size:13px;margin-bottom:8px}
+.detail p{margin:0 0 10px;font:400 14px/1.55 var(--serif);color:var(--ink-2)}
+.detail .row{display:flex;gap:8px}
+.list{overflow:auto;padding:0 20px}
+.list ol{list-style:none;margin:0;padding:0}
+.list li{display:grid;grid-template-columns:1fr auto;gap:12px;padding:10px 0;border-bottom:1px solid var(--rule);cursor:pointer}
+.list li:hover b{color:var(--prussian-ink)}
+.list b{font-weight:500;font-size:14px}
+.list span{color:var(--ink-3);font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.empty{padding:28px 4px;color:var(--ink-2);font-size:14px;max-width:44ch}
+.empty b{display:block;color:var(--ink);margin-bottom:4px}
+
+@media (max-width:1180px){
+  .ws{grid-template-columns:minmax(0,1fr) minmax(340px,42%)}
+  .outline{display:none}
+}
+@media (max-width:820px){
+  .ws{grid-template-columns:minmax(0,1fr)}
+  .read .results{margin-left:0;margin-right:0}
+  .map{position:relative;top:0;height:auto;grid-template-rows:auto 420px auto}
+  .read{padding:24px 18px 60px;border-right:0}
+  .paper-head{grid-template-columns:1fr}
+  .promise{grid-template-columns:1fr}
+  .app-bar nav{display:none}
+  .mock p{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="mock" role="region" aria-label="Điều khiển mockup">
+  <p>Mockup UI, không phải sản phẩm. Số liệu trong báo cáo và đồ thị lấy từ bài thật và OpenAlex. Câu chữ của báo cáo, thời gian và tiến độ là minh họa.</p>
+  <ol>
+    <li><button data-go="s1" aria-pressed="false">1 Nhập</button></li>
+    <li><button data-go="s2" aria-pressed="false">2 Đang phân tích</button></li>
+    <li><button data-go="s3" aria-pressed="true">3 Kết quả</button></li>
+  </ol>
+</div>
+
+<header class="app-bar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="16" r="3" fill="#1F4E79"/><circle cx="17" cy="7" r="4" fill="#7FA3BF"/><circle cx="18" cy="18" r="2" fill="#C3D8E5"/><path d="M6 16 17 7M6 16l12 2M17 7l1 11" stroke="#1F4E79" stroke-width="1" opacity=".5"/></svg>
+    Research Scout
+  </div>
+  <nav aria-label="Chính"><a href="#">Phân tích mới</a><a href="#">Thư viện</a><a href="#">Bench</a></nav>
+</header>
+
+<!-- ================= Screen 1: intake ================= -->
+<main id="s1" class="screen" aria-label="Nhập bài báo">
+  <div class="intake">
+    <h1>Đọc một bài báo trong 5 phút, kèm bản đồ những bài quanh nó.</h1>
+    <p class="lede">Dán link arXiv hoặc gõ một chủ đề. Agent đọc toàn văn, rút ra insight, dựng bảng kết quả từ chính bảng trong paper và vẽ các bài liên quan.</p>
+    <form class="ask" onsubmit="go('s2');return false">
+      <label for="q" class="sr" style="position:absolute;left:-9999px">Bài báo hoặc chủ đề</label>
+      <input id="q" value="https://arxiv.org/abs/2605.05737" autocomplete="off">
+      <button class="btn btn-primary" type="submit">Phân tích</button>
+    </form>
+    <div class="tries">Thử:
+      <button class="chip" type="button">2605.05737</button>
+      <button class="chip" type="button">Attention Is All You Need</button>
+      <button class="chip" type="button">harness cho suy luận LLM dài hạn</button>
+    </div>
+    <div class="promise">
+      <div><h3>Insight trước, tóm tắt sau</h3><p>Mỗi bài mở đầu bằng điều nó cho ta biết và vì sao điều đó quan trọng.</p></div>
+      <div><h3>Số liệu có nguồn</h3><p>Mọi con số trong bảng kết quả đều khớp với bảng hoặc đoạn văn trong paper.</p></div>
+      <div><h3>Bản đồ liên quan</h3><p>Các bài cùng nền tảng tham khảo, kích thước theo số trích dẫn, màu theo năm.</p></div>
+    </div>
+  </div>
+</main>
+
+<!-- ================= Screen 2: running ================= -->
+<main id="s2" class="screen" aria-label="Đang phân tích">
+  <div class="run">
+    <header>
+      <div>
+        <h2>ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning</h2>
+        <div class="src">arXiv 2605.05737, cs.AI, 07/05/2026</div>
+      </div>
+      <div class="clock" aria-label="Thời gian đã chạy">01:52</div>
+    </header>
+    <ol class="stages">
+      <li class="stage done"><span class="dot">1</span><div><h4>Đọc toàn văn</h4><p>Đọc bản HTML trên ar5iv. Không cần tải PDF.</p><div class="facts"><span class="fact">methodology 8.000 ký tự</span><span class="fact">setup 6.000 ký tự</span><span class="fact">experiments 12.000 ký tự</span></div></div><span class="t">0:04</span></li>
+      <li class="stage done"><span class="dot">2</span><div><h4>Trích xuất bảng và tài liệu tham khảo</h4><p>17 bảng, 29 tài liệu tham khảo; 27 tài liệu khớp được với arXiv.</p><div class="facts"><span class="fact">Table 3: success rate, 6 domain × 6 model</span><span class="fact">hardware: 4 GPU</span></div></div><span class="t">0:01</span></li>
+      <li class="stage done"><span class="dot">3</span><div><h4>Ghi chú có cấu trúc</h4><p>3 insight, 4 hàng kết quả. Code đã kiểm tra số liệu: 4/4 hàng khớp nguồn, 0 hàng bị loại.</p></div><span class="t">0:58</span></li>
+      <li class="stage now"><span class="dot">4</span><div><h4>Dựng bản đồ liên quan</h4><p>Tìm các bài trích dẫn cùng tài liệu với bài này trên OpenAlex. Đã xét 212/300 bài.</p><div class="bar" aria-hidden="true"><i></i></div></div><span class="t">0:21</span></li>
+      <li class="stage wait"><span class="dot">5</span><div><h4>Viết báo cáo</h4><p>Bắt đầu khi bước 4 xong.</p></div><span class="t">—</span></li>
+    </ol>
+    <p class="honest">Báo cáo chỉ hiện khi đã viết xong; màn hình này không hiển thị kết quả tạm.</p>
+  </div>
+</main>
+
+<!-- ================= Screen 3: workspace ================= -->
+<main id="s3" class="screen on" aria-label="Kết quả">
+  <div class="paper-head">
+    <div>
+      <h2>ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning</h2>
+      <div class="byline">arXiv 2605.05737, 07/05/2026, cs.AI <a href="https://arxiv.org/abs/2605.05737">Trang arXiv</a><a href="https://arxiv.org/pdf/2605.05737">PDF</a></div>
+    </div>
+    <div class="actions"><button class="btn btn-quiet">Sao chép BibTeX</button><button class="btn btn-quiet">Tải Markdown</button><button class="btn btn-primary">Phân tích bài khác</button></div>
+  </div>
+
+  <div class="ws">
+    <aside class="outline" aria-label="Mục lục báo cáo">
+      <ol>
+        <li><a href="#r1" class="cur">Tóm tắt</a></li>
+        <li><a href="#r2">Phân tích bài báo</a></li>
+        <li><a href="#r3">Bối cảnh nghiên cứu</a></li>
+        <li><a href="#r4">Kết luận</a></li>
+        <li><a href="#r5">Tài liệu tham khảo</a></li>
+      </ol>
+      <dl>
+        <dt>Nguồn đọc</dt><dd>ar5iv HTML</dd>
+        <dt>Bảng trong paper</dt><dd>17</dd>
+        <dt>Số liệu khớp nguồn</dt><dd>4/4 hàng</dd>
+        <dt>Thời gian</dt><dd>3 phút 41 giây</dd>
+      </dl>
+    </aside>
+
+    <article class="read">
+      <section id="r1">
+        <h3>Tóm tắt</h3>
+        <p class="lead-insight">ReFlect chuyển việc phát hiện và sửa lỗi ra khỏi prompt, sang một lớp code bao quanh model. Kết quả cho thấy model nhỏ có harness vượt model lớn không có harness, với ít token hơn.</p>
+      </section>
+
+      <section id="r2">
+        <h3>Phân tích bài báo</h3>
+        <h4>Vấn đề</h4>
+        <p>Chain-of-thought, ReAct và tự phê bình đều giả định model tự nhận ra lỗi của mình. Trên tác vụ dài nhiều bước, lỗi tích lũy mà không ai phát hiện.</p>
+        <h4>Phương pháp</h4>
+        <p>Một harness tất định quanh LLM: định tuyến bài toán theo "hình dạng" tính toán, kiểm tra kết quả bằng cơ chế CHECK độc lập, và chỉ kích hoạt REFLECT khi kiểm tra thất bại.</p>
+
+        <h4>Kết quả chính</h4>
+        <ol class="insights">
+          <li><div><b>Tự phê bình bằng prompt gần như không bắt được lỗi.</b>90/100 khối reflection được kiểm tra không nêu vấn đề nào, và model chấp nhận đáp án sai ít nhất 76% số lần. Vì vậy, việc phát hiện lỗi cần nằm ngoài model.</div></li>
+          <li><div><b>Harness quan trọng hơn kích thước model.</b>Claude Haiku 4.5 có ReFlect đạt trung bình 48,0%, cao hơn Claude Sonnet 4.5 không có harness (27,1%).</div></li>
+          <li><div><b>Lợi ích không đến từ việc tiêu nhiều token hơn.</b>Trên tập 70B, Full ReFlect dùng 1.993 token mỗi bài và đạt 48,8%; Reflexion dùng 32.062 token và đạt 27,8%.</div></li>
+        </ol>
+
+        <h4>Đại lượng đo</h4>
+        <dl class="measures">
+          <dt>Success rate</dt><dd>Tỉ lệ bài giải đúng trên 50 bài mỗi domain, tính bằng %. Cao hơn là tốt hơn.</dd>
+          <dt>Acc / 1K tokens</dt><dd>Độ chính xác chia cho số nghìn token đã dùng. Đo hiệu quả chi phí; cao hơn là tốt hơn.</dd>
+        </dl>
+
+        <div class="setup">
+          <p><b style="font-family:var(--sans)">Thiết lập.</b> 6 domain (SWE-bench, QASPER, Proof, AIME, ALFWorld, FinQA), 50 bài mỗi domain. 6 model ở 3 tầng năng lực. Model 70B chạy trên vLLM, bf16, tensor-parallel 4 GPU, độ dài ngữ cảnh 32.768.</p>
+          <p>Hardware: 4 GPU <span class="absent">loại GPU: paper không nêu</span></p>
+        </div>
+
+        <div class="results">
+          <table>
+            <caption>Kết quả: không harness và có ReFlect</caption>
+            <thead><tr><th>Benchmark</th><th>Metric</th><th>ReFlect</th><th>So sánh</th><th>Chênh lệch</th></tr></thead>
+            <tbody>
+              <tr><td>TB 6 domain, Claude Haiku 4.5</td><td>Success rate ↑</td><td class="win">48.0</td><td>25.5 (Direct CoT)</td><td class="delta">+22.5</td></tr>
+              <tr><td>TB 6 domain, Claude Sonnet 4.5</td><td>Success rate ↑</td><td class="win">56.4</td><td>27.1 (Direct CoT)</td><td class="delta">+29.3</td></tr>
+              <tr><td>TB 6 domain, Qwen2.5-72B</td><td>Success rate ↑</td><td class="win">41.8</td><td>35.2 (Direct CoT)</td><td class="delta">+6.6</td></tr>
+              <tr><td>Tập 70B, cùng ngân sách compute</td><td>Acc / 1K tokens ↑</td><td class="win">24.5</td><td>0.9 (Reflexion)</td><td class="delta">×27</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="prov">
+          <span class="ok"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5 5 9l5-6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Mọi số khớp nguồn</span>
+          <span>Nguồn: Table 3 và Table 17 trong paper</span>
+        </div>
+        <div class="remark"><b>Nhận xét.</b> SWE-bench dùng bộ chấm cấu trúc riêng (Appendix L), không phải pass@1 chuẩn, nên điểm SWE không so trực tiếp được với bài khác. QASPER gần như không cải thiện (6,3–13,0). Baseline được tái hiện lại; tác giả báo sai lệch trong ±3 điểm phần trăm (Table 11).</div>
+
+        <h4>Hạn chế</h4>
+        <p>Harness đầy đủ cần công cụ riêng cho từng domain. Bản không phụ thuộc domain trên vLLM chỉ đạt 17,0%, thấp hơn cả Direct CoT.</p>
+      </section>
+
+      <section id="r3">
+        <h3>Bối cảnh nghiên cứu</h3>
+        <p>Bài này dựa trên hai dòng nghiên cứu: suy luận nhiều bước và tự sửa lỗi. Bản đồ bên phải cho thấy 40 bài có nền tảng tham khảo gần nhất.</p>
+        <ul class="priorlist">
+          <li>Chain-of-Thought Prompting Elicits Reasoning in Large Language Models <small>2022</small></li>
+          <li>ReAct: Synergizing Reasoning and Acting in Language Models <small>2022</small></li>
+          <li>Reflexion: Language Agents with Verbal Reinforcement Learning <small>2023</small></li>
+          <li>Large Language Models Cannot Self-Correct Reasoning Yet <small>2023</small></li>
+          <li>CRITIC: Large Language Models Can Self-Correct with Tool-Interactive Critiquing <small>2023</small></li>
+        </ul>
+      </section>
+
+      <section id="r4">
+        <h3>Kết luận</h3>
+        <p>Nếu hệ thống của bạn dựa vào model tự kiểm tra, hãy thêm bộ kiểm tra độc lập trước khi tăng kích thước model. Câu hỏi còn mở: harness có tổng quát được sang domain không có công cụ chuyên dụng hay không.</p>
+      </section>
+    </article>
+
+    <aside class="map" aria-label="Bản đồ bài liên quan">
+      <div class="map-head">
+        <h3>Bản đồ liên quan</h3>
+        <p id="mapcount">40 bài</p>
+        <div class="tabs" role="tablist">
+          <button role="tab" aria-selected="true" data-tab="graph">Đồ thị</button>
+          <button role="tab" aria-selected="false" data-tab="similar">Danh sách</button>
+          <button role="tab" aria-selected="false" data-tab="prior">Nền tảng</button>
+          <button role="tab" aria-selected="false" data-tab="deriv">Kế thừa</button>
+        </div>
+      </div>
+      <div class="canvas" id="canvas">
+        <svg id="g" role="group" aria-label="Đồ thị các bài liên quan; dùng Tab để duyệt từng bài"></svg>
+        <div class="legend" aria-hidden="true">
+          <span class="sizes"><i style="width:6px;height:6px"></i><i style="width:11px;height:11px"></i><i style="width:17px;height:17px"></i> số trích dẫn</span>
+          <span style="display:flex;align-items:center;gap:6px">2023 <span class="ramp"></span> 2026</span>
+        </div>
+      </div>
+      <div class="list" id="listview" hidden></div>
+      <div class="detail" id="detail" aria-live="polite"></div>
+    </aside>
+  </div>
+</main>
+
+<script>
+const DATA = {"nodes":[{"id":"W7160616492","title":"ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning","year":2026,"cites":0,"sim":1,"origin":true},{"id":"W7147435254","title":"Meta-reasoning in autonomous agents: performance gains across benchmarks and models","year":2026,"cites":1,"sim":0.291},{"id":"W4389520676","title":"MAF: Multi-Aspect Feedback for Improving Reasoning in Large Language Models","year":2023,"cites":6,"sim":0.277},{"id":"W4389518771","title":"ChatCoT: Tool-Augmented Chain-of-Thought Reasoning on Chat-based Large Language Models","year":2023,"cites":26,"sim":0.267},{"id":"W4399531538","title":"Intelligent Digital Agents in the Era of Large Language Models","year":2024,"cites":0,"sim":0.259},{"id":"W4389518606","title":"CRT-QA: A Dataset of Complex Reasoning Question Answering over Tabular Data","year":2023,"cites":5,"sim":0.247},{"id":"W4389523807","title":"Answering Questions by Meta-Reasoning over Multiple Chains of Thought","year":2023,"cites":35,"sim":0.238},{"id":"W4405432725","title":"Generative AI Agents for Knowledge Work Augmentation in Finance","year":2024,"cites":9,"sim":0.22},{"id":"W4385571050","title":"Do Large Language Models Know What They Don’t Know?","year":2023,"cites":64,"sim":0.215},{"id":"W4400491795","title":"Enhancing AI Systems with Agentic Workflows Patterns in Large Language Model","year":2024,"cites":61,"sim":0.205},{"id":"W4385569882","title":"Verify-and-Edit: A Knowledge-Enhanced Chain-of-Thought Framework","year":2023,"cites":54,"sim":0.201},{"id":"W4389520003","title":"Automatic Model Selection with Large Language Models for Reasoning","year":2023,"cites":11,"sim":0.183},{"id":"W4411800160","title":"Agentic AI for Medicare Annual Wellness Visits: Improving Preventive Care","year":2025,"cites":6,"sim":0.181},{"id":"W4391896145","title":"Generative AI: An AI paradigm shift in the making?","year":2024,"cites":14,"sim":0.174},{"id":"W4389523853","title":"Cross-lingual Prompting: Improving Zero-shot Chain-of-Thought Reasoning across Languages","year":2023,"cites":31,"sim":0.167},{"id":"W4389518896","title":"Democratizing LLMs: An Exploration of Cost-Performance Trade-offs in Self-Refined Open-Source Models","year":2023,"cites":9,"sim":0.164},{"id":"W7220959627","title":"Evaluating Symbolic Feedback Granularity for LLM-Based Program Repair","year":2026,"cites":0,"sim":0.161},{"id":"W4389520747","title":"Reasoning with Language Model is Planning with World Model","year":2023,"cites":147,"sim":0.159},{"id":"W4393871063","title":"Tell Me Your Prompts and I Will Make Them True: The Alchemy of Prompt Engineering and Generative AI","year":2024,"cites":64,"sim":0.158},{"id":"W4393160302","title":"Graph of Thoughts: Solving Elaborate Problems with Large Language Models","year":2024,"cites":524,"sim":0.158},{"id":"W4389524566","title":"Exchange-of-Thought: Enhancing Large Language Model Capabilities through Cross-Model Communication","year":2023,"cites":20,"sim":0.157},{"id":"W4389523957","title":"Is ChatGPT a General-Purpose Natural Language Processing Task Solver?","year":2023,"cites":462,"sim":0.154},{"id":"W4404409655","title":"Mitigating reasoning hallucination through Multi-agent Collaborative Filtering","year":2024,"cites":26,"sim":0.149},{"id":"W4389518608","title":"API-Bank: A Comprehensive Benchmark for Tool-Augmented LLMs","year":2023,"cites":108,"sim":0.148},{"id":"W4385570088","title":"Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models","year":2023,"cites":332,"sim":0.147},{"id":"W4401719266","title":"Towards Responsible Generative AI: A Reference Architecture for Designing Foundation Model Based Agents","year":2024,"cites":18,"sim":0.143},{"id":"W7172268631","title":"Improving SQL Generation on Industrial Time-Series Data with Structured EXPLAIN Feedback using a 4B SLM","year":2026,"cites":0,"sim":0.143},{"id":"W7165190555","title":"Hard to Halt: Automation Bias in Agent-Driven Sequencing Prior Authorization Workflows","year":2026,"cites":0,"sim":0.141},{"id":"W4411427431","title":"SGEU: enhancing LLM reasoning via backward exemplar generation and verification","year":2025,"cites":2,"sim":0.14},{"id":"W4389524052","title":"Democratizing Reasoning Ability: Tailored Learning from Large Language Model","year":2023,"cites":8,"sim":0.139},{"id":"W4414677042","title":"Survey and analysis of hallucinations in large language models: attribution to prompting strategies or model b","year":2025,"cites":136,"sim":0.136},{"id":"W4413014960","title":"Cloud Infrastructure Management in the Age of AI Agents","year":2025,"cites":12,"sim":0.134},{"id":"W4385572357","title":"MURMUR: Modular Multi-Step Reasoning for Semi-Structured Data-to-Text Generation","year":2023,"cites":6,"sim":0.133},{"id":"W4389518737","title":"Can ChatGPT Defend its Belief in Truth? Evaluating LLM Reasoning via Debate","year":2023,"cites":47,"sim":0.13},{"id":"W4389519108","title":"Have LLMs Advanced Enough? A Challenging Problem Solving Benchmark For Large Language Models","year":2023,"cites":42,"sim":0.129},{"id":"W4389519818","title":"Logic-LM: Empowering Large Language Models with Symbolic Solvers for Faithful Logical Reasoning","year":2023,"cites":135,"sim":0.129},{"id":"W4393147219","title":"ProAgent: Building Proactive Cooperative Agents with Large Language Models","year":2024,"cites":64,"sim":0.129},{"id":"W4385569771","title":"Reasoning with Language Model Prompting: A Survey","year":2023,"cites":137,"sim":0.128},{"id":"W4362656036","title":"REFINER: Reasoning Feedback on Intermediate Representations","year":2023,"cites":29,"sim":0.125},{"id":"W4393160113","title":"Confucius: Iterative Tool Learning from Introspection Feedback by Easy-to-Difficult Curriculum","year":2024,"cites":16,"sim":0.125},{"id":"W4389520397","title":"EpiK-Eval: Evaluation for Language Models as Epistemic Models","year":2023,"cites":0,"sim":0.119}],"edges":[{"s":"W4385570088","t":"W4389519818","w":0.224},{"s":"W7172268631","t":"W7220959627","w":0.116},{"s":"W4389520747","t":"W4393147219","w":0.22},{"s":"W4385569882","t":"W4389523853","w":0.241},{"s":"W4405432725","t":"W7160616492","w":0.22},{"s":"W4385570088","t":"W4389520003","w":0.338},{"s":"W4389520003","t":"W4389523853","w":0.205},{"s":"W4389518606","t":"W4389518771","w":0.296},{"s":"W4389519108","t":"W4389520676","w":0.201},{"s":"W4389523807","t":"W4389523853","w":0.23},{"s":"W4389518771","t":"W4405432725","w":0.16},{"s":"W4389518771","t":"W4399531538","w":0.208},{"s":"W4389518737","t":"W4389520676","w":0.242},{"s":"W4385571050","t":"W4389519818","w":0.209},{"s":"W4389523853","t":"W4393160302","w":0.203},{"s":"W4385571050","t":"W4414677042","w":0.237},{"s":"W4385570088","t":"W4404409655","w":0.217},{"s":"W4385569771","t":"W4389524566","w":0.201},{"s":"W4399531538","t":"W4401719266","w":0.167},{"s":"W4362656036","t":"W4389520676","w":0.164},{"s":"W4385571050","t":"W7147435254","w":0.169},{"s":"W4389520397","t":"W7160616492","w":0.119},{"s":"W4389520676","t":"W4411800160","w":0.212},{"s":"W4389523853","t":"W4404409655","w":0.168},{"s":"W4389518606","t":"W4399531538","w":0.185},{"s":"W7160616492","t":"W7172268631","w":0.143},{"s":"W7160616492","t":"W7165190555","w":0.141},{"s":"W4389520676","t":"W4393160113","w":0.204},{"s":"W4400491795","t":"W7172268631","w":0.119},{"s":"W4389524052","t":"W4389524566","w":0.196},{"s":"W4385569882","t":"W4385571050","w":0.28},{"s":"W4389520003","t":"W4389520747","w":0.239},{"s":"W4389518771","t":"W7160616492","w":0.267},{"s":"W4389523807","t":"W4389524052","w":0.204},{"s":"W4389523807","t":"W4389523957","w":0.142},{"s":"W4389518606","t":"W4393160113","w":0.208},{"s":"W4362656036","t":"W4385569882","w":0.163},{"s":"W4385570088","t":"W4389523807","w":0.27},{"s":"W4389523807","t":"W7147435254","w":0.167},{"s":"W4389518608","t":"W4393160113","w":0.312},{"s":"W4385571050","t":"W4389518606","w":0.251},{"s":"W4401719266","t":"W7147435254","w":0.141},{"s":"W4401719266","t":"W7160616492","w":0.143},{"s":"W4385571050","t":"W4413014960","w":0.117},{"s":"W4385569771","t":"W4389520676","w":0.185},{"s":"W4385569882","t":"W4389523807","w":0.332},{"s":"W4389524566","t":"W4404409655","w":0.193},{"s":"W7147435254","t":"W7165190555","w":0.104},{"s":"W4385572357","t":"W4389518606","w":0.133},{"s":"W4411800160","t":"W7160616492","w":0.181},{"s":"W4389518606","t":"W4389523957","w":0.171},{"s":"W4385570088","t":"W4411427431","w":0.133},{"s":"W4389518737","t":"W7165190555","w":0.074},{"s":"W4385569771","t":"W4385570088","w":0.259},{"s":"W4400491795","t":"W4411800160","w":0.302},{"s":"W4385571050","t":"W4393147219","w":0.179},{"s":"W4389519108","t":"W4389524052","w":0.194},{"s":"W4389518737","t":"W4411427431","w":0.177},{"s":"W4389518896","t":"W7172268631","w":0.158},{"s":"W4389520003","t":"W4389520676","w":0.312},{"s":"W4400491795","t":"W7160616492","w":0.205},{"s":"W4393871063","t":"W7160616492","w":0.158},{"s":"W4389518771","t":"W4389520676","w":0.36},{"s":"W4399531538","t":"W4411800160","w":0.181},{"s":"W4362656036","t":"W4389520003","w":0.165},{"s":"W4389518608","t":"W4389518771","w":0.267},{"s":"W4401719266","t":"W4405432725","w":0.167},{"s":"W4389520397","t":"W4389520747","w":0.119},{"s":"W4389518606","t":"W7160616492","w":0.247},{"s":"W4399531538","t":"W4413014960","w":0.168},{"s":"W4385569771","t":"W4389520003","w":0.21},{"s":"W4385569882","t":"W4389518771","w":0.257},{"s":"W4385570088","t":"W4389524566","w":0.332},{"s":"W4389518896","t":"W4389520003","w":0.169},{"s":"W4389518606","t":"W4393871063","w":0.132},{"s":"W4389518737","t":"W4389519108","w":0.211},{"s":"W4385569882","t":"W4389520676","w":0.262},{"s":"W4389520397","t":"W4389520676","w":0.134},{"s":"W4389518896","t":"W4389519108","w":0.191},{"s":"W4391896145","t":"W4411800160","w":0.142},{"s":"W4389520676","t":"W4414677042","w":0.159},{"s":"W7160616492","t":"W7220959627","w":0.161},{"s":"W4389520676","t":"W4404409655","w":0.162},{"s":"W4385570088","t":"W4389518771","w":0.259},{"s":"W4389520003","t":"W4393147219","w":0.169},{"s":"W4389520676","t":"W4393147219","w":0.192},{"s":"W4389520676","t":"W4389524052","w":0.233},{"s":"W7147435254","t":"W7160616492","w":0.291},{"s":"W4389520676","t":"W7160616492","w":0.277},{"s":"W4389519818","t":"W4389520676","w":0.288},{"s":"W4385569882","t":"W4414677042","w":0.221},{"s":"W4385572357","t":"W7160616492","w":0.133},{"s":"W4389518608","t":"W4389520397","w":0.119},{"s":"W4389518608","t":"W4389520747","w":0.159},{"s":"W4389523957","t":"W7160616492","w":0.154},{"s":"W4385571050","t":"W4389523807","w":0.356},{"s":"W4400491795","t":"W7220959627","w":0.089},{"s":"W4391896145","t":"W7160616492","w":0.174},{"s":"W4385571050","t":"W4389524566","w":0.213},{"s":"W4389524566","t":"W4411427431","w":0.139},{"s":"W4389523807","t":"W4414677042","w":0.156},{"s":"W4385571050","t":"W4389520676","w":0.321},{"s":"W4389520003","t":"W4389524052","w":0.297},{"s":"W4411427431","t":"W7160616492","w":0.14},{"s":"W4389518771","t":"W4393160113","w":0.2},{"s":"W4389520003","t":"W4393160302","w":0.222},{"s":"W4389520676","t":"W4400491795","w":0.191},{"s":"W4385572357","t":"W4389519818","w":0.148},{"s":"W4389523807","t":"W7220959627","w":0.111},{"s":"W4385571050","t":"W4389518771","w":0.311},{"s":"W4411800160","t":"W4413014960","w":0.123},{"s":"W4389518896","t":"W4400491795","w":0.182},{"s":"W4389524566","t":"W7165190555","w":0.075},{"s":"W4389520003","t":"W4389523807","w":0.28},{"s":"W4385569882","t":"W7147435254","w":0.158},{"s":"W4399531538","t":"W7160616492","w":0.259},{"s":"W4389518896","t":"W4389524052","w":0.308},{"s":"W4389520676","t":"W4405432725","w":0.168},{"s":"W4389523957","t":"W4393871063","w":0.132},{"s":"W4389518608","t":"W4389520676","w":0.207},{"s":"W4385570088","t":"W4389520747","w":0.23},{"s":"W4389520747","t":"W4393160302","w":0.193},{"s":"W4389518737","t":"W4389520003","w":0.192},{"s":"W4389519818","t":"W4389520003","w":0.232},{"s":"W4389518771","t":"W4393871063","w":0.127},{"s":"W4389523807","t":"W4393160302","w":0.248},{"s":"W4413014960","t":"W7160616492","w":0.134},{"s":"W4389519108","t":"W4389520003","w":0.212},{"s":"W4362656036","t":"W4389524566","w":0.159},{"s":"W4389519108","t":"W7172268631","w":0.125},{"s":"W4385572357","t":"W4389523853","w":0.14},{"s":"W4391896145","t":"W4400491795","w":0.129},{"s":"W4389520676","t":"W4389520747","w":0.271},{"s":"W4389518737","t":"W4389524566","w":0.183},{"s":"W4389518606","t":"W4389520676","w":0.259},{"s":"W4385571050","t":"W4389520003","w":0.318},{"s":"W4391896145","t":"W4399531538","w":0.174}]};
+const PRIOR = [
+  ["Chain-of-Thought Prompting Elicits Reasoning in Large Language Models",2022],
+  ["ReAct: Synergizing Reasoning and Acting in Language Models",2022],
+  ["Self-Consistency Improves Chain of Thought Reasoning in Language Models",2022],
+  ["Reflexion: Language Agents with Verbal Reinforcement Learning",2023],
+  ["Self-Refine: Iterative Refinement with Self-Feedback",2023],
+  ["Large Language Models Cannot Self-Correct Reasoning Yet",2023],
+  ["CRITIC: Large Language Models Can Self-Correct with Tool-Interactive Critiquing",2023],
+  ["Tree of Thoughts: Deliberate Problem Solving with Large Language Models",2023]
+];
+
+/* ---- screen switcher (mockup only) ---- */
+function go(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on',s.id===id));
+  document.querySelectorAll('.mock button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.go===id));
+  window.scrollTo(0,0);
+  if(id==='s3') draw();
+}
+document.querySelectorAll('.mock button').forEach(b=>b.onclick=()=>go(b.dataset.go));
+
+/* ---- force layout (seeded, computed before paint) ---- */
+let drawn=false;
+function rng(seed){return()=>((seed=Math.imul(seed^seed>>>15,seed|1)^(seed+Math.imul(seed^seed>>>7,seed|61)))>>>0)/4294967296}
+function layout(W,H){
+  /* Fruchterman-Reingold, origin pinned at centre, seeded so every load looks the same */
+  const r=rng(11), N=DATA.nodes, idx=new Map(N.map((n,i)=>[n.id,i])), cx=W/2, cy=H/2;
+  const E=DATA.edges.map(e=>({a:idx.get(e.s),b:idx.get(e.t),w:e.w})).filter(e=>e.a!=null&&e.b!=null);
+  const kd=Math.sqrt((W*H)/N.length)*0.78;
+  N.forEach(n=>{const a=r()*6.283,d=(1-n.sim)*Math.min(W,H)*.45;n.x=cx+Math.cos(a)*d;n.y=cy+Math.sin(a)*d});
+  let temp=Math.min(W,H)/8;
+  for(let it=0;it<500;it++){
+    N.forEach(n=>{n.dx=0;n.dy=0});
+    for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){
+      let dx=N[i].x-N[j].x,dy=N[i].y-N[j].y,d=Math.hypot(dx,dy)||.1,f=kd*kd/d;
+      N[i].dx+=dx/d*f;N[i].dy+=dy/d*f;N[j].dx-=dx/d*f;N[j].dy-=dy/d*f}
+    for(const e of E){const A=N[e.a],B=N[e.b];let dx=A.x-B.x,dy=A.y-B.y,d=Math.hypot(dx,dy)||.1,f=d*d/kd*(0.35+e.w*2);
+      A.dx-=dx/d*f;A.dy-=dy/d*f;B.dx+=dx/d*f;B.dy+=dy/d*f}
+    for(const n of N){ if(n.origin){n.x=cx;n.y=cy;continue}
+      n.dx+=(cx-n.x)*.008*kd/10;n.dy+=(cy-n.y)*.008*kd/10;
+      const d=Math.hypot(n.dx,n.dy)||1;n.x+=n.dx/d*Math.min(d,temp);n.y+=n.dy/d*Math.min(d,temp);
+      n.x=Math.max(28,Math.min(W-28,n.x));n.y=Math.max(28,Math.min(H-52,n.y))}
+    temp*=0.985;
+  }
+  return E;
+}
+const yearColor=y=>{const t=Math.max(0,Math.min(1,((y||2023)-2023)/3));
+  const a=[0xC3,0xD8,0xE5],b=[0x1F,0x4E,0x79];return `rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(',')})`};
+const radius=n=>n.origin?13:4+Math.sqrt(Math.log10((n.cites||0)+1))*7;
+const label=n=>{const m=n.title.match(/^([^:]{2,28}):/);return m?m[1]:n.title.split(' ').slice(0,3).join(' ')};
+
+function draw(){
+  if(drawn) return; drawn=true;
+  const svg=document.getElementById('g'),box=svg.getBoundingClientRect(),W=box.width||600,H=box.height||600;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  const E=layout(W,H),N=DATA.nodes,ns='http://www.w3.org/2000/svg';
+  const LABELS=new Set(N.filter(n=>!n.origin).sort((a,b)=>(b.cites||0)*b.sim-(a.cites||0)*a.sim).slice(0,7).map(n=>n.id));
+  const ge=document.createElementNS(ns,'g');svg.appendChild(ge);
+  E.forEach(e=>{const l=document.createElementNS(ns,'line');l.setAttribute('class','edge');
+    l.setAttribute('x1',N[e.a].x);l.setAttribute('y1',N[e.a].y);l.setAttribute('x2',N[e.b].x);l.setAttribute('y2',N[e.b].y);
+    l.setAttribute('stroke-width',.6+e.w*5);l.style.opacity=.12+e.w*1.2;l.dataset.a=e.a;l.dataset.b=e.b;ge.appendChild(l)});
+  const order=N.map((n,i)=>i).sort((a,b)=>radius(N[b])-radius(N[a]));
+  order.forEach(i=>{const n=N[i],g=document.createElementNS(ns,'g');g.setAttribute('class','node'+(n.origin?' origin':''));
+    g.setAttribute('tabindex','0');g.setAttribute('role','button');g.setAttribute('aria-label',`${n.title}, ${n.year}, ${n.cites} trích dẫn`);
+    const c=document.createElementNS(ns,'circle');c.setAttribute('cx',n.x);c.setAttribute('cy',n.y);c.setAttribute('r',radius(n));c.setAttribute('fill',n.origin?'#1F4E79':yearColor(n.year));
+    g.appendChild(c);
+    if(n.origin||LABELS.has(n.id)){const t=document.createElementNS(ns,'text');const left=n.x>W*.68;t.setAttribute('x',left?n.x-radius(n)-3:n.x+radius(n)+3);t.setAttribute('y',n.y+3);if(left)t.setAttribute('text-anchor','end');t.textContent=n.origin?'ReFlect (bài của bạn)':`${label(n)}, ${n.year}`;g.appendChild(t)}
+    const pick=()=>select(i);g.addEventListener('click',pick);g.addEventListener('keydown',ev=>{if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();pick()}});
+    g.addEventListener('mouseenter',()=>hl(i));g.addEventListener('mouseleave',()=>hl(null));g.addEventListener('focus',()=>hl(i));g.addEventListener('blur',()=>hl(null));
+    g.dataset.i=i;ge.appendChild(g)});
+  select(0);
+}
+function hl(i){
+  const cv=document.getElementById('canvas');cv.classList.toggle('focus',i!=null);
+  const nb=new Set([i]);document.querySelectorAll('.edge').forEach(l=>{const on=i!=null&&(+l.dataset.a===i||+l.dataset.b===i);l.classList.toggle('hl',on);if(on){nb.add(+l.dataset.a);nb.add(+l.dataset.b)}});
+  document.querySelectorAll('.node').forEach(g=>g.classList.toggle('hl',nb.has(+g.dataset.i)));
+}
+function select(i){
+  const n=DATA.nodes[i],d=document.getElementById('detail');
+  d.innerHTML=n.origin
+   ?`<h4>${n.title}</h4><div class="meta">2026, bài bạn đang phân tích, 0 trích dẫn theo OpenAlex</div><p>Bài nằm giữa bản đồ. Các bài gần nó dùng nhiều tài liệu tham khảo giống nó nhất. Chọn một bài để xem chi tiết.</p>`
+   :`<h4>${n.title}</h4><div class="meta">${n.year}, ${n.cites} trích dẫn theo OpenAlex, độ tương đồng ${n.sim.toFixed(2)}</div><p>Dùng chung nhiều tài liệu tham khảo với ReFlect, nên có khả năng cùng giải quyết một bài toán.</p><div class="row"><button class="btn btn-quiet">Mở trên OpenAlex</button><button class="btn btn-primary">Phân tích bài này</button></div>`;
+}
+
+/* ---- tabs ---- */
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));
+  const t=b.dataset.tab,lv=document.getElementById('listview'),cv=document.getElementById('canvas');
+  cv.hidden=t!=='graph';lv.hidden=t==='graph';
+  if(t==='similar'){const rows=DATA.nodes.filter(n=>!n.origin).sort((a,b)=>b.sim-a.sim);
+    lv.innerHTML='<ol>'+rows.map(n=>`<li tabindex="0" onclick="select(${DATA.nodes.indexOf(n)})"><b>${n.title}</b><span>${n.year}, ${n.cites} tr.d.</span></li>`).join('')+'</ol>'}
+  if(t==='prior'){lv.innerHTML='<ol>'+PRIOR.map(([x,y])=>`<li><b>${x}</b><span>${y}</span></li>`).join('')+'</ol>'}
+  if(t==='deriv'){lv.innerHTML='<div class="empty"><b>Chưa có bài nào trích dẫn ReFlect.</b>Bài đăng tháng 05/2026 và OpenAlex ghi nhận 0 trích dẫn. Mở lại sau để xem các bài kế thừa, hoặc xem tab Đồ thị để thấy các bài cùng hướng.</div>'}
+});
+document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.getElementById('q').value=c.textContent});
+window.addEventListener('load',()=>{if(document.getElementById('s3').classList.contains('on'))draw()});
+</script>
+</body>
+</html>

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+import sqlite3
+from pathlib import Path
+
 from nodes.similarity_graph import build_similarity_graph, _cosine
 from state import PaperItem, PaperReference
 from tools.openalex import arxiv_id_of_work, short_id
@@ -97,3 +100,26 @@ def test_no_key_status() -> None:
     for client in (FakeOpenAlex({}, [], key=False), None):
         graph = build_similarity_graph([paper], client, RefResolver(None))
         assert graph["stats"]["status"] == "no_key" and graph["nodes"] == []
+
+
+def test_identity_from_index_fixes_openalex_titles(tmp_path: Path) -> None:
+    from tests.test_citation_graph import _make_index
+
+    index = _make_index(tmp_path / "index.sqlite")
+    conn = sqlite3.connect(index)
+    conn.execute("INSERT INTO papers VALUES ('1111.00001','Real Seed Paper On Reasoning','A','Seed abstract','cs.AI','cs.AI','2011-01-01','')")
+    conn.execute("INSERT INTO papers_fts(rowid, title, abstract) SELECT rowid, title, abstract FROM papers WHERE paper_id='1111.00001'")
+    conn.commit()
+    conn.close()
+    paper, client = _fixture()
+    client.works["S1"]["title"] = "Corrupted unrelated OpenAlex title"           # wrong title on a seed work
+    client.works["WC"]["title"] = "Attention Is All You Need"                    # no DOI: found by exact title
+    resolver = RefResolver(index)
+    graph = build_similarity_graph([paper], client, resolver, max_nodes=3, budget_sec=60)
+    prior = {w["id"]: w for w in graph["prior_works"]}
+    assert prior["S1"]["arxiv_id"] == "1111.00001" and prior["S1"]["title"] == "Real Seed Paper On Reasoning"
+    assert prior["S1"]["title_source"] == "index" and prior["S1"]["abstract"] == "Seed abstract"
+    assert prior["S2"]["title_source"] == "reference"                             # not in the index: bibliography title
+    wc = next(n for n in graph["nodes"] if n["id"] == "WC")
+    assert wc["arxiv_id"] == "1706.03762" and wc["title_source"] == "index" and wc["abstract"] == "abs"
+    resolver.close()

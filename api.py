@@ -1319,6 +1319,7 @@ def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
             "title": text(item.get("title"), 300) or "",
             "year": count(item.get("year")),
             "cited_by_count": count(item.get("cited_by_count")),
+            "title_source": text(item.get("title_source"), 12),
             "first_author": text(item.get("first_author"), 120) or "",
             "abstract": text(item.get("abstract"), limit_abstract) or "",
             "similarity": num(item.get("similarity")),

@@ -70,7 +70,7 @@ def main() -> int:
 
     print(f"stats: {json.dumps(graph['stats'])}")
     print(f"nodes={len(graph['nodes'])} edges={len(graph['edges'])}")
-    ranked = sorted(graph["nodes"], key=lambda n: (n["role"] != "origin", -(n["similarity"] or 0)))
+    ranked = sorted(graph["nodes"], key=lambda n: n["role"] != "origin")      # stable: node order = ranking score order
     print("top 15 nodes (similarity, year, citations, first author, arXiv id, title):")
     for node in ranked[:15]:
         print(("* " if node["role"] == "origin" else "  ") + _line(node).lstrip(" "))
