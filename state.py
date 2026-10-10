@@ -260,6 +260,10 @@ class ResearchState(TypedDict):
     # Selected Papers for Deep Reading
     selected_papers: List[PaperItem]
     
+    # Citation graph around the selected papers (nodes/citation_graph.py):
+    # {"nodes": [...], "edges": [...], "stats": {...}}; None before that node ran.
+    citation_graph: Optional[Dict[str, Any]]
+
     # Output Synthesis
     final_report: Optional[str]              # Comprehensive research report (Markdown)
 

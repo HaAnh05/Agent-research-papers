@@ -217,13 +217,23 @@ def check_report_structure(report: str, n_papers: int) -> Check:
     if not re.search(r"^#\s+\S", text, flags=re.MULTILINE):
         problems.append("no H1")
     numbers = [int(m.group(1)) for m in SECTION_HEADING_RE.finditer(text)]
-    if numbers != [1, 2, 3, 4]:
-        problems.append(f"section headings {numbers} != [1,2,3,4]")
+    if numbers != [1, 2, 3, 4, 5]:
+        problems.append(f"section headings {numbers} != [1,2,3,4,5]")
     section2 = split_sections(report).get(2, "")
     found = len(paper_blocks(section2))
     if found < n_papers:
         problems.append(f"### headings in section 2: {found} < {n_papers} papers")
-    return Check("report_structure", "HARD", "FAIL" if problems else "PASS", "; ".join(problems) or f"H1, ## 1-4, {found} paper headings")
+    return Check("report_structure", "HARD", "FAIL" if problems else "PASS", "; ".join(problems) or f"H1, ## 1-5, {found} paper headings")
+
+
+def check_context_section(report: str) -> Check:
+    """Section 3 (research context) must carry a non-empty body."""
+
+    body = split_sections(report).get(3, "").strip()
+    return Check(
+        "context_section", "HARD", "PASS" if body else "FAIL",
+        f"section 3 has {len(body.split())} words" if body else "section 3 (research context) missing or empty",
+    )
 
 
 # "Key results" sub-bullets every paper block must carry (Vietnamese or English label).
@@ -506,6 +516,7 @@ def verify(baseline: Run, candidate: Run, th: Thresholds | None = None, *, stric
         check_paper_ids(baseline, candidate),
         check_notes_nonempty(candidate),
         check_report_structure(candidate.report, len(candidate.paper_ids)),
+        check_context_section(candidate.report),
         check_results_format(candidate.report),
         check_table_numbers(candidate.report, candidate),
         check_arxiv_links(candidate.report, candidate),

@@ -26,6 +26,7 @@ def test_graph_compilation():
         "read_paper",
         "web_enrich",
         "write_notes",
+        "citation_graph",
         "final_report",
         "error_handler",
     }
@@ -61,7 +62,7 @@ def test_routing_logic():
 
     # Test route_after_write_notes
     dummy_paper = PaperItem(paper_id="p1", title="Test Paper 1")
-    assert route_after_write_notes({"selected_papers": [dummy_paper], "intent": "search", "status": "running"}) == "final_report"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "search", "status": "running"}) == "final_report"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "direct_compare", "status": "running"}) == "final_report"
+    assert route_after_write_notes({"selected_papers": [dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
+    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
+    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "direct_compare", "status": "running"}) == "citation_graph"
     assert route_after_write_notes({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"

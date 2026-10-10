@@ -216,6 +216,9 @@ class RunResult(APIModel):
     report_id: str | None = Field(default=None, alias="reportId")
     bibtex: str | None = None
     answer: str | None = None
+    # Citation graph for a future UI: {"nodes": [...], "edges": [...], "stats": {...}}
+    # (same JSON as the ``citation_graph`` state channel); ``null`` when not built.
+    citation_graph: dict[str, Any] | None = Field(default=None, alias="citationGraph")
 
 
 class RunSnapshot(APIModel):
@@ -306,6 +309,7 @@ NODE_LABELS: dict[str, str] = {
     "read_paper": "PDF parsing",
     "web_enrich": "GitHub and BibTeX enrichment",
     "write_notes": "PMRL notes",
+    "citation_graph": "Citation graph",
     "final_report": "Final report",
     "error_handler": "Error handler",
 }
@@ -318,6 +322,7 @@ NODE_KINDS: dict[str, str] = {
     "read_paper": "artifact",
     "web_enrich": "artifact",
     "write_notes": "artifact",
+    "citation_graph": "artifact",
     "final_report": "artifact",
     "error_handler": "error",
 }
@@ -1290,6 +1295,48 @@ def _report_id_from_state(state: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _public_citation_graph(value: Any) -> dict[str, Any] | None:
+    """Return a bounded, JSON-safe copy of the citation graph, or ``None``."""
+
+    if not isinstance(value, Mapping) or not isinstance(value.get("nodes"), list):
+        return None
+
+    def text(item: Any, limit: int) -> str | None:
+        return _safe_text(item, limit) if item not in (None, "") else None
+
+    def count(item: Any) -> int | None:
+        return item if isinstance(item, int) and not isinstance(item, bool) and item >= 0 else None
+
+    nodes = []
+    for node in value["nodes"][:100]:
+        if not isinstance(node, Mapping) or not node.get("id"):
+            continue
+        nodes.append({
+            "id": text(node.get("id"), 120),
+            "arxiv_id": text(node.get("arxiv_id"), 40),
+            "title": text(node.get("title"), 300) or "",
+            "year": count(node.get("year")),
+            "cited_by_count": count(node.get("cited_by_count")),
+            "selected": bool(node.get("selected")),
+            "role": text(node.get("role"), 20),
+            "support": count(node.get("support")) or 0,
+        })
+    edges = [
+        {"source": text(edge.get("source"), 120), "target": text(edge.get("target"), 120), "kind": "cites"}
+        for edge in (value.get("edges") or [])[:400]
+        if isinstance(edge, Mapping) and edge.get("source") and edge.get("target")
+    ]
+    raw_stats = value.get("stats") if isinstance(value.get("stats"), Mapping) else {}
+    by_method = raw_stats.get("by_method") if isinstance(raw_stats.get("by_method"), Mapping) else {}
+    stats = {
+        "refs_total": count(raw_stats.get("refs_total")) or 0,
+        "refs_resolved": count(raw_stats.get("refs_resolved")) or 0,
+        "by_method": {_safe_text(k, 30): count(v) or 0 for k, v in list(by_method.items())[:10]},
+        "openalex": raw_stats.get("openalex") if raw_stats.get("openalex") in {"ok", "no_key", "error"} else "error",
+    }
+    return {"nodes": nodes, "edges": edges, "stats": stats}
+
+
 def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> RunResult:
     papers: list[PaperDTO] = []
     for paper in state.get("selected_papers", []) or []:
@@ -1310,6 +1357,7 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
         report=report_content,
         reportId=_report_id_from_state(state) if report_valid else None,
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
+        citationGraph=_public_citation_graph(state.get("citation_graph")),
         answer=_safe_answer(answer or (report_content if report_valid else None), 100_000)
         or None,
     )
@@ -1437,6 +1485,10 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
         return f"Enriched {len(state.get('selected_papers') or [])} paper(s)"
     if node == "write_notes":
         return f"Created PMRL notes for {len(state.get('selected_papers') or [])} paper(s)"
+    if node == "citation_graph":
+        graph = state.get("citation_graph")
+        nodes = graph.get("nodes") if isinstance(graph, Mapping) else None
+        return f"Built citation graph ({len(nodes) if isinstance(nodes, list) else 0} node(s))"
     if node == "final_report":
         reason = _summary_failure_reason(state)
         base = "Prepared final research report"
@@ -1482,6 +1534,15 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
         return {"paperCount": len(papers), "repositoryCount": repo_count}
     if node == "write_notes":
         return {"paperCount": len(state.get("selected_papers") or [])}
+    if node == "citation_graph":
+        graph = state.get("citation_graph")
+        graph = graph if isinstance(graph, Mapping) else {}
+        stats = graph.get("stats") if isinstance(graph.get("stats"), Mapping) else {}
+        return {
+            "nodeCount": len(graph.get("nodes") or []),
+            "edgeCount": len(graph.get("edges") or []),
+            "openalex": _safe_text(stats.get("openalex"), 20),
+        }
     if node == "final_report":
         status = str(state.get("status") or "").lower()
         report_available = _valid_report(state.get("final_report")) and status not in {"error", "failed"}
@@ -2153,6 +2214,7 @@ def _initial_state(
         "eval_feedback": "",
         "selected_papers": [],
         "final_report": None,
+        "citation_graph": None,
         "node_timings": {},
         "trace_logs": [],
         "error_logs": [],
