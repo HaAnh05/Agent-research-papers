@@ -88,6 +88,7 @@ d:\LABAI\agentresearch\
 │
 ├── tools/                      # Công cụ chuyên sâu (không gọi LLM)
 │   ├── arxiv_search.py         # Thread-safe ArXiv API (Lock + Exponential Backoff)
+│   ├── local_index.py          # Index SQLite FTS5 offline trên metadata arXiv (bm25), build + search_local
 │   ├── pdf_parser.py           # Two-column PDF parser + Section extractor
 │   ├── github_enricher.py      # Multi-tier GitHub search (3 fallback tiers)
 │   ├── bibtex_generator.py     # Sinh BibTeX citation chuẩn
@@ -160,6 +161,7 @@ Class `AppConfig` tập trung mọi hằng số cấu hình, đọc từ `.env` 
 | **Concurrency** | `READ_PAPER_MAX_WORKERS=8`, `GITHUB_MAX_CONCURRENCY=4`, `LLM_MAX_CONCURRENCY=6` | Mỗi stage dùng pool riêng; GitHub và LLM không chờ nhau |
 | **Report**   | `REPORT_PARALLEL_SECTIONS=true`                                | `false` = quay lại 1 lệnh gọi LLM cũ cho toàn báo cáo                  |
 | **Search**   | `MAX_RETRIES=2`, `MAX_SEARCH_RESULTS=5`, `TOP_K_PAPERS=3` | Giới hạn vòng lặp refine, số kết quả tìm kiếm, số bài chọn      |
+| **Local index** | `LOCAL_INDEX_ENABLED=false`, `LOCAL_INDEX_PATH=data/arxiv/index.sqlite`, `LOCAL_INDEX_CUTOFF=2026-08-27` | Cờ tắt mặc định (env `LOCAL_INDEX_ENABLED=true` để bật). Xem mục 3.5 |
 | **PDF**      | `PDF_MAX_PAGES=8`, `PDF_MAX_CHARS=15000`                    | Giới hạn trang/ký tự khi parse PDF                                      |
 | **Paths**    | `PDF_CACHE_DIR`, `TEXT_CACHE_DIR`, `REPORTS_DIR`          | Thư mục cache và xuất báo cáo                                         |
 
@@ -230,6 +232,7 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 - Nhận `search_query` từ state (đã được router hoặc refine_query chuẩn hóa)
 - Trả về danh sách `PaperItem` (title, summary, authors, arxiv_id, pdf_url)
 - Nếu API lỗi → set `status="error"` để CE1 chuyển sang `error_handler`
+- **Local index (tùy chọn)**: khi `config.LOCAL_INDEX_ENABLED` bật và file `LOCAL_INDEX_PATH` tồn tại, node gọi thêm `tools.local_index.search_local()` (chỉ bài `first_version_date <= LOCAL_INDEX_CUTOFF`). Kết quả gộp: bài local trước, rồi bài API chưa có (so khớp `paper_id`). Một phía lỗi thì dùng phía còn lại. Cờ tắt → đường code cũ, không đổi.
 
 ---
 
@@ -383,6 +386,16 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 | `_arxiv_get()`         | Retry tối đa 3 lần với**Exponential Backoff** (3s → 6s → 12s+) khi gặp HTTP 429 |
 | `_clean_arxiv_query()` | Loại bỏ stopwords tiếng Anh + tiếng Việt, format`all:term1 AND all:term2`             |
 | `STOPWORDS`            | Bao gồm cả`"toi", "muon", "tim", "bai", "bao", "trong"` — hỗ trợ query tiếng Việt   |
+
+#### `tools/local_index.py` — Index tìm kiếm offline
+
+| Thành phần             | Chi tiết                                                                                    |
+| :----------------------- | :------------------------------------------------------------------------------------------- |
+| `build_index()`        | Đọc `metadata.parquet` (HF `secemp9/arxiv-complete`) theo row group, ghi SQLite vào file `.tmp` rồi `rename` (idempotent). Bảng `papers` + bảng FTS5 external-content `papers_fts(title, abstract)`, tokenizer `porter unicode61` |
+| `search_local()`       | Trả về `PaperItem` cùng dạng với `arxiv_search()`; điểm bm25 (title nặng gấp 10 lần abstract) nằm ở `processing_metadata["local_bm25"]`. Query người dùng được tách thành từ có trích dẫn nên không bao giờ lỗi cú pháp FTS5; AND trước, thiếu kết quả thì bổ sung bằng OR |
+| Bộ lọc                 | `date_before` (`<=`, YYYY-MM-DD), `categories` (token đúng, hoặc `cs.*` là tiền tố); id kiểu cũ (`cs/0101001`) bị bỏ qua trừ khi `include_legacy_ids=True` |
+| Kết nối                | Mỗi thread một kết nối chỉ-đọc (`threading.local`)                                           |
+| Build + đo             | `bench/build_local_index.py --parquet ... --out data/arxiv/index.sqlite` (in thời gian build, kích thước, p50/p90). `data/arxiv/` nằm trong `.gitignore` |
 
 #### `tools/pdf_parser.py` — Two-column Parser
 

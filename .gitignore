@@ -56,3 +56,6 @@ dist/
 .claude/distill/
 
 bench/runs/
+
+# Local arXiv metadata + FTS index (large)
+data/arxiv/
