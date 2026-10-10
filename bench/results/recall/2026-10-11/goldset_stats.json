@@ -1,0 +1,2204 @@
+{
+  "surveys_selected": 200,
+  "surveys_fetched": 173,
+  "refs_parsed": 29604,
+  "refs_resolved": 15439,
+  "resolved_pct": 52.2,
+  "by_method": {
+    "arxiv_id": 7639,
+    "doi_arxiv": 0,
+    "doi_metadata": 167,
+    "title": 7633
+  },
+  "min_refs": 15,
+  "surveys_kept": 139,
+  "gold_total": 14658,
+  "per_survey": [
+    {
+      "survey_id": "2101.00774",
+      "html": true,
+      "refs": 159,
+      "resolved": 93,
+      "by_method": {
+        "title": 62,
+        "arxiv_id": 31
+      },
+      "gold": 93,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2101.02082",
+      "html": true,
+      "refs": 82,
+      "resolved": 5,
+      "by_method": {
+        "arxiv_id": 5
+      },
+      "gold": 5,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2101.11501",
+      "html": false
+    },
+    {
+      "survey_id": "2102.01503",
+      "html": true,
+      "refs": 10,
+      "resolved": 0,
+      "by_method": {},
+      "gold": 0,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2103.00070",
+      "html": true,
+      "refs": 62,
+      "resolved": 39,
+      "by_method": {
+        "title": 39
+      },
+      "gold": 39,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2103.15555",
+      "html": true,
+      "refs": 130,
+      "resolved": 3,
+      "by_method": {
+        "title": 1,
+        "doi_metadata": 2
+      },
+      "gold": 3,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2105.06706",
+      "html": true,
+      "refs": 102,
+      "resolved": 11,
+      "by_method": {
+        "title": 10,
+        "arxiv_id": 1
+      },
+      "gold": 11,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2105.07878",
+      "html": false
+    },
+    {
+      "survey_id": "2105.10950",
+      "html": true,
+      "refs": 52,
+      "resolved": 7,
+      "by_method": {
+        "title": 3,
+        "arxiv_id": 4
+      },
+      "gold": 7,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2105.11266",
+      "html": true,
+      "refs": 76,
+      "resolved": 13,
+      "by_method": {
+        "title": 13
+      },
+      "gold": 13,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2105.12348",
+      "html": true,
+      "refs": 83,
+      "resolved": 16,
+      "by_method": {
+        "title": 15,
+        "arxiv_id": 1
+      },
+      "gold": 16,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2106.07221",
+      "html": true,
+      "refs": 67,
+      "resolved": 7,
+      "by_method": {
+        "arxiv_id": 5,
+        "title": 2
+      },
+      "gold": 7,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2107.03869",
+      "html": false
+    },
+    {
+      "survey_id": "2107.07016",
+      "html": true,
+      "refs": 95,
+      "resolved": 18,
+      "by_method": {
+        "title": 18
+      },
+      "gold": 17,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2108.06181",
+      "html": false
+    },
+    {
+      "survey_id": "2108.09003",
+      "html": true,
+      "refs": 249,
+      "resolved": 64,
+      "by_method": {
+        "arxiv_id": 50,
+        "title": 14
+      },
+      "gold": 64,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2109.09478",
+      "html": true,
+      "refs": 48,
+      "resolved": 41,
+      "by_method": {
+        "title": 27,
+        "arxiv_id": 14
+      },
+      "gold": 40,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2110.11168",
+      "html": true,
+      "refs": 26,
+      "resolved": 7,
+      "by_method": {
+        "title": 5,
+        "arxiv_id": 2
+      },
+      "gold": 7,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2110.13484",
+      "html": true,
+      "refs": 193,
+      "resolved": 73,
+      "by_method": {
+        "arxiv_id": 23,
+        "title": 50
+      },
+      "gold": 73,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2111.07505",
+      "html": false
+    },
+    {
+      "survey_id": "2201.02297",
+      "html": true,
+      "refs": 163,
+      "resolved": 0,
+      "by_method": {},
+      "gold": 0,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2201.08032",
+      "html": false
+    },
+    {
+      "survey_id": "2201.08164",
+      "html": true,
+      "refs": 326,
+      "resolved": 203,
+      "by_method": {
+        "title": 193,
+        "arxiv_id": 10
+      },
+      "gold": 202,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2201.08236",
+      "html": true,
+      "refs": 57,
+      "resolved": 29,
+      "by_method": {
+        "title": 19,
+        "arxiv_id": 10
+      },
+      "gold": 29,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2204.10358",
+      "html": true,
+      "refs": 110,
+      "resolved": 27,
+      "by_method": {
+        "title": 27
+      },
+      "gold": 27,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2204.12908",
+      "html": true,
+      "refs": 43,
+      "resolved": 1,
+      "by_method": {
+        "title": 1
+      },
+      "gold": 1,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2205.03824",
+      "html": true,
+      "refs": 208,
+      "resolved": 140,
+      "by_method": {
+        "title": 84,
+        "arxiv_id": 56
+      },
+      "gold": 139,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2206.05675",
+      "html": true,
+      "refs": 123,
+      "resolved": 12,
+      "by_method": {
+        "title": 9,
+        "arxiv_id": 3
+      },
+      "gold": 12,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2206.10593",
+      "html": false
+    },
+    {
+      "survey_id": "2206.11996",
+      "html": true,
+      "refs": 140,
+      "resolved": 34,
+      "by_method": {
+        "arxiv_id": 9,
+        "title": 25
+      },
+      "gold": 34,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2206.14153",
+      "html": false
+    },
+    {
+      "survey_id": "2207.00782",
+      "html": true,
+      "refs": 206,
+      "resolved": 36,
+      "by_method": {
+        "title": 27,
+        "arxiv_id": 9
+      },
+      "gold": 36,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2207.14119",
+      "html": true,
+      "refs": 24,
+      "resolved": 0,
+      "by_method": {},
+      "gold": 0,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2208.09590",
+      "html": true,
+      "refs": 165,
+      "resolved": 33,
+      "by_method": {
+        "title": 29,
+        "arxiv_id": 4
+      },
+      "gold": 32,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2208.14426",
+      "html": true,
+      "refs": 70,
+      "resolved": 42,
+      "by_method": {
+        "title": 21,
+        "arxiv_id": 21
+      },
+      "gold": 42,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2209.04160",
+      "html": false
+    },
+    {
+      "survey_id": "2209.07175",
+      "html": true,
+      "refs": 161,
+      "resolved": 2,
+      "by_method": {
+        "title": 2
+      },
+      "gold": 1,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2210.02807",
+      "html": true,
+      "refs": 107,
+      "resolved": 3,
+      "by_method": {
+        "doi_metadata": 3
+      },
+      "gold": 3,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2210.11584",
+      "html": true,
+      "refs": 267,
+      "resolved": 108,
+      "by_method": {
+        "title": 89,
+        "arxiv_id": 19
+      },
+      "gold": 104,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2210.12373",
+      "html": false
+    },
+    {
+      "survey_id": "2210.13944",
+      "html": true,
+      "refs": 180,
+      "resolved": 86,
+      "by_method": {
+        "arxiv_id": 36,
+        "title": 50
+      },
+      "gold": 83,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2211.06009",
+      "html": true,
+      "refs": 190,
+      "resolved": 108,
+      "by_method": {
+        "title": 105,
+        "arxiv_id": 3
+      },
+      "gold": 108,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2211.11956",
+      "html": true,
+      "refs": 245,
+      "resolved": 132,
+      "by_method": {
+        "title": 112,
+        "arxiv_id": 20
+      },
+      "gold": 132,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2212.05767",
+      "html": true,
+      "refs": 264,
+      "resolved": 157,
+      "by_method": {
+        "title": 110,
+        "arxiv_id": 46,
+        "doi_metadata": 1
+      },
+      "gold": 143,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2212.08966",
+      "html": true,
+      "refs": 274,
+      "resolved": 161,
+      "by_method": {
+        "title": 147,
+        "arxiv_id": 14
+      },
+      "gold": 138,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2301.10079",
+      "html": true,
+      "refs": 87,
+      "resolved": 9,
+      "by_method": {
+        "title": 9
+      },
+      "gold": 9,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2302.02093",
+      "html": false
+    },
+    {
+      "survey_id": "2302.03180",
+      "html": true,
+      "refs": 143,
+      "resolved": 24,
+      "by_method": {
+        "arxiv_id": 24
+      },
+      "gold": 22,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2302.04752",
+      "html": true,
+      "refs": 161,
+      "resolved": 104,
+      "by_method": {
+        "arxiv_id": 84,
+        "title": 19,
+        "doi_metadata": 1
+      },
+      "gold": 104,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2302.05209",
+      "html": true,
+      "refs": 206,
+      "resolved": 119,
+      "by_method": {
+        "title": 90,
+        "arxiv_id": 29
+      },
+      "gold": 117,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2302.05448",
+      "html": false
+    },
+    {
+      "survey_id": "2302.06975",
+      "html": true,
+      "refs": 315,
+      "resolved": 101,
+      "by_method": {
+        "arxiv_id": 60,
+        "title": 40,
+        "doi_metadata": 1
+      },
+      "gold": 100,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2303.04226",
+      "html": true,
+      "refs": 283,
+      "resolved": 232,
+      "by_method": {
+        "title": 101,
+        "arxiv_id": 131
+      },
+      "gold": 229,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2303.07735",
+      "html": false
+    },
+    {
+      "survey_id": "2303.08060",
+      "html": true,
+      "refs": 161,
+      "resolved": 36,
+      "by_method": {
+        "title": 29,
+        "arxiv_id": 7
+      },
+      "gold": 36,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2303.11594",
+      "html": true,
+      "refs": 87,
+      "resolved": 19,
+      "by_method": {
+        "title": 13,
+        "arxiv_id": 6
+      },
+      "gold": 17,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2303.11717",
+      "html": true,
+      "refs": 500,
+      "resolved": 186,
+      "by_method": {
+        "arxiv_id": 133,
+        "title": 53
+      },
+      "gold": 186,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2304.06632",
+      "html": true,
+      "refs": 116,
+      "resolved": 44,
+      "by_method": {
+        "title": 32,
+        "arxiv_id": 12
+      },
+      "gold": 44,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2304.14613",
+      "html": true,
+      "refs": 237,
+      "resolved": 119,
+      "by_method": {
+        "title": 99,
+        "arxiv_id": 20
+      },
+      "gold": 117,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2305.05403",
+      "html": true,
+      "refs": 130,
+      "resolved": 19,
+      "by_method": {
+        "doi_metadata": 9,
+        "title": 6,
+        "arxiv_id": 4
+      },
+      "gold": 16,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2305.11537",
+      "html": true,
+      "refs": 206,
+      "resolved": 23,
+      "by_method": {
+        "arxiv_id": 23
+      },
+      "gold": 23,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2306.01750",
+      "html": true,
+      "refs": 20,
+      "resolved": 11,
+      "by_method": {
+        "title": 11
+      },
+      "gold": 11,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2306.13803",
+      "html": true,
+      "refs": 180,
+      "resolved": 18,
+      "by_method": {
+        "title": 16,
+        "arxiv_id": 2
+      },
+      "gold": 17,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2307.05258",
+      "html": true,
+      "refs": 375,
+      "resolved": 6,
+      "by_method": {
+        "title": 5,
+        "doi_metadata": 1
+      },
+      "gold": 6,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2307.16427",
+      "html": false
+    },
+    {
+      "survey_id": "2308.02457",
+      "html": true,
+      "refs": 158,
+      "resolved": 69,
+      "by_method": {
+        "title": 48,
+        "arxiv_id": 21
+      },
+      "gold": 68,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2308.12488",
+      "html": true,
+      "refs": 135,
+      "resolved": 84,
+      "by_method": {
+        "arxiv_id": 63,
+        "title": 21
+      },
+      "gold": 78,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2309.11356",
+      "html": true,
+      "refs": 209,
+      "resolved": 23,
+      "by_method": {
+        "title": 13,
+        "arxiv_id": 10
+      },
+      "gold": 17,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2310.13007",
+      "html": true,
+      "refs": 238,
+      "resolved": 46,
+      "by_method": {
+        "title": 32,
+        "arxiv_id": 14
+      },
+      "gold": 45,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2310.19917",
+      "html": true,
+      "refs": 0,
+      "resolved": 0,
+      "by_method": {},
+      "gold": 0,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2310.20199",
+      "html": true,
+      "refs": 110,
+      "resolved": 91,
+      "by_method": {
+        "title": 66,
+        "arxiv_id": 25
+      },
+      "gold": 87,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2311.00447",
+      "html": true,
+      "refs": 500,
+      "resolved": 339,
+      "by_method": {
+        "title": 242,
+        "arxiv_id": 96,
+        "doi_metadata": 1
+      },
+      "gold": 330,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2311.00530",
+      "html": true,
+      "refs": 184,
+      "resolved": 96,
+      "by_method": {
+        "title": 59,
+        "arxiv_id": 37
+      },
+      "gold": 77,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2311.11288",
+      "html": true,
+      "refs": 47,
+      "resolved": 6,
+      "by_method": {
+        "title": 6
+      },
+      "gold": 6,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2311.12320",
+      "html": true,
+      "refs": 211,
+      "resolved": 148,
+      "by_method": {
+        "arxiv_id": 68,
+        "title": 80
+      },
+      "gold": 145,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2311.13165",
+      "html": true,
+      "refs": 76,
+      "resolved": 55,
+      "by_method": {
+        "title": 37,
+        "arxiv_id": 18
+      },
+      "gold": 55,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2311.16534",
+      "html": true,
+      "refs": 125,
+      "resolved": 97,
+      "by_method": {
+        "title": 97
+      },
+      "gold": 97,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2312.07213",
+      "html": true,
+      "refs": 229,
+      "resolved": 11,
+      "by_method": {
+        "arxiv_id": 11
+      },
+      "gold": 11,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2312.11562",
+      "html": true,
+      "refs": 500,
+      "resolved": 358,
+      "by_method": {
+        "title": 348,
+        "arxiv_id": 8,
+        "doi_metadata": 2
+      },
+      "gold": 357,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2312.11970",
+      "html": true,
+      "refs": 245,
+      "resolved": 133,
+      "by_method": {
+        "title": 26,
+        "arxiv_id": 107
+      },
+      "gold": 133,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2312.16174",
+      "html": true,
+      "refs": 221,
+      "resolved": 23,
+      "by_method": {
+        "title": 15,
+        "arxiv_id": 8
+      },
+      "gold": 22,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2401.00430",
+      "html": true,
+      "refs": 204,
+      "resolved": 114,
+      "by_method": {
+        "arxiv_id": 44,
+        "title": 70
+      },
+      "gold": 111,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2401.02549",
+      "html": false
+    },
+    {
+      "survey_id": "2401.03454",
+      "html": true,
+      "refs": 197,
+      "resolved": 47,
+      "by_method": {
+        "arxiv_id": 24,
+        "title": 23
+      },
+      "gold": 47,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2401.10904",
+      "html": false
+    },
+    {
+      "survey_id": "2402.00262",
+      "html": false
+    },
+    {
+      "survey_id": "2402.02716",
+      "html": true,
+      "refs": 65,
+      "resolved": 57,
+      "by_method": {
+        "arxiv_id": 47,
+        "title": 10
+      },
+      "gold": 56,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2402.05121",
+      "html": true,
+      "refs": 117,
+      "resolved": 94,
+      "by_method": {
+        "title": 73,
+        "arxiv_id": 21
+      },
+      "gold": 71,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2402.06647",
+      "html": true,
+      "refs": 55,
+      "resolved": 24,
+      "by_method": {
+        "title": 23,
+        "arxiv_id": 1
+      },
+      "gold": 24,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2402.07927",
+      "html": true,
+      "refs": 48,
+      "resolved": 46,
+      "by_method": {
+        "arxiv_id": 24,
+        "title": 22
+      },
+      "gold": 37,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2403.00284",
+      "html": true,
+      "refs": 158,
+      "resolved": 3,
+      "by_method": {
+        "arxiv_id": 3
+      },
+      "gold": 3,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2403.02901",
+      "html": true,
+      "refs": 315,
+      "resolved": 162,
+      "by_method": {
+        "title": 90,
+        "arxiv_id": 64,
+        "doi_metadata": 8
+      },
+      "gold": 152,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2403.04105",
+      "html": true,
+      "refs": 202,
+      "resolved": 73,
+      "by_method": {
+        "title": 39,
+        "arxiv_id": 34
+      },
+      "gold": 60,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2403.06910",
+      "html": true,
+      "refs": 263,
+      "resolved": 66,
+      "by_method": {
+        "title": 56,
+        "doi_metadata": 10
+      },
+      "gold": 66,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2403.10249",
+      "html": true,
+      "refs": 94,
+      "resolved": 77,
+      "by_method": {
+        "arxiv_id": 59,
+        "title": 18
+      },
+      "gold": 77,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2403.17333",
+      "html": true,
+      "refs": 221,
+      "resolved": 89,
+      "by_method": {
+        "arxiv_id": 59,
+        "doi_metadata": 23,
+        "title": 7
+      },
+      "gold": 87,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2404.02039",
+      "html": true,
+      "refs": 197,
+      "resolved": 166,
+      "by_method": {
+        "arxiv_id": 125,
+        "title": 41
+      },
+      "gold": 150,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2404.13501",
+      "html": true,
+      "refs": 174,
+      "resolved": 157,
+      "by_method": {
+        "arxiv_id": 135,
+        "title": 22
+      },
+      "gold": 157,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2404.14082",
+      "html": true,
+      "refs": 375,
+      "resolved": 270,
+      "by_method": {
+        "title": 38,
+        "arxiv_id": 231,
+        "doi_metadata": 1
+      },
+      "gold": 239,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2405.01398",
+      "html": true,
+      "refs": 165,
+      "resolved": 35,
+      "by_method": {
+        "arxiv_id": 8,
+        "title": 21,
+        "doi_metadata": 6
+      },
+      "gold": 35,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2405.02583",
+      "html": true,
+      "refs": 305,
+      "resolved": 106,
+      "by_method": {
+        "title": 19,
+        "arxiv_id": 70,
+        "doi_metadata": 17
+      },
+      "gold": 106,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2405.03305",
+      "html": true,
+      "refs": 77,
+      "resolved": 14,
+      "by_method": {
+        "title": 11,
+        "arxiv_id": 3
+      },
+      "gold": 14,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2405.03524",
+      "html": true,
+      "refs": 148,
+      "resolved": 94,
+      "by_method": {
+        "title": 55,
+        "arxiv_id": 39
+      },
+      "gold": 94,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2405.06058",
+      "html": true,
+      "refs": 16,
+      "resolved": 5,
+      "by_method": {
+        "arxiv_id": 2,
+        "title": 3
+      },
+      "gold": 5,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2405.19334",
+      "html": true,
+      "refs": 500,
+      "resolved": 446,
+      "by_method": {
+        "arxiv_id": 303,
+        "title": 143
+      },
+      "gold": 440,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2406.00252",
+      "html": true,
+      "refs": 239,
+      "resolved": 219,
+      "by_method": {
+        "arxiv_id": 157,
+        "title": 62
+      },
+      "gold": 198,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2406.00415",
+      "html": true,
+      "refs": 231,
+      "resolved": 127,
+      "by_method": {
+        "title": 108,
+        "arxiv_id": 19
+      },
+      "gold": 114,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2406.05804",
+      "html": true,
+      "refs": 57,
+      "resolved": 51,
+      "by_method": {
+        "title": 36,
+        "arxiv_id": 15
+      },
+      "gold": 45,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2406.10964",
+      "html": true,
+      "refs": 145,
+      "resolved": 62,
+      "by_method": {
+        "title": 49,
+        "arxiv_id": 13
+      },
+      "gold": 62,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2407.02425",
+      "html": true,
+      "refs": 77,
+      "resolved": 17,
+      "by_method": {
+        "title": 10,
+        "doi_metadata": 6,
+        "arxiv_id": 1
+      },
+      "gold": 17,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2407.11043",
+      "html": true,
+      "refs": 142,
+      "resolved": 14,
+      "by_method": {
+        "title": 13,
+        "arxiv_id": 1
+      },
+      "gold": 14,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2407.11484",
+      "html": true,
+      "refs": 137,
+      "resolved": 119,
+      "by_method": {
+        "arxiv_id": 72,
+        "title": 46,
+        "doi_metadata": 1
+      },
+      "gold": 117,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2407.11511",
+      "html": true,
+      "refs": 147,
+      "resolved": 110,
+      "by_method": {
+        "arxiv_id": 78,
+        "title": 32
+      },
+      "gold": 109,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2407.14662",
+      "html": true,
+      "refs": 58,
+      "resolved": 29,
+      "by_method": {
+        "arxiv_id": 18,
+        "title": 11
+      },
+      "gold": 28,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2408.01072",
+      "html": true,
+      "refs": 153,
+      "resolved": 87,
+      "by_method": {
+        "arxiv_id": 27,
+        "title": 60
+      },
+      "gold": 85,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2408.08921",
+      "html": true,
+      "refs": 204,
+      "resolved": 103,
+      "by_method": {
+        "arxiv_id": 96,
+        "title": 7
+      },
+      "gold": 101,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2408.12128",
+      "html": true,
+      "refs": 185,
+      "resolved": 88,
+      "by_method": {
+        "arxiv_id": 69,
+        "title": 19
+      },
+      "gold": 88,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2409.17426",
+      "html": false
+    },
+    {
+      "survey_id": "2409.17516",
+      "html": false
+    },
+    {
+      "survey_id": "2410.12126",
+      "html": true,
+      "refs": 47,
+      "resolved": 30,
+      "by_method": {
+        "title": 17,
+        "arxiv_id": 13
+      },
+      "gold": 28,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2410.15595",
+      "html": true,
+      "refs": 223,
+      "resolved": 189,
+      "by_method": {
+        "arxiv_id": 151,
+        "title": 37,
+        "doi_metadata": 1
+      },
+      "gold": 179,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2410.15644",
+      "html": true,
+      "refs": 98,
+      "resolved": 30,
+      "by_method": {
+        "title": 27,
+        "arxiv_id": 3
+      },
+      "gold": 30,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2411.00489",
+      "html": true,
+      "refs": 336,
+      "resolved": 158,
+      "by_method": {
+        "title": 96,
+        "arxiv_id": 62
+      },
+      "gold": 158,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2411.02914",
+      "html": true,
+      "refs": 114,
+      "resolved": 89,
+      "by_method": {
+        "arxiv_id": 44,
+        "title": 45
+      },
+      "gold": 86,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2411.06606",
+      "html": true,
+      "refs": 110,
+      "resolved": 63,
+      "by_method": {
+        "arxiv_id": 39,
+        "doi_metadata": 3,
+        "title": 21
+      },
+      "gold": 63,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2412.00209",
+      "html": true,
+      "refs": 215,
+      "resolved": 29,
+      "by_method": {
+        "title": 28,
+        "arxiv_id": 1
+      },
+      "gold": 28,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2412.01378",
+      "html": false
+    },
+    {
+      "survey_id": "2412.05208",
+      "html": true,
+      "refs": 24,
+      "resolved": 22,
+      "by_method": {
+        "title": 5,
+        "arxiv_id": 17
+      },
+      "gold": 21,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2412.05528",
+      "html": true,
+      "refs": 186,
+      "resolved": 65,
+      "by_method": {
+        "title": 61,
+        "arxiv_id": 4
+      },
+      "gold": 64,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2412.10390",
+      "html": true,
+      "refs": 84,
+      "resolved": 33,
+      "by_method": {
+        "title": 12,
+        "arxiv_id": 21
+      },
+      "gold": 33,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2412.12767",
+      "html": true,
+      "refs": 138,
+      "resolved": 111,
+      "by_method": {
+        "arxiv_id": 80,
+        "title": 31
+      },
+      "gold": 108,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2412.17686",
+      "html": true,
+      "refs": 500,
+      "resolved": 349,
+      "by_method": {
+        "arxiv_id": 205,
+        "title": 134,
+        "doi_metadata": 10
+      },
+      "gold": 338,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2501.02725",
+      "html": true,
+      "refs": 422,
+      "resolved": 313,
+      "by_method": {
+        "arxiv_id": 45,
+        "title": 268
+      },
+      "gold": 302,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2501.06577",
+      "html": true,
+      "refs": 32,
+      "resolved": 2,
+      "by_method": {
+        "arxiv_id": 1,
+        "title": 1
+      },
+      "gold": 2,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2501.07468",
+      "html": true,
+      "refs": 500,
+      "resolved": 116,
+      "by_method": {
+        "arxiv_id": 115,
+        "doi_metadata": 1
+      },
+      "gold": 116,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2501.09136",
+      "html": true,
+      "refs": 101,
+      "resolved": 67,
+      "by_method": {
+        "title": 67
+      },
+      "gold": 66,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2501.09239",
+      "html": true,
+      "refs": 96,
+      "resolved": 6,
+      "by_method": {
+        "title": 6
+      },
+      "gold": 6,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2501.10069",
+      "html": true,
+      "refs": 42,
+      "resolved": 37,
+      "by_method": {
+        "title": 28,
+        "arxiv_id": 9
+      },
+      "gold": 37,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.02817",
+      "html": true,
+      "refs": 223,
+      "resolved": 76,
+      "by_method": {
+        "title": 61,
+        "arxiv_id": 15
+      },
+      "gold": 76,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.09100",
+      "html": true,
+      "refs": 87,
+      "resolved": 68,
+      "by_method": {
+        "arxiv_id": 18,
+        "title": 50
+      },
+      "gold": 68,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.10303",
+      "html": true,
+      "refs": 25,
+      "resolved": 7,
+      "by_method": {
+        "title": 5,
+        "doi_metadata": 1,
+        "arxiv_id": 1
+      },
+      "gold": 7,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.11221",
+      "html": true,
+      "refs": 134,
+      "resolved": 120,
+      "by_method": {
+        "arxiv_id": 83,
+        "title": 37
+      },
+      "gold": 119,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.11560",
+      "html": true,
+      "refs": 84,
+      "resolved": 58,
+      "by_method": {
+        "title": 58
+      },
+      "gold": 58,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.12048",
+      "html": true,
+      "refs": 78,
+      "resolved": 38,
+      "by_method": {
+        "arxiv_id": 18,
+        "title": 20
+      },
+      "gold": 38,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.15652",
+      "html": true,
+      "refs": 47,
+      "resolved": 43,
+      "by_method": {
+        "title": 34,
+        "arxiv_id": 9
+      },
+      "gold": 43,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.17419",
+      "html": true,
+      "refs": 500,
+      "resolved": 413,
+      "by_method": {
+        "title": 90,
+        "arxiv_id": 323
+      },
+      "gold": 316,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2502.19023",
+      "html": true,
+      "refs": 83,
+      "resolved": 9,
+      "by_method": {
+        "title": 9
+      },
+      "gold": 9,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2503.06027",
+      "html": true,
+      "refs": 288,
+      "resolved": 69,
+      "by_method": {
+        "title": 53,
+        "arxiv_id": 16
+      },
+      "gold": 69,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2503.12434",
+      "html": true,
+      "refs": 220,
+      "resolved": 115,
+      "by_method": {
+        "arxiv_id": 82,
+        "title": 33
+      },
+      "gold": 115,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2503.17726",
+      "html": true,
+      "refs": 303,
+      "resolved": 245,
+      "by_method": {
+        "title": 203,
+        "arxiv_id": 42
+      },
+      "gold": 225,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2503.21411",
+      "html": true,
+      "refs": 336,
+      "resolved": 143,
+      "by_method": {
+        "arxiv_id": 143
+      },
+      "gold": 143,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2504.09037",
+      "html": true,
+      "refs": 452,
+      "resolved": 384,
+      "by_method": {
+        "title": 151,
+        "arxiv_id": 228,
+        "doi_metadata": 5
+      },
+      "gold": 369,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2504.20464",
+      "html": true,
+      "refs": 40,
+      "resolved": 36,
+      "by_method": {
+        "title": 36
+      },
+      "gold": 35,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2504.21277",
+      "html": true,
+      "refs": 152,
+      "resolved": 134,
+      "by_method": {
+        "arxiv_id": 123,
+        "title": 11
+      },
+      "gold": 134,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2505.11780",
+      "html": true,
+      "refs": 28,
+      "resolved": 5,
+      "by_method": {
+        "title": 4,
+        "arxiv_id": 1
+      },
+      "gold": 5,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2505.14235",
+      "html": true,
+      "refs": 60,
+      "resolved": 49,
+      "by_method": {
+        "title": 16,
+        "arxiv_id": 33
+      },
+      "gold": 49,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2505.19219",
+      "html": true,
+      "refs": 207,
+      "resolved": 86,
+      "by_method": {
+        "title": 59,
+        "arxiv_id": 27
+      },
+      "gold": 86,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2505.20306",
+      "html": true,
+      "refs": 128,
+      "resolved": 29,
+      "by_method": {
+        "title": 21,
+        "arxiv_id": 8
+      },
+      "gold": 29,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2506.06580",
+      "html": true,
+      "refs": 412,
+      "resolved": 84,
+      "by_method": {
+        "title": 52,
+        "arxiv_id": 20,
+        "doi_metadata": 12
+      },
+      "gold": 20,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2506.13384",
+      "html": false
+    },
+    {
+      "survey_id": "2506.17442",
+      "html": true,
+      "refs": 142,
+      "resolved": 56,
+      "by_method": {
+        "title": 50,
+        "arxiv_id": 6
+      },
+      "gold": 56,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2507.04136",
+      "html": true,
+      "refs": 111,
+      "resolved": 87,
+      "by_method": {
+        "title": 30,
+        "arxiv_id": 57
+      },
+      "gold": 87,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2507.09611",
+      "html": true,
+      "refs": 15,
+      "resolved": 5,
+      "by_method": {
+        "title": 1,
+        "arxiv_id": 4
+      },
+      "gold": 5,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2507.21046",
+      "html": true,
+      "refs": 324,
+      "resolved": 297,
+      "by_method": {
+        "title": 84,
+        "arxiv_id": 213
+      },
+      "gold": 290,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2508.04482",
+      "html": true,
+      "refs": 226,
+      "resolved": 199,
+      "by_method": {
+        "title": 33,
+        "arxiv_id": 165,
+        "doi_metadata": 1
+      },
+      "gold": 196,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2508.10047",
+      "html": true,
+      "refs": 42,
+      "resolved": 26,
+      "by_method": {
+        "title": 14,
+        "arxiv_id": 12
+      },
+      "gold": 26,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2508.19097",
+      "html": true,
+      "refs": 51,
+      "resolved": 37,
+      "by_method": {
+        "title": 12,
+        "arxiv_id": 25
+      },
+      "gold": 37,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2508.19239",
+      "html": true,
+      "refs": 111,
+      "resolved": 15,
+      "by_method": {
+        "arxiv_id": 8,
+        "title": 7
+      },
+      "gold": 14,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2509.02547",
+      "html": true,
+      "refs": 500,
+      "resolved": 458,
+      "by_method": {
+        "arxiv_id": 324,
+        "title": 131,
+        "doi_metadata": 3
+      },
+      "gold": 445,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2509.12034",
+      "html": true,
+      "refs": 51,
+      "resolved": 10,
+      "by_method": {
+        "title": 7,
+        "doi_metadata": 2,
+        "arxiv_id": 1
+      },
+      "gold": 10,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2509.16330",
+      "html": true,
+      "refs": 148,
+      "resolved": 105,
+      "by_method": {
+        "arxiv_id": 88,
+        "title": 17
+      },
+      "gold": 104,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2509.18970",
+      "html": true,
+      "refs": 386,
+      "resolved": 271,
+      "by_method": {
+        "arxiv_id": 232,
+        "title": 38,
+        "doi_metadata": 1
+      },
+      "gold": 270,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2510.03847",
+      "html": false
+    },
+    {
+      "survey_id": "2510.05184",
+      "html": true,
+      "refs": 139,
+      "resolved": 118,
+      "by_method": {
+        "arxiv_id": 34,
+        "title": 84
+      },
+      "gold": 117,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2510.07733",
+      "html": true,
+      "refs": 21,
+      "resolved": 19,
+      "by_method": {
+        "arxiv_id": 14,
+        "title": 5
+      },
+      "gold": 19,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2510.11380",
+      "html": false
+    },
+    {
+      "survey_id": "2510.23578",
+      "html": true,
+      "refs": 136,
+      "resolved": 14,
+      "by_method": {
+        "title": 5,
+        "doi_metadata": 6,
+        "arxiv_id": 3
+      },
+      "gold": 14,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2511.15722",
+      "html": true,
+      "refs": 140,
+      "resolved": 116,
+      "by_method": {
+        "arxiv_id": 74,
+        "doi_metadata": 3,
+        "title": 39
+      },
+      "gold": 116,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2512.18135",
+      "html": true,
+      "refs": 86,
+      "resolved": 40,
+      "by_method": {
+        "arxiv_id": 15,
+        "title": 25
+      },
+      "gold": 40,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2602.20303",
+      "html": true,
+      "refs": 41,
+      "resolved": 2,
+      "by_method": {
+        "arxiv_id": 1,
+        "doi_metadata": 1
+      },
+      "gold": 2,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2602.21268",
+      "html": false
+    },
+    {
+      "survey_id": "2603.11093",
+      "html": true,
+      "refs": 164,
+      "resolved": 136,
+      "by_method": {
+        "arxiv_id": 59,
+        "title": 76,
+        "doi_metadata": 1
+      },
+      "gold": 132,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2603.15709",
+      "html": false
+    },
+    {
+      "survey_id": "2604.08016",
+      "html": true,
+      "refs": 114,
+      "resolved": 76,
+      "by_method": {
+        "title": 55,
+        "arxiv_id": 18,
+        "doi_metadata": 3
+      },
+      "gold": 76,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2604.14240",
+      "html": true,
+      "refs": 435,
+      "resolved": 146,
+      "by_method": {
+        "title": 108,
+        "arxiv_id": 38
+      },
+      "gold": 146,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2605.21778",
+      "html": true,
+      "refs": 93,
+      "resolved": 61,
+      "by_method": {
+        "arxiv_id": 43,
+        "title": 18
+      },
+      "gold": 61,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2606.08728",
+      "html": true,
+      "refs": 266,
+      "resolved": 187,
+      "by_method": {
+        "arxiv_id": 98,
+        "title": 88,
+        "doi_metadata": 1
+      },
+      "gold": 187,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2606.15577",
+      "html": true,
+      "refs": 51,
+      "resolved": 44,
+      "by_method": {
+        "arxiv_id": 16,
+        "title": 24,
+        "doi_metadata": 4
+      },
+      "gold": 44,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2606.15647",
+      "html": true,
+      "refs": 216,
+      "resolved": 93,
+      "by_method": {
+        "title": 58,
+        "arxiv_id": 35
+      },
+      "gold": 93,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2606.22793",
+      "html": true,
+      "refs": 116,
+      "resolved": 108,
+      "by_method": {
+        "title": 5,
+        "arxiv_id": 102,
+        "doi_metadata": 1
+      },
+      "gold": 108,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2607.11906",
+      "html": true,
+      "refs": 243,
+      "resolved": 219,
+      "by_method": {
+        "title": 137,
+        "arxiv_id": 81,
+        "doi_metadata": 1
+      },
+      "gold": 219,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2607.13104",
+      "html": true,
+      "refs": 443,
+      "resolved": 358,
+      "by_method": {
+        "arxiv_id": 174,
+        "title": 178,
+        "doi_metadata": 6
+      },
+      "gold": 356,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2607.14141",
+      "html": false
+    },
+    {
+      "survey_id": "2608.02699",
+      "html": true,
+      "refs": 47,
+      "resolved": 16,
+      "by_method": {
+        "arxiv_id": 9,
+        "doi_metadata": 4,
+        "title": 3
+      },
+      "gold": 16,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2608.18104",
+      "html": true,
+      "refs": 215,
+      "resolved": 178,
+      "by_method": {
+        "title": 126,
+        "arxiv_id": 52
+      },
+      "gold": 178,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2608.20379",
+      "html": true,
+      "refs": 249,
+      "resolved": 224,
+      "by_method": {
+        "arxiv_id": 169,
+        "title": 54,
+        "doi_metadata": 1
+      },
+      "gold": 220,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2608.20485",
+      "html": true,
+      "refs": 191,
+      "resolved": 177,
+      "by_method": {
+        "title": 41,
+        "arxiv_id": 136
+      },
+      "gold": 177,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2608.20743",
+      "html": true,
+      "refs": 77,
+      "resolved": 71,
+      "by_method": {
+        "arxiv_id": 47,
+        "title": 23,
+        "doi_metadata": 1
+      },
+      "gold": 71,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2608.21449",
+      "html": true,
+      "refs": 36,
+      "resolved": 19,
+      "by_method": {
+        "title": 11,
+        "arxiv_id": 7,
+        "doi_metadata": 1
+      },
+      "gold": 19,
+      "date_source": "metadata"
+    },
+    {
+      "survey_id": "2608.24890",
+      "html": false
+    }
+  ]
+}
