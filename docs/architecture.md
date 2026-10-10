@@ -55,7 +55,7 @@ flowchart TD
 |   2   | `search_papers`     | Gọi ArXiv API với rate-limit thread-safe, trả về danh sách`PaperItem`                    |
 |   3   | `eval_search`       | LLM chấm điểm relevance, chọn top-K bài tốt nhất hoặc yêu cầu refine                  |
 |   4   | `refine_query`      | LLM tối ưu lại từ khóa tìm kiếm dựa trên feedback → quay lại bước 2                |
-|   5   | `read_paper`        | Tải PDF, trích xuất text 2 cột (two-column block parsing), bóc tách sections              |
+|   5   | `read_paper`        | Đọc HTML trước (ar5iv → arxiv.org/html), PDF là phương án dự phòng; bóc tách sections, bảng, tài liệu tham khảo, link repo |
 |   6   | `web_enrich`        | Tìm repo GitHub 3 tầng + tạo BibTeX citation                                                 |
 |   7   | `write_notes`       | LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)                                 |
 |   8   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
@@ -83,7 +83,10 @@ d:\LABAI\agentresearch\
 │
 ├── tools/                      # Công cụ chuyên sâu (không gọi LLM)
 │   ├── arxiv_search.py         # Thread-safe ArXiv API (Lock + Exponential Backoff)
-│   ├── pdf_parser.py           # Two-column PDF parser + Section extractor
+│   ├── pdf_parser.py           # Orchestrator đọc bài (HTML trước, PDF dự phòng) + PDF parser 2 cột
+│   ├── html_source.py          # Tải LaTeXML HTML: ar5iv → arxiv.org/html (qua rate limiter)
+│   ├── html_extractor.py       # Parse LaTeXML HTML → sections, tables, references, repo links (không mạng)
+│   ├── rate_limit.py           # Limiter theo host (arxiv.org 15s, ar5iv 3s), clock/sleep inject được
 │   ├── github_enricher.py      # Multi-tier GitHub search (3 fallback tiers)
 │   ├── bibtex_generator.py     # Sinh BibTeX citation chuẩn
 │   ├── cache_manager.py        # Canonical key + JSON/PDF cache
@@ -126,6 +129,9 @@ File này định nghĩa **toàn bộ cấu trúc dữ liệu** chảy qua mọi
 | `PMRLNotes`        | Ghi chú theo khung**P**roblem–**M**ethod–**R**esult–**L**imitation, mỗi trường là 1 đoạn văn |
 | `GitHubRepoInfo`   | Metadata repo GitHub: tên, URL, stars, framework, cờ official                                                                 |
 | `PaperItem`        | Đại diện 1 bài báo xuyên suốt vòng đời: từ kết quả search → tải PDF → trích xuất → PMRL → report            |
+| `PaperTable`       | 1 bảng từ HTML: `caption`, `label` ("Table 2"), `rows` (hàng header đầu tiên), `section` (heading chứa bảng)       |
+| `PaperReference`   | 1 mục bibliography: `index`, `text`, `title` (ước lượng), `arxiv_id`, `doi`, `urls`                                  |
+| `RepoLink`         | 1 link code/project page: `url`, `kind` (`github`/`project_page`/`other`), `context` (≤200 ký tự), `in_bibliography`, `is_primary_candidate` |
 | `EvalSearchOutput` | Kết quả đánh giá chất lượng tìm kiếm:`passed`, `score`, `feedback`, `selected_indices`                        |
 
 #### `ResearchState` (TypedDict)
@@ -154,7 +160,9 @@ Class `AppConfig` tập trung mọi hằng số cấu hình, đọc từ `.env` 
 | **Concurrency** | `READ_PAPER_MAX_WORKERS=8`, `GITHUB_MAX_CONCURRENCY=4`, `LLM_MAX_CONCURRENCY=6` | Mỗi stage dùng pool riêng; GitHub và LLM không chờ nhau |
 | **Report**   | `REPORT_PARALLEL_SECTIONS=true`                                | `false` = quay lại 1 lệnh gọi LLM cũ cho toàn báo cáo                  |
 | **Search**   | `MAX_RETRIES=2`, `MAX_SEARCH_RESULTS=5`, `TOP_K_PAPERS=3` | Giới hạn vòng lặp refine, số kết quả tìm kiếm, số bài chọn      |
-| **PDF**      | `PDF_MAX_PAGES=8`, `PDF_MAX_CHARS=15000`                    | Giới hạn trang/ký tự khi parse PDF                                      |
+| **PDF**      | `PDF_MAX_PAGES=8`, `PDF_MAX_CHARS=15000`                    | Giới hạn trang/ký tự khi parse PDF (đường PDF giữ nguyên cap 4000/2000 ký tự mỗi section) |
+| **Pacing HTML/PDF** | `ARXIV_HOST_MIN_INTERVAL_SEC=15`, `AR5IV_MIN_INTERVAL_SEC=3` | Khoảng cách tối thiểu giữa 2 lần *bắt đầu* request tới cùng host. `arxiv.org` (cả `/html` và `/pdf`) theo `Crawl-delay: 15` trong robots.txt; ar5iv không có crawl-delay. Ghi đè bằng biến môi trường cùng tên |
+| **Cap section HTML** | `HTML_EXPERIMENTS_MAX_CHARS=12000`, `HTML_METHODOLOGY_MAX_CHARS=8000`, `HTML_SETUP_MAX_CHARS=6000`, `HTML_ABSTRACT_MAX_CHARS=3000`, `HTML_LIMITATIONS_MAX_CHARS=3000` | Giới hạn ký tự mỗi section lấy từ HTML (env ghi đè được) |
 | **Paths**    | `PDF_CACHE_DIR`, `TEXT_CACHE_DIR`, `REPORTS_DIR`          | Thư mục cache và xuất báo cáo                                         |
 
 Constructor `__init__` tự động tạo các thư mục cache nếu chưa tồn tại.
@@ -254,26 +262,40 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 
 ### 3.8. Node: `read_paper` (`nodes/read_paper.py`)
 
-**Chức năng**: Tải PDF và trích xuất nội dung theo cấu trúc section — chạy **song song** bằng `ThreadPoolExecutor`.
+**Chức năng**: Đọc bài báo và trích xuất nội dung có cấu trúc — chạy **song song** bằng `ThreadPoolExecutor`. Từ PR 2, thứ tự đọc là **HTML trước, PDF sau**.
 
 **Pipeline xử lý mỗi bài báo** (trong `sync_extract_pdf_content`):
 
-1. **Check cache** → nếu đã parse trước đó thì dùng lại ngay
-2. **Xác định nguồn PDF**: cache local → local path → tải từ ArXiv
-3. **Trích xuất text 2 cột** (`extract_ordered_blocks_from_pdf`):
-   - Dùng PyMuPDF (`fitz`) lấy text blocks kèm tọa độ (x0, y0, x1, y1)
-   - Chia block theo `mid_x = page.width / 2`: cột trái vs cột phải
-   - Sắp xếp: cột trái (trên→dưới) rồi cột phải (trên→dưới) → đúng thứ tự đọc
-   - Fallback sang `pypdf` nếu PyMuPDF không cài
-4. **Bóc tách section** (`parse_structured_sections`):
-   - Regex match: `abstract`, `methodology`, `experiments`, `limitations`
-   - Giới hạn: abstract/limitations ≤ 2000 chars, methodology/experiments ≤ 4000 chars
-   - Fallback chunking nếu regex không match (chia text thô theo vị trí)
-5. **Lưu cache** JSON để lần sau không cần parse lại
+1. **Check cache** (`data/cache/text/<key>.json`). Cache chỉ dùng lại khi `extraction_version == EXTRACTION_CACHE_VERSION` (hiện là 2) và coverage `complete`. Cache cũ (thiếu key `extraction_version`) bị bỏ qua; file PDF đã tải vẫn dùng lại.
+2. **HTML trước** (chỉ với bài có `arxiv_id`, không phải `local_pdf`), theo thứ tự:
+   1. `https://ar5iv.labs.arxiv.org/html/<id>`
+   2. `https://arxiv.org/html/<id>`
+
+   Nguồn bị bỏ qua (rơi xuống nguồn kế tiếp) khi: HTTP khác 200, redirect ra ngoài `/html/<id>` (ví dụ `/abs/<id>`), content-type không phải HTML, trang không có markup LaTeXML (`ltx_*`), hoặc parse không ra section nào. Mỗi lần thử ghi vào `source_quality["htmlAttempts"]` (`{"source", "status"}`). Code **không bao giờ** gọi `/e-print` hay `/src` (robots.txt cấm).
+3. **PDF chỉ khi cần**: khi không có HTML, hoặc HTML thiếu `abstract`/`methodology`/`experiments`. Thứ tự nguồn PDF: cache → file local → tải từ ArXiv. HTML đủ 3 section thì **không tải PDF**.
+4. **Gộp**: section nào HTML thiếu thì lấy từ PDF (HTML luôn thắng khi cả hai có). `source_quality["source"]` ghi nguồn thắng: `ar5iv` | `arxiv_html` | `pdf` | `mixed` (`mixed` = HTML + PDF điền thêm section). `sourceFormat` giữ từ vựng cũ (`html`/`pdf`/`mixed`) cho API.
+5. **Lưu cache** JSON: `sections`, `source_quality`, `tables`, `references`, `repo_links`, `extraction_version`.
+
+**Sections từ HTML** (`tools/html_extractor.py`): giữ key cũ `abstract`, `methodology`, `experiments`, `limitations` và thêm `setup`.
+
+- Heading cấp 1 được phân loại theo từ khóa; heading số không có từ khóa (ví dụ "3 Key Design Decisions") là `methodology` trước phần experiments và `experiments` sau đó. Introduction, Related Work, Conclusion bị bỏ.
+- Heading con (subsection/paragraph) chỉ ghi đè section cha khi là `setup` (Implementation Details, Training Details, Hyperparameters, Hardware, Compute, Experimental Setup/Details, Configuration) hoặc `limitations`. Nhờ vậy "A.4 Hyperparameters" trong appendix vào `setup`.
+- Appendix được đọc: heading appendix có "details" hoặc từ khóa setup vào `setup`; Ablation/Results vào `experiments`.
+- Câu nhắc phần cứng (GPU, TPU, A100, ...) trong `methodology`/`experiments`/`limitations` được **sao chép** lên đầu `setup` (tối đa 8 câu, 2000 ký tự).
+- Math dùng `alttext` của LaTeXML (TeX → text đọc được). Bảng được ghi gọn (≤1500 ký tự/bảng) vào text của section, đồng thời có dạng cấu trúc ở `PaperItem.tables`.
+- Cap ký tự lấy từ `config.HTML_*_MAX_CHARS`.
+
+**Trường có cấu trúc** (rỗng với bài chỉ có PDF; JSON cache cũ không có các trường này vẫn load được):
+
+- `tables`: mỗi `ltx_tabular` thành 1 `PaperTable`. `colspan`/`rowspan` lặp lại text ô trên mọi ô bị span. Bảng không có chữ hoặc chỉ 1 ô bị bỏ.
+- `references`: mỗi `ltx_bibitem` thành 1 `PaperReference`; `arxiv_id` (kiểu mới và cũ, bỏ hậu tố `vN`) và `doi` lấy từ text và href.
+- `repo_links`: link GitHub (chuẩn hóa về `https://github.com/<owner>/<repo>`), `*.github.io`, host code khác, và link project page có cue. `is_primary_candidate = true` khi link nằm ngoài bibliography và (nằm ở phần đầu bài: tiêu đề, tác giả, abstract, footnote đầu, hoặc context có cue mạnh như "project page", "our code", "code is available", "we release"). Link trong experiments/setup cần cue mạnh; context có "baseline", "based on", "we use", "following" thì không được tính. `source_quality["codeUrls"]` chỉ chứa repo GitHub là primary candidate.
+
+**Pacing** (`tools/rate_limit.py`): mỗi host có **một** limiter dùng chung giữa các thread. `arxiv.org` (HTML và PDF, kể cả mỗi bước redirect) cách nhau ≥ 15s giữa 2 lần bắt đầu request và chỉ 1 kết nối tại một thời điểm; `ar5iv.labs.arxiv.org` ≥ 3s. Giữ lock suốt thời gian request nên tải body cũng tuần tự. Test dùng `rate_limit.configure(clock=..., sleep=...)` để không sleep thật (`tests/conftest.py` bật clock giả cho mọi test).
 
 **Concurrency**:
 
-- Pool PDF có `min(n_papers, READ_PAPER_MAX_WORKERS)` worker; mọi PDF chạy song song.
+- Pool đọc bài có `min(n_papers, READ_PAPER_MAX_WORKERS)` worker. Request tới `arxiv.org` vẫn tuần tự qua limiter 15s; ar5iv cách nhau 3s. Bài ar5iv đủ section không tải PDF, nên 3 bài thường mất vài giây thay vì vài chục giây.
 - Node gọi `fetch_arxiv_metadata_batch` **1 lần** khi bắt đầu (1 request `id_list=a,b,c`, timeout `ARXIV_METADATA_TIMEOUT_SEC`, 1 lần thử, vẫn qua rate limiter, cache hit không gọi HTTP).
 - Sau khi PDF xong, node chờ metadata tối đa `ARXIV_METADATA_GRACE_SEC`. Nếu chưa có, node đi theo đường "metadata lỗi" cũ và ghi `arxiv.status = "timeout"` trong `node_timings`.
 - Node không join request nền (`shutdown(wait=False)`); request đến muộn vẫn ghi cache cho lần chạy sau.
@@ -357,11 +379,27 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 | `_clean_arxiv_query()` | Loại bỏ stopwords tiếng Anh + tiếng Việt, format`all:term1 AND all:term2`             |
 | `STOPWORDS`            | Bao gồm cả`"toi", "muon", "tim", "bai", "bao", "trong"` — hỗ trợ query tiếng Việt   |
 
-#### `tools/pdf_parser.py` — Two-column Parser
+#### `tools/pdf_parser.py` — Orchestrator đọc bài + PDF Parser
 
+- **`sync_extract_pdf_content()`**: Orchestrator: cache check → HTML (ar5iv → arxiv.org/html) → PDF nếu cần → gộp → save cache
+- **`_download_pdf()`**: mỗi request (kể cả redirect) lấy 1 slot từ limiter `arxiv.org`
 - **`extract_ordered_blocks_from_pdf()`**: Dùng PyMuPDF `page.get_text("blocks")` → chia cột trái/phải theo `mid_x` → sắp xếp theo reading order
 - **`parse_structured_sections()`**: Regex bóc tách 4 section chính, fallback cắt text thô nếu regex không match
-- **`sync_extract_pdf_content()`**: Orchestrator: cache check → download → parse → save cache
+
+#### `tools/html_source.py` — Tải HTML
+
+- **`fetch_html_extraction()`**: thử ar5iv rồi arxiv.org/html, trả `(HTMLExtraction, source)`; ghi `htmlAttempts`
+- **`fetch_html_page()`**: GET không tự redirect; chỉ theo redirect tới `/html/<id>` trên host cho phép (`ar5iv.labs.arxiv.org`, `arxiv.org`), tối đa 3 hop, giới hạn 20 MB, mỗi hop qua limiter
+
+#### `tools/html_extractor.py` — Parse LaTeXML (không mạng, chỉ stdlib `html.parser`)
+
+- **`extract_html()`** → `HTMLExtraction` (`sections`, `tables`, `references`, `repo_links`, `code_urls`); **`looks_like_latexml()`** phát hiện trang không có nội dung LaTeXML
+- Script thử offline: `.venv/bin/python -I bench/html_extract_probe.py [thư mục]` (mặc định `data/arxiv/html_probe`)
+
+#### `tools/rate_limit.py` — Limiter theo host
+
+- **`host_slot(host)`**: context manager; no-op với host ngoài `arxiv.org`/`www.arxiv.org`/`ar5iv.labs.arxiv.org`
+- **`configure(clock=, sleep=)`**: reset trạng thái và inject clock giả (dùng trong test)
 
 #### `tools/cache_manager.py` — Hệ Thống Cache
 
@@ -369,7 +407,7 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 | :--------------------------- | :----------------------------------------------------------------------------------- |
 | `canonicalize_paper_key()` | Sinh key chuẩn:`arxiv_1706.03762` / `local_filename_a1b2c3` / `id_query_hash` |
 | `get_cached_pdf_path()`    | Kiểm tra PDF đã tải chưa                                                        |
-| `get_cached_text_data()`   | Đọc JSON cache (sections + extracted_text)                                         |
+| `get_cached_text_data()`   | Đọc JSON cache (sections, extracted_text, source_quality, tables, references, repo_links, `extraction_version`) |
 | `save_cached_text_data()`  | Lưu kết quả parse vào JSON cache                                                 |
 
 #### `tools/llm_provider.py` — LLM Factory
@@ -446,5 +484,6 @@ Sidebar cho phép chọn LLM provider/model, override API keys, xem sơ đồ lu
 | `test_tools.py`      |     3     | `canonicalize_paper_key`, `generate_bibtex`, `parse_structured_sections` |
 | `test_nodes.py`      |     3     | `router_node` (1 link, multi links), `error_handler_node`                  |
 | `test_graph_flow.py` |     2     | Graph compilation, routing logic (CE1/CE2/CE3)                                 |
+| `test_html_extraction.py` |  69  | Parse HTML giả (section, appendix setup, bảng colspan, bibitem, repo link primary/baseline), thứ tự fallback với HTTP mock, limiter với clock giả, cache version |
 
 Chạy: `python -m pytest tests/ -v` (8/8 PASSED).

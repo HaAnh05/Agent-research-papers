@@ -76,6 +76,19 @@ class AppConfig:
     PDF_MAX_PAGES: int = 8
     PDF_MAX_CHARS: int = 15000
 
+    # HTML-first paper reading (ar5iv -> arxiv.org/html -> PDF).
+    # arxiv.org/robots.txt sets ``Crawl-delay: 15``; it covers /html and /pdf,
+    # so both share one limiter.  ar5iv.labs.arxiv.org sets no crawl delay.
+    ARXIV_HOST_MIN_INTERVAL_SEC: float = float(os.getenv("ARXIV_HOST_MIN_INTERVAL_SEC", "15"))
+    AR5IV_MIN_INTERVAL_SEC: float = float(os.getenv("AR5IV_MIN_INTERVAL_SEC", "3"))
+    # Per-section character caps for sections taken from HTML (the PDF path
+    # keeps its own 4,000 / 2,000 caps).
+    HTML_EXPERIMENTS_MAX_CHARS: int = int(os.getenv("HTML_EXPERIMENTS_MAX_CHARS", "12000"))
+    HTML_METHODOLOGY_MAX_CHARS: int = int(os.getenv("HTML_METHODOLOGY_MAX_CHARS", "8000"))
+    HTML_SETUP_MAX_CHARS: int = int(os.getenv("HTML_SETUP_MAX_CHARS", "6000"))
+    HTML_ABSTRACT_MAX_CHARS: int = int(os.getenv("HTML_ABSTRACT_MAX_CHARS", "3000"))
+    HTML_LIMITATIONS_MAX_CHARS: int = int(os.getenv("HTML_LIMITATIONS_MAX_CHARS", "3000"))
+
 
     def __init__(self) -> None:
         # Create directories if they do not exist
