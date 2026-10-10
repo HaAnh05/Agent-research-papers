@@ -6,6 +6,7 @@ import re
 from typing import Any, Optional, Type, TypeVar
 from pydantic import BaseModel
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import config, resolved_provider
 
@@ -136,15 +137,38 @@ def _schema_json(schema: Type[ModelT]) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
-def _json_prompt(prompt: str, schema: Type[ModelT]) -> str:
-    """Tell JSON-mode providers exactly which object shape to return."""
+def _json_suffix(schema: Type[ModelT]) -> str:
+    """Static JSON-mode instruction + schema text for one schema."""
 
     return (
-        f"{prompt}\n\n"
         "Return only one valid JSON object. Do not wrap it in Markdown fences "
         "and do not add commentary. The object must satisfy this JSON Schema:\n"
         f"{_schema_json(schema)}"
     )
+
+
+def _json_prompt(prompt: str, schema: Type[ModelT]) -> str:
+    """Tell JSON-mode providers exactly which object shape to return."""
+
+    return f"{prompt}\n\n{_json_suffix(schema)}"
+
+
+def _role_messages(system: str, user: str) -> list[Any]:
+    """Build the ``[system, user]`` message pair.
+
+    Verified against the installed integrations: ``langchain_google_genai``
+    maps a leading ``SystemMessage`` to ``system_instruction``,
+    ``langchain_anthropic`` maps it to the ``system`` parameter, and
+    ``langchain_openai`` (Z.AI, OpenRouter, OpenAI) sends role ``system``.
+    """
+
+    return [SystemMessage(content=system), HumanMessage(content=user)]
+
+
+def invoke_text(llm: Any, system: str, user: str) -> Any:
+    """Free-form text call with a system and a user message; returns the response."""
+
+    return llm.invoke(_role_messages(system, user))
 
 
 def _decode_json_object(value: Any) -> Any:
@@ -193,8 +217,14 @@ def invoke_structured_output(
     *,
     llm: BaseChatModel | None = None,
     provider: Optional[str] = None,
+    system: str | None = None,
 ) -> ModelT:
     """Invoke a provider-aware structured call and validate it locally.
+
+    With ``system=None`` the request is exactly the historical single user
+    string.  With ``system`` the request is ``[system, user]`` where ``prompt``
+    is the user message; for Z.AI the JSON Schema text is appended to the
+    system message (it is static per call type).
 
     Native ``with_structured_output`` remains the default for existing
     providers.  Z.AI currently documents OpenAI-compatible JSON mode rather
@@ -217,16 +247,21 @@ def invoke_structured_output(
                 json_model = model.bind(response_format={"type": "json_object"})
             except Exception:
                 json_model = model
+        payload: Any = (
+            _json_prompt(prompt, schema)
+            if system is None
+            else _role_messages(f"{system}\n\n{_json_suffix(schema)}", prompt)
+        )
         try:
-            response = json_model.invoke(_json_prompt(prompt, schema))
+            response = json_model.invoke(payload)
         except TypeError:
             # Small test doubles and a few older wrappers do not accept bound
             # kwargs; they can still return JSON for local validation.
-            response = model.invoke(_json_prompt(prompt, schema))
+            response = model.invoke(payload)
         return _validate_model(_decode_json_object(response), schema)
 
     structured_model = model.with_structured_output(schema)
-    response = structured_model.invoke(prompt)
+    response = structured_model.invoke(prompt if system is None else _role_messages(system, prompt))
     if isinstance(response, schema):
         return response
     # Native integrations may return a dict, an AIMessage, or a JSON string.

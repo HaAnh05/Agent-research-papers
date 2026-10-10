@@ -277,7 +277,8 @@ def test_write_notes_two_workers_preserve_order_and_isolate_failure(monkeypatch)
     output = result["selected_papers"]
     assert [paper.paper_id for paper in output] == ["p1", "p2"]
     assert output[0].notes_quality == "complete"
-    assert output[0].notes.brief_summary.count("\n-") == 3
+    # The PMRL request no longer asks for the legacy brief summary.
+    assert output[0].notes.brief_summary == ""
     assert output[1].notes_quality == "invalid"
     assert output[1].notes.method.startswith("Not extracted")
     assert any("p2" in error for error in result["error_logs"])
@@ -375,7 +376,7 @@ def test_compare_artifact_keeps_same_metric_dataset_unit_with_pdf_quotes(monkeyp
     assert "88.5%" in result["benchmark_matrix"]
 
 
-def test_web_enrich_combined_queue_is_bounded_parallel_and_ordered(monkeypatch):
+def test_web_enrich_uses_separate_github_and_pmrl_pools_and_keeps_order(monkeypatch):
     papers = [
         PaperItem(paper_id="p1", title="Paper one"),
         PaperItem(paper_id="p2", title="Paper two"),
@@ -421,8 +422,10 @@ def test_web_enrich_combined_queue_is_bounded_parallel_and_ordered(monkeypatch):
     result = web_enrich_module.web_enrich_node({"selected_papers": papers})
     elapsed = time.perf_counter() - started
 
-    assert elapsed < 0.34
-    assert max_active <= 2
+    # GitHub and PMRL use separate pools, so the two jobs of both papers
+    # (4 in total) overlap instead of queueing behind a shared 2-worker cap.
+    assert elapsed < 0.19
+    assert max_active >= 3
     assert [paper.paper_id for paper in result["selected_papers"]] == ["p1", "p2"]
     assert result["selected_papers"][0].notes_quality == "complete"
     assert result["selected_papers"][1].notes_quality == "invalid"

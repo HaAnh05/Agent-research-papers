@@ -1,0 +1,113 @@
+{
+  "source_run": "20261010_180106_single_v2",
+  "user_query": "Phân tích bài báo này",
+  "intent": "direct_read",
+  "selected_papers": [
+    {
+      "paper_id": "arxiv_2609.19644",
+      "title": "ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI",
+      "summary": "Scientific discovery is defined by the ability to identify the boundaries of existing knowledge and venture into unexplored territory. The ultimate vision for AI in science is problem-driven autonomous research: given a fundamental challenge by a human expert, the AI independently navigates the scientific landscape, uncovers theoretical and empirical bottlenecks, and systematically expands the frontier of knowledge. In this paper, we introduce ScientistTwo, a fully autonomous multi-agent framework designed to realize this vision. Specifically, ScientistTwo takes an initial problem as input, establishes state-of-the-art baselines, formulates novel hypotheses, and coordinates specialized agents to orchestrate an end-to-end discovery cycle without human intervention. Moreover, the framework rigorously conducts experiments using diverse datasets and metrics, refines methodologies through automated ablation studies, and validates research findings via a closed-loop simulated peer-review rebuttal engine. To evaluate ScientistTwo's capabilities against the highest standards of human scientific achievement, we benchmark it across papers accepted at top-tier conferences such as ICLR, ICML, and NeurIPS. As a result, ScientistTwo autonomously generates expert-level, publishable papers and fully verified, executable codebases. Its solutions consistently outperform human state-of-the-art models, and achieve higher average review ratings than human-authored papers under automated AI review agents. These results show that ScientistTwo is not merely an assistive tool but an autonomous scientific pioneer capable of pushing the frontiers of human discovery. Project website: https://scientist-two.github.io/",
+      "authors": [
+        "Jaehyun Nam",
+        "Jinsung Yoon",
+        "Yanzhou Pan",
+        "Yubo Wang",
+        "Rui Meng",
+        "Parthasarathy Ranganathan",
+        "Tomas Pfister"
+      ],
+      "published": "2026-09-17",
+      "subjects": [
+        "cs.AI"
+      ],
+      "source_type": "arxiv",
+      "arxiv_id": "2609.19644",
+      "arxiv_abs_url": "https://arxiv.org/abs/2609.19644v1",
+      "arxiv_html_url": "https://arxiv.org/html/2609.19644v1",
+      "pdf_url": "https://arxiv.org/pdf/2609.19644v1.pdf",
+      "local_pdf_path": null,
+      "metadata_status": "complete",
+      "github_repos": [
+        {
+          "name": "fborrasumh/fronteria",
+          "url": "https://github.com/fborrasumh/fronteria",
+          "stars": 0,
+          "framework": "HTML",
+          "is_official": true,
+          "description": "FronterIA · agentes de IA que investigan de forma autónoma (implementación a escala de navegador de ScientistTwo, arXiv:2609.19644)"
+        }
+      ],
+      "bibtex": "@article{nam2026scientisttwo,\n  title={ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI},\n  author={Jaehyun Nam and Jinsung Yoon and Yanzhou Pan and Yubo Wang and Rui Meng and Parthasarathy Ranganathan and Tomas Pfister},\n  journal={arXiv preprint arXiv:2609.19644},\n  year={2026},\n  eprint={2609.19644},\n  archivePrefix={arXiv},\n  primaryClass={cs.AI}\n}",
+      "notes": {
+        "problem": "ScientistTwo addresses the gap between today's autonomous research agents and the standards of rigorous empirical science. Prior systems — from end-to-end pipelines like AI Scientist (Lu et al., 2024), which suffered execution instability and hallucinated writing, to coding agents (OpenHands, AIDE), ML-engineering agents (MLAgentBench, MLE-STAR, MARS), and data-science agents (DA-Agent, Data Interpreter, DS-STAR) — primarily optimize single-scalar metrics on isolated benchmarks. This narrow objective lacks the multi-dimensional reasoning required for complex scientific problems.\n\nMore fundamentally, current agents lack the closed-loop empirical rigor of human scientists: they cannot systematically conduct ablation studies to isolate the causal mechanisms behind improvements, nor participate in dynamic peer-review in which methodological critiques are answered with targeted supplementary experiments. The paper's ambition is 'purely problem-driven autonomous discovery': a human researcher specifies only a scientific challenge, and the AI independently navigates human knowledge, diagnoses theoretical and empirical bottlenecks, formulates novel hypotheses, and executes the end-to-end research lifecycle to push the human knowledge frontier beyond peer-reviewed state-of-the-art work from top-tier venues (ICLR, ICML, NeurIPS).",
+        "method": "ScientistTwo is an expert-level autonomous multi-agent framework built on a strict division of labor: the human researcher defines the target scientific challenge, while the AI autonomously orchestrates the path to advance it. Its pipeline (Figure 3) chains specialized agents — a Novelty Checker, an Idea Evolver that iterates good/bad ideas into new candidates, a Coding Extractor Agent, a Pioneering Full-Set Experiment Agent, and a review stack of Critic, Idea Refiner, Peer-Review, Rebuttal, and Meta-Review agents. The system is stress-tested against real research: given competitive peer-reviewed human papers from top-tier venues, it must independently discover meaningful advancements beyond the established SOTA, with an 'Expanded Frontier' credited only when the generated methodology outperforms the human baseline.\n\nMechanically, the loop leverages accumulated previous experiments, ablation studies, and reviewer feedback to generate and validate novel ideas; each candidate idea is verified across multiple datasets and evaluation metrics rather than a single scalar, and ablation studies isolate causal mechanisms of improvement. A simulated peer-review process (Peer-Review, Rebuttal, Meta-Review) iteratively critiques and refines drafts into publication-ready papers accompanied by fully verified codebases; relative gains are banded (50–75%, 75–100%, >100%) and aggregated into a frontier-style analysis across research domains (Figure 1).",
+        "result": "On a testbed of 107 peer-reviewed papers from top-tier AI venues spanning LLMs, robotics, neuroscience, speech, robustness, reinforcement learning, game theory, privacy, optimization, and time series, ScientistTwo improved 86 of 107 papers (an 80.4% success rate) with an average relative improvement of 25.2% over human state-of-the-art methods. Manuscripts generated by ScientistTwo surpass the average scores of accepted papers at ICLR 2026 and NeurIPS 2025 under the Stanford Agentic Reviewer, indicating empirical acceptance-level quality, and every output ships with a fully verified codebase.\n\nExtraction note: the ABSTRACT and METHODOLOGY blocks of the provided text belong to a different manuscript — VD-STrans, an incremental BPE tokenization framework — interleaved into this paper, most plausibly as an exemplar of ScientistTwo's generated output. That exemplar reports a geometric-mean throughput speedup of 1.123x over state-of-the-art incremental BPE (peak 1.271x), up to 23.64x over standard heap-based BPE, and 100% exact tokenization fidelity across 12 tokenizers (Llama-4/3.1, Qwen-3, DeepSeek-3.2, tiktoken variants) on English, Chinese, and Code streams (72 evaluation settings), illustrating the technical depth of individual papers the system can produce.",
+        "limitation": "The excerpt contains no dedicated limitations section (the 'Limitations/Future Work' block instead holds related-work text and a system overview), so limits are inferred from the results and design. Success is not universal — 21 of 107 papers (~19.6%) were not improved — and validated domains are empirical, ML-adjacent fields; discovery remains problem-driven, requiring a human to specify the target challenge rather than fully open-ended exploration. Paper quality is judged by an automated proxy (Stanford Agentic Reviewer) rather than actual venue acceptance, and the paradigm presumes executable baselines, reproducible code, and quantifiable multi-metric evaluation, which may not transfer to purely theoretical, hardware-bound, or non-computational sciences. Full-set experiments, ablations, and multi-agent review loops imply substantial compute and iteration cost that is not quantified. Implied future work includes closing the remaining ~20% failure cases and broadening domain coverage; additionally, the source text interleaves two manuscripts (ScientistTwo and VD-STrans), so attributing the VD-STrans numbers to ScientistTwo's pipeline is inferred rather than explicitly stated.",
+        "summary_cards": {
+          "tldr": "ScientistTwo là khung đa tác nhân tự trị thực hiện nghiên cứu khoa học thuần túy dựa trên bài toán: con người chỉ nêu thách thức, hệ thống tự lập giả thuyết, chạy thực nghiệm, phản biện và viết bài. Đánh giá trên các bài đã được duyệt tại ICLR, ICML, NeurIPS, nó vượt baseline SOTA của con người trong đa số trường hợp và đạt chất lượng ngang mức chấp nhận theo trình phản biện tự động.",
+          "problem": "Các tác nhân nghiên cứu tự động chủ yếu tối ưu một chỉ số vô hướng trên benchmark cô lập, thiếu suy luận đa chiều cho bài toán khoa học phức tạp. Quan trọng hơn, chúng thiếu vòng lặp thực nghiệm khép kín: không tự triển khai ablation để tách cơ chế nhân quả và không tham gia phản biện động, nơi các phê bình phương pháp luận phải được trả lời bằng thực nghiệm bổ sung.",
+          "method": "ScientistTwo điều phối các tác nhân chuyên biệt: Novelty Checker, Idea Evolver biến ý tưởng tốt/xấu thành ứng viên mới, Coding Extractor, tác nhân thí nghiệm full-set, cùng chuỗi Critic, Peer-Review, Rebuttal và Meta-Review. Mỗi ý tưởng được xác thực đồng thời trên nhiều bộ dữ liệu và nhiều chỉ số; ablation tách cơ chế cải thiện, còn vòng phản biện mô phỏng khép kín tinh chỉnh bản thảo đến mức sẵn sàng công bố.",
+          "key_results": "Trên 107 bài được bình duyệt tại ICLR, ICML, NeurIPS — trải rộng LLM, robotics, học tăng cường, bảo mật và tối ưu — 86/107 bài được cải tiến (80,4%) với mức cải thiện tương đối trung bình 25,2% so với SOTA của con người. Bản thảo do hệ thống tạo ra vượt điểm trung bình của bài được nhận tại ICLR 2026 và NeurIPS 2025 theo Stanford Agentic Reviewer; mỗi đầu ra kèm codebase đã kiểm chứng.",
+          "why_it_matters": "Kết quả gợi ý AI có thể vượt vai trò công cụ hỗ trợ để tự trị trọn chu trình nghiên cứu, từ giả thuyết đến bản thảo. Tuy nhiên, mô hình đòi hỏi baseline chạy được, code tái lập và đánh giá định lượng, còn chất lượng được đo bằng proxy phản biện tự động thay vì chấp nhận thực tại hội nghị, nên việc chuyển sang khoa học thuần lý thuyết vẫn còn mở."
+        },
+        "summary_quality": "complete",
+        "summary_card_statuses": {
+          "tldr": "complete",
+          "problem": "complete",
+          "method": "complete",
+          "key_results": "complete",
+          "why_it_matters": "complete"
+        },
+        "summary_card_reasons": {},
+        "brief_summary": ""
+      },
+      "source_quality": {
+        "heading": "heading",
+        "parserStatus": "success",
+        "source": "pdf",
+        "sourceFormat": "pdf",
+        "coverage": "complete",
+        "coverageStatus": "complete",
+        "missingSections": [],
+        "codeStatus": "unknown",
+        "codeUrls": [],
+        "htmlFallback": "not_needed"
+      },
+      "notes_quality": "complete",
+      "processing_metadata": {
+        "pdf": {
+          "durationMs": 0,
+          "cacheMs": 0,
+          "cache": "hit"
+        },
+        "summary": {
+          "status": "complete",
+          "wordCount": 384,
+          "reason": "",
+          "cardReasons": {}
+        },
+        "pmrl": {
+          "durationMs": 157694,
+          "llmMs": 157693
+        },
+        "pmrl_precomputed": true,
+        "github": {
+          "durationMs": 2,
+          "cache": "hit",
+          "tiers": {}
+        },
+        "web_enrich": {
+          "githubError": false,
+          "pmrlStatus": "ok"
+        }
+      },
+      "extracted_text_chars": 15000,
+      "sections_chars": {
+        "abstract": 2000,
+        "methodology": 1187,
+        "experiments": 4000,
+        "limitations": 2000
+      }
+    }
+  ]
+}

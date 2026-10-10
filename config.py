@@ -48,6 +48,24 @@ class AppConfig:
     )
     ARXIV_API_URL: str = "https://export.arxiv.org/api/query"
     ARXIV_MIN_INTERVAL_SEC: float = 3.0
+    # Batched direct-input metadata lookup (read_paper): one short request, no
+    # retry, and a bounded grace wait after the PDFs finish.  A miss only
+    # degrades metadata fields; it never blocks the node for long.
+    ARXIV_METADATA_TIMEOUT_SEC: float = float(os.getenv("ARXIV_METADATA_TIMEOUT_SEC", "6"))
+    ARXIV_METADATA_MAX_ATTEMPTS: int = int(os.getenv("ARXIV_METADATA_MAX_ATTEMPTS", "1"))
+    ARXIV_METADATA_GRACE_SEC: float = float(os.getenv("ARXIV_METADATA_GRACE_SEC", "3"))
+
+    # Concurrency caps.  Each stage uses its own pool so slow GitHub work
+    # never queues behind LLM calls (and the reverse).
+    READ_PAPER_MAX_WORKERS: int = int(os.getenv("READ_PAPER_MAX_WORKERS", "8"))
+    GITHUB_MAX_CONCURRENCY: int = int(os.getenv("GITHUB_MAX_CONCURRENCY", "4"))
+    LLM_MAX_CONCURRENCY: int = int(os.getenv("LLM_MAX_CONCURRENCY", "6"))
+
+    # final_report: write each paper section and the overview in separate
+    # concurrent LLM calls.  False restores the legacy single synthesis call.
+    REPORT_PARALLEL_SECTIONS: bool = os.getenv("REPORT_PARALLEL_SECTIONS", "true").strip().lower() not in {
+        "0", "false", "no", "off", ""
+    }
 
     # Workflow & Search Tuning
     MAX_RETRIES: int = 2

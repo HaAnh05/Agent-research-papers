@@ -10,8 +10,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Literal, Tuple
 
 from config import config
-from prompts.pmrl_notes_prompt import PMRL_NOTES_PROMPT
-from state import PMRLGeneration, PMRLNotes, PaperItem, ResearchState, SummaryCards
+from prompts.pmrl_notes_prompt import PMRL_NOTES_SYSTEM, PMRL_NOTES_USER
+from pydantic import BaseModel, Field
+from state import PMRLNotes, PaperItem, ResearchState, SummaryCards
 from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_cache, summary_cache_path
 from tools.llm_provider import get_llm, invoke_structured_output
 
@@ -328,14 +329,29 @@ def _fallback_notes(paper: PaperItem) -> PMRLNotes:
     )
 
 
-def _notes_prompt(paper: PaperItem) -> str:
-    return PMRL_NOTES_PROMPT.format(
+# Provider schema for the PMRL call: the four UI-facing fields only.  A comment,
+# not a docstring: pydantic would copy a docstring into the JSON Schema that is
+# sent to the provider.  The legacy ``brief_summary`` is no longer requested;
+# ``PMRLNotes`` keeps the field (empty) so stored records and API consumers are
+# unaffected.  Word budgets live once in ``PMRL_NOTES_SYSTEM``.
+class PMRLCoreGeneration(BaseModel):
+    problem: str = Field(description="Core problem and baseline limitations.")
+    method: str = Field(description="Core method: architecture, algorithm, formulation.")
+    result: str = Field(description="Key empirical results with datasets, metrics and numbers.")
+    limitation: str = Field(description="Limitations, trade-offs, assumptions and future work.")
+
+
+def build_pmrl_messages(paper: PaperItem) -> tuple[str, str]:
+    """Return the pure ``(system, user)`` pair for one PMRL call (no cache access)."""
+
+    user = PMRL_NOTES_USER.format(
         title=paper.title,
         arxiv_id=paper.arxiv_id or "N/A",
         authors=", ".join(paper.authors) if paper.authors else "N/A",
         published=paper.published or "N/A",
         extracted_content=_paper_content(paper)[:14000],
     )
+    return PMRL_NOTES_SYSTEM, user
 
 
 def _pmrl_cache_entry(prompt_text: str) -> tuple[str, Any]:
@@ -376,8 +392,8 @@ def analyze_paper_notes(
 
     result = copy.deepcopy(paper)
     started = time.perf_counter()
-    prompt_text = _notes_prompt(result)
-    _, cache_path = _pmrl_cache_entry(prompt_text)
+    system_text, user_text = build_pmrl_messages(result)
+    _, cache_path = _pmrl_cache_entry(f"{system_text}\n\n{user_text}")
     cached_notes = _cached_pmrl_notes(load_json_cache(cache_path))
     if cached_notes is not None:
         result.notes = cached_notes
@@ -394,20 +410,20 @@ def analyze_paper_notes(
     try:
         model = llm or get_llm()
         llm_started = time.perf_counter()
-        generated: PMRLGeneration = invoke_structured_output(
-            prompt_text,
-            PMRLGeneration,
+        generated: PMRLCoreGeneration = invoke_structured_output(
+            user_text,
+            PMRLCoreGeneration,
             llm=model,
             provider=config.DEFAULT_PROVIDER,
+            system=system_text,
         )
         llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
-        generated.brief_summary = validate_brief_summary(generated.brief_summary)
         notes = PMRLNotes(
             problem=generated.problem,
             method=generated.method,
             result=generated.result,
             limitation=generated.limitation,
-            brief_summary=generated.brief_summary,
+            brief_summary="",
             summary_cards=SummaryCards(),
             summary_quality="missing",
         )
@@ -446,7 +462,7 @@ def _run_notes_in_parallel(
     *,
     llm: Any | None,
 ) -> Tuple[List[PaperItem], List[str], List[str], Dict[str, Dict[str, Any]]]:
-    """Analyze papers with at most two workers while preserving input order."""
+    """Analyze papers with ``min(n, LLM_MAX_CONCURRENCY)`` workers, keeping input order."""
 
     if not papers:
         return [], [], [], {}
@@ -454,7 +470,7 @@ def _run_notes_in_parallel(
     def worker(paper: PaperItem) -> Tuple[PaperItem, str, Dict[str, Any]]:
         return analyze_paper_notes(paper, llm=llm)
 
-    with ThreadPoolExecutor(max_workers=min(2, len(papers))) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, min(len(papers), int(config.LLM_MAX_CONCURRENCY)))) as executor:
         completed = list(executor.map(worker, papers))
 
     analyzed: List[PaperItem] = []

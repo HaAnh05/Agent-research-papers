@@ -1,0 +1,151 @@
+{
+  "description": "single_v2",
+  "intent": "direct_read",
+  "query": "Phân tích bài báo này",
+  "raw_inputs": [
+    "https://arxiv.org/abs/2609.19644"
+  ],
+  "scenario": "cli",
+  "fresh_llm_cache": true,
+  "total_seconds": 333.6,
+  "status": "success",
+  "node_wall_seconds": {
+    "router": 0.0,
+    "read_paper": 0.0,
+    "web_enrich": 158.0,
+    "write_notes": 0.0,
+    "final_report": 175.6
+  },
+  "node_timings": {
+    "router": {
+      "durationMs": 7,
+      "llmMs": 0
+    },
+    "read_paper": {
+      "durationMs": 1,
+      "workerCount": 1,
+      "papers": {
+        "arxiv_2609.19644": {
+          "durationMs": 0,
+          "pdf": {
+            "durationMs": 0,
+            "cacheMs": 0,
+            "cache": "hit"
+          },
+          "arxiv": {}
+        }
+      }
+    },
+    "web_enrich": {
+      "durationMs": 157988,
+      "papers": {
+        "arxiv_2609.19644": {
+          "durationMs": 157694,
+          "github": {
+            "durationMs": 2,
+            "cache": "hit",
+            "tiers": {}
+          },
+          "pmrl": {
+            "durationMs": 157694,
+            "llmMs": 157693
+          }
+        }
+      },
+      "workerCount": 1
+    },
+    "write_notes": {
+      "durationMs": 0,
+      "llmMs": 0,
+      "reused": true,
+      "papers": {
+        "arxiv_2609.19644": {
+          "durationMs": 157694,
+          "llmMs": 157693
+        }
+      }
+    },
+    "final_report": {
+      "durationMs": 175560,
+      "llmMs": 175548,
+      "paperCount": 1,
+      "summaryMs": 175559,
+      "summaryPapers": {
+        "arxiv_2609.19644": {
+          "durationMs": 146604,
+          "llmMs": 146369,
+          "reason": ""
+        }
+      },
+      "sectionPapers": {
+        "arxiv_2609.19644": {
+          "durationMs": 175549,
+          "llmMs": 175548
+        }
+      },
+      "overviewMs": 32527
+    }
+  },
+  "llm_calls": [
+    {
+      "start_s": 0.31,
+      "seconds": 157.69,
+      "prompt_chars": 12201,
+      "input_tokens": 2825,
+      "output_tokens": 10478,
+      "reasoning_tokens": 9388,
+      "response_chars": 5352,
+      "thread": "ThreadPoolExecutor-4_0",
+      "node": "web_enrich"
+    },
+    {
+      "start_s": 158.01,
+      "seconds": 32.53,
+      "prompt_chars": 4618,
+      "input_tokens": 1043,
+      "output_tokens": 4151,
+      "reasoning_tokens": 3304,
+      "response_chars": 3083,
+      "thread": "ThreadPoolExecutor-5_1",
+      "node": "final_report"
+    },
+    {
+      "start_s": 158.01,
+      "seconds": 146.37,
+      "prompt_chars": 19644,
+      "input_tokens": 4292,
+      "output_tokens": 12187,
+      "reasoning_tokens": 11631,
+      "response_chars": 1977,
+      "thread": "ThreadPoolExecutor-5_2",
+      "node": "final_report"
+    },
+    {
+      "start_s": 158.01,
+      "seconds": 175.55,
+      "prompt_chars": 8154,
+      "input_tokens": 1736,
+      "output_tokens": 10555,
+      "reasoning_tokens": 9060,
+      "response_chars": 5365,
+      "thread": "ThreadPoolExecutor-5_0",
+      "node": "final_report"
+    }
+  ],
+  "http_calls": [],
+  "artifacts": {
+    "report_markdown": "report.md",
+    "state": "state.json",
+    "source_text_dir": "source_text",
+    "source_text_papers": [
+      "arxiv_2609.19644"
+    ],
+    "llm_cache_files": [
+      "cache/pmrl_b6f71be19ac72afc.json",
+      "cache/report_9a8900fb49ce3417.json"
+    ]
+  },
+  "summary_quality": {
+    "arxiv_2609.19644": "complete"
+  }
+}

@@ -37,7 +37,12 @@ def _rate_limit_arxiv(min_interval: float = config.ARXIV_MIN_INTERVAL_SEC) -> No
         _LAST_ARXIV_CALL = time.monotonic()
 
 
-def _arxiv_get(url: str, params: Dict[str, Any] | None = None, max_retries: int = 3) -> requests.Response:
+def _arxiv_get(
+    url: str,
+    params: Dict[str, Any] | None = None,
+    max_retries: int = 3,
+    timeout: float = 12,
+) -> requests.Response:
     """Perform robust HTTP GET request to ArXiv with Exponential Backoff."""
     delay = 3.0
     for attempt in range(max_retries):
@@ -47,7 +52,7 @@ def _arxiv_get(url: str, params: Dict[str, Any] | None = None, max_retries: int 
                 url,
                 params=params,
                 headers={"User-Agent": config.ARXIV_USER_AGENT},
-                timeout=12,
+                timeout=timeout,
             )
             if resp.status_code == 200:
                 return resp
@@ -184,6 +189,64 @@ def get_cached_arxiv_metadata(arxiv_id: str) -> Dict[str, Any] | None:
         return None
 
 
+_ATOM_NS = {
+    "atom": "http://www.w3.org/2005/Atom",
+    "arxiv": "http://arxiv.org/schemas/atom",
+}
+
+
+def _metadata_from_entry(entry: ET.Element, clean_id: str) -> tuple[Dict[str, Any] | None, str]:
+    """Build a metadata record from one Atom entry; return ``(record, status)``."""
+
+    namespaces = _ATOM_NS
+    response_id = _extract_arxiv_id(_entry_text(entry, "./atom:id", namespaces))
+    explicit_version = re.search(r"v\d+$", clean_id)
+    if explicit_version:
+        response_version = re.search(r"v\d+$", response_id)
+        if not response_id or not response_version or response_version.group(0) != explicit_version.group(0):
+            return None, "version_mismatch"
+    effective_id = clean_id if explicit_version else (response_id or clean_id)
+    urls = _canonical_arxiv_urls(effective_id)
+    subjects = [
+        str(category.get("term") or "").strip()
+        for category in entry.findall("./atom:category", namespaces)
+        if str(category.get("term") or "").strip()
+    ]
+    metadata = {
+        "arxiv_id": effective_id,
+        "title": " ".join(_entry_text(entry, "./atom:title", namespaces).split()),
+        "summary": " ".join(_entry_text(entry, "./atom:summary", namespaces).split()),
+        "authors": [_entry_text(author, "./atom:name", namespaces) for author in entry.findall("./atom:author", namespaces)],
+        "published": _entry_text(entry, "./atom:published", namespaces)[:10],
+        "subjects": subjects,
+        "abs_url": urls.get("abs_url", ""),
+        "html_url": urls.get("html_url", ""),
+        "pdf_url": urls.get("pdf_url", ""),
+    }
+    metadata["metadata_status"] = _metadata_status(metadata)
+    return metadata, "ok"
+
+
+def _write_metadata_cache(metadata: Dict[str, Any], requested_id: str = "") -> None:
+    """Persist one record under its own id and under the id that was requested.
+
+    ArXiv answers an unversioned request with a versioned id (``...v1``).  The
+    lookup uses the requested id, so the record is also stored under it;
+    otherwise the next run would miss the cache.
+    """
+
+    payload = json.dumps({"savedAt": time.time(), "metadata": metadata}, ensure_ascii=False)
+    for cache_id in dict.fromkeys(filter(None, (str(metadata.get("arxiv_id") or ""), requested_id))):
+        try:
+            path = _metadata_cache_path(cache_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp_path = path.with_suffix(".json.part")
+            temp_path.write_text(payload, encoding="utf-8")
+            temp_path.replace(path)
+        except OSError:
+            pass
+
+
 def fetch_arxiv_metadata(arxiv_id: str, *, timing: Dict[str, Any] | None = None) -> Dict[str, Any] | None:
     """Fetch and cache one ArXiv record for direct-input title resolution."""
 
@@ -208,50 +271,13 @@ def fetch_arxiv_metadata(arxiv_id: str, *, timing: Dict[str, Any] | None = None)
     try:
         response = _arxiv_get(config.ARXIV_API_URL, params={"id_list": clean_id, "max_results": 1})
         root = ET.fromstring(response.text)
-        namespaces = {
-            "atom": "http://www.w3.org/2005/Atom",
-            "arxiv": "http://arxiv.org/schemas/atom",
-        }
-        entry = root.find(".//atom:entry", namespaces)
+        entry = root.find(".//atom:entry", _ATOM_NS)
         if entry is None:
             status = "missing"
             return None
-        response_id = _extract_arxiv_id(_entry_text(entry, "./atom:id", namespaces))
-        explicit_version = re.search(r"v\d+$", clean_id)
-        if explicit_version:
-            response_version = re.search(r"v\d+$", response_id)
-            if not response_id or not response_version or response_version.group(0) != explicit_version.group(0):
-                status = "version_mismatch"
-                return None
-        effective_id = clean_id if explicit_version else (response_id or clean_id)
-        links = entry.findall("./atom:link", namespaces)
-        urls = _canonical_arxiv_urls(effective_id)
-        subjects = [
-            str(category.get("term") or "").strip()
-            for category in entry.findall("./atom:category", namespaces)
-            if str(category.get("term") or "").strip()
-        ]
-        metadata = {
-            "arxiv_id": effective_id,
-            "title": " ".join(_entry_text(entry, "./atom:title", namespaces).split()),
-            "summary": " ".join(_entry_text(entry, "./atom:summary", namespaces).split()),
-            "authors": [_entry_text(author, "./atom:name", namespaces) for author in entry.findall("./atom:author", namespaces)],
-            "published": _entry_text(entry, "./atom:published", namespaces)[:10],
-            "subjects": subjects,
-            "abs_url": urls.get("abs_url", ""),
-            "html_url": urls.get("html_url", ""),
-            "pdf_url": urls.get("pdf_url", ""),
-        }
-        metadata["metadata_status"] = _metadata_status(metadata)
-        try:
-            path = _metadata_cache_path(effective_id)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = path.with_suffix(".json.part")
-            temp_path.write_text(json.dumps({"savedAt": time.time(), "metadata": metadata}, ensure_ascii=False), encoding="utf-8")
-            temp_path.replace(path)
-        except OSError:
-            pass
-        status = "ok"
+        metadata, status = _metadata_from_entry(entry, clean_id)
+        if metadata is not None:
+            _write_metadata_cache(metadata, clean_id)
         return metadata
     finally:
         if timing is not None:
@@ -260,6 +286,82 @@ def fetch_arxiv_metadata(arxiv_id: str, *, timing: Dict[str, Any] | None = None)
                 "cache": "miss",
                 "status": status,
             })
+
+
+def fetch_arxiv_metadata_batch(
+    arxiv_ids: List[str],
+    *,
+    timing: Dict[str, Dict[str, Any]] | None = None,
+) -> Dict[str, Dict[str, Any] | None]:
+    """Resolve metadata for several papers with ONE ``id_list`` request.
+
+    Cache hits are served without HTTP.  The remaining ids share a single
+    request with its own short timeout and attempt count
+    (``ARXIV_METADATA_TIMEOUT_SEC`` / ``ARXIV_METADATA_MAX_ATTEMPTS``); the
+    shared rate limiter still applies.  Every record returned by ArXiv is
+    written to the per-id cache even when the caller already stopped waiting,
+    so a late success helps the next run.  Never raises; ``timing`` receives a
+    per-id ``{durationMs, cache, status}`` dict once the lookup ends.
+    """
+
+    started = time.perf_counter()
+    results: Dict[str, Dict[str, Any] | None] = {}
+    misses: List[str] = []
+    seen: set[str] = set()
+    for raw_id in arxiv_ids:
+        clean_id = _extract_arxiv_id(raw_id)
+        if not clean_id or clean_id in seen:
+            continue
+        seen.add(clean_id)
+        cached = get_cached_arxiv_metadata(clean_id)
+        if cached is not None:
+            results[clean_id] = cached
+            if timing is not None:
+                timing[clean_id] = {
+                    "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+                    "cache": "hit",
+                    "status": "ok",
+                }
+        else:
+            misses.append(clean_id)
+
+    if not misses:
+        return results
+
+    statuses: Dict[str, str] = {clean_id: "error" for clean_id in misses}
+    try:
+        response = _arxiv_get(
+            config.ARXIV_API_URL,
+            params={"id_list": ",".join(misses), "max_results": len(misses)},
+            max_retries=max(1, int(config.ARXIV_METADATA_MAX_ATTEMPTS)),
+            timeout=float(config.ARXIV_METADATA_TIMEOUT_SEC),
+        )
+        root = ET.fromstring(response.text)
+        entries: Dict[str, ET.Element] = {}
+        for entry in root.findall(".//atom:entry", _ATOM_NS):
+            entry_id = _extract_arxiv_id(_entry_text(entry, "./atom:id", _ATOM_NS))
+            if entry_id:
+                entries.setdefault(re.sub(r"v\d+$", "", entry_id), entry)
+        for clean_id in misses:
+            entry = entries.get(re.sub(r"v\d+$", "", clean_id))
+            if entry is None:
+                statuses[clean_id] = "missing"
+                continue
+            metadata, statuses[clean_id] = _metadata_from_entry(entry, clean_id)
+            if metadata is not None:
+                _write_metadata_cache(metadata, clean_id)
+            results[clean_id] = metadata
+    except Exception:
+        # Network or parse failure: every miss keeps the "error" status.
+        pass
+    finally:
+        if timing is not None:
+            duration = max(0, int((time.perf_counter() - started) * 1000))
+            for clean_id in misses:
+                timing[clean_id] = {"durationMs": duration, "cache": "miss", "status": statuses[clean_id]}
+    for clean_id in misses:
+        results.setdefault(clean_id, None)
+    return results
 
 
 def arxiv_search(

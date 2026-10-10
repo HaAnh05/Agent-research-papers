@@ -4,6 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
+from config import config
 from nodes.write_notes import analyze_paper_notes
 from state import PaperItem, ResearchState
 from tools.bibtex_generator import generate_bibtex
@@ -35,12 +36,13 @@ def _github_one(paper: PaperItem) -> Tuple[List[Any], Dict[str, Any], bool]:
 
 
 def web_enrich_node(state: ResearchState) -> Dict[str, Any]:
-    """Run per-paper GitHub enrichment and PMRL analysis with two workers.
+    """Run per-paper GitHub enrichment and PMRL analysis in two separate pools.
 
-    The graph still flows through ``web_enrich -> write_notes``.  Doing both
-    independent per-paper operations in this bounded pool removes the full
-    GitHub-before-PMRL barrier while the following node finalizes the prepared
-    notes and keeps its existing public activity step.
+    The graph still flows through ``web_enrich -> write_notes``.  GitHub jobs
+    (``min(n, GITHUB_MAX_CONCURRENCY)`` workers) and PMRL LLM jobs
+    (``min(n, LLM_MAX_CONCURRENCY)`` workers) run concurrently, so a slow
+    GitHub tier never queues PMRL calls and PMRL runs in one wave.  The
+    following node finalizes the prepared notes and keeps its public step.
     """
 
     papers = list(state.get("selected_papers", []) or [])
@@ -59,13 +61,16 @@ def web_enrich_node(state: ResearchState) -> Dict[str, Any]:
     except Exception:
         logs.append("[web_enrich] Provider unavailable; PMRL fallback kept per paper")
 
-    # GitHub and PMRL are separate jobs.  The two-worker cap applies to the
-    # combined queue, so a slow GitHub tier does not serialize every PMRL call.
+    # GitHub and PMRL are independent jobs with separate pools, so neither
+    # kind of work waits behind the other.
+    github_workers = max(1, min(len(papers), int(config.GITHUB_MAX_CONCURRENCY)))
+    pmrl_workers = max(1, min(len(papers), int(config.LLM_MAX_CONCURRENCY)))
     jobs: Dict[Tuple[int, str], Any] = {}
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=github_workers) as github_pool, \
+            ThreadPoolExecutor(max_workers=pmrl_workers) as pmrl_pool:
         for index, paper in enumerate(papers):
-            jobs[(index, "github")] = executor.submit(_github_one, paper)
-            jobs[(index, "pmrl")] = executor.submit(analyze_paper_notes, paper, llm=llm)
+            jobs[(index, "github")] = github_pool.submit(_github_one, paper)
+            jobs[(index, "pmrl")] = pmrl_pool.submit(analyze_paper_notes, paper, llm=llm)
         completed = {}
         for index, paper in enumerate(papers):
             github_repos, github_timing, github_error = jobs[(index, "github")].result()
@@ -114,7 +119,7 @@ def web_enrich_node(state: ResearchState) -> Dict[str, Any]:
     timing = {
         "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
         "papers": paper_timings,
-        "workerCount": min(2, len(papers)),
+        "workerCount": pmrl_workers,
     }
     return {
         "selected_papers": enriched,

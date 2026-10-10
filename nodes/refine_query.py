@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict
 from state import ResearchState
-from prompts.refine_query_prompt import REFINE_QUERY_PROMPT
-from tools.llm_provider import get_llm, extract_text_from_response
+from prompts.refine_query_prompt import REFINE_QUERY_SYSTEM, REFINE_QUERY_USER
+from tools.llm_provider import get_llm, extract_text_from_response, invoke_text
 
 
 def refine_query_node(state: ResearchState) -> Dict[str, Any]:
@@ -17,7 +17,7 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
 
     logs = [f"[refine_query] Bắt đầu tối ưu lại từ khóa tìm kiếm (Lần {retry_count + 1})..."]
 
-    prompt = REFINE_QUERY_PROMPT.format(
+    prompt = REFINE_QUERY_USER.format(
         user_query=user_query,
         current_search_query=current_search_query,
         eval_feedback=eval_feedback,
@@ -26,7 +26,7 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
     llm_started = time.perf_counter()
     try:
         llm = get_llm()
-        response = llm.invoke(prompt)
+        response = invoke_text(llm, REFINE_QUERY_SYSTEM, prompt)
         raw_text = extract_text_from_response(response.content)
         new_query = raw_text.replace('"', '').replace("'", "").strip()
         

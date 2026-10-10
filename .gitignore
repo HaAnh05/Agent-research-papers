@@ -53,3 +53,6 @@ dist/
 
 .agents/
 .codex/
+.claude/distill/
+
+bench/runs/
