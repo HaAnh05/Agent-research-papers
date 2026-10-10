@@ -33,11 +33,12 @@ from config import config
 from state import PaperItem, ResearchState
 from nodes.similarity_graph import build_similarity_graph
 from tools.openalex import OpenAlexClient, arxiv_id_of_work, short_id
-from tools.ref_resolver import METHODS, RefResolver, clean_arxiv_id
+from tools.ref_resolver import METHODS, RefResolver, clean_arxiv_id, title_jaccard
 
 MIN_FOLLOWUPS_BEFORE_FILL = 3
 MAX_COCITED_LOOKUPS = 12
 MAX_SINGLE_PAPER_LOOKUPS = 30
+TITLE_MATCH_MIN = 0.5      # token Jaccard below this = OpenAlex record is not the indexed paper
 OPENALEX_WORKERS = 4
 
 
@@ -61,6 +62,20 @@ def _int(value: Any) -> Optional[int]:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _index_meta(resolver: RefResolver, arxiv: Optional[str]) -> Optional[Dict[str, str]]:
+    """Local-index ``{"title", "year"}`` for an arXiv id; ``None`` when absent or without title."""
+
+    meta = resolver.lookup_meta(arxiv) if arxiv else None
+    return meta if meta and meta.get("title") else None
+
+
+def _openalex_mismatch(meta: Optional[Dict[str, str]], openalex_title: Any) -> bool:
+    """True when the index title and the OpenAlex title are different papers (corrupt record)."""
+
+    title = _clean_title(openalex_title)
+    return bool(meta and title and title_jaccard(meta["title"], title) < TITLE_MATCH_MIN)
 
 
 def _sort_key(cand: Dict[str, Any]) -> Tuple[int, int, int, int]:
@@ -126,6 +141,7 @@ def build_citation_graph(
     sel_work: Dict[str, Dict[str, Any]] = {}
     citers: Dict[str, Dict[str, Any]] = {}   # W id -> candidate
     ok_calls = 0
+    mismatched: set = set()                  # ids whose OpenAlex record is a different paper
     if use_openalex:
         assert client is not None
         with ThreadPoolExecutor(max_workers=OPENALEX_WORKERS) as pool:
@@ -134,6 +150,8 @@ def build_citation_graph(
             for sid, work in zip(sel_list, works):
                 if work:
                     sel_work[sid] = work
+                    if _openalex_mismatch(_index_meta(resolver, sid), work.get("title")):
+                        mismatched.add(sid)
             with_work = [sid for sid in sel_list if sid in sel_work]
             citing = list(pool.map(lambda sid: client.citing_works(sel_work[sid]["id"]), with_work))
             for sid, items in zip(with_work, citing):
@@ -158,6 +176,17 @@ def build_citation_graph(
                         cand["support"] += 1
                         cand["sources"].append(sid)
 
+            # Citers with an index entry: index title/year; a wrong OpenAlex record loses its count.
+            for cand in citers.values():
+                meta = _index_meta(resolver, cand.get("arxiv_id"))
+                if meta is None:
+                    continue
+                if _openalex_mismatch(meta, cand["title"]):
+                    mismatched.add(cand["id"])
+                    cand["cited_by_count"] = None
+                cand["title"] = meta["title"]
+                cand["year"] = _int(meta["year"]) or cand["year"]
+
             # Candidate counts, years and titles for the foundational list.
             if n_sel >= 2:
                 pool_cands = sorted((c for c in cited.values() if c["support"] >= 2), key=_sort_key)
@@ -165,10 +194,17 @@ def build_citation_graph(
             else:
                 lookup = sorted(cited.values(), key=lambda c: c["order"])[:MAX_SINGLE_PAPER_LOOKUPS]
             for cand, work in zip(lookup, pool.map(lambda c: client.work_by_arxiv(c["arxiv_id"]), lookup)):
-                if work:
+                if not work:
+                    continue
+                meta = _index_meta(resolver, cand["arxiv_id"])
+                if meta is None:                 # not in the index: OpenAlex is the only source
                     cand["cited_by_count"] = _int(work.get("cited_by_count"))
                     cand["year"] = _int(work.get("publication_year")) or cand["year"]
                     cand["title"] = _clean_title(work.get("title")) or cand["title"]
+                elif _openalex_mismatch(meta, work.get("title")):
+                    mismatched.add(cand["id"])   # wrong record: no count; title/year come from the index below
+                else:
+                    cand["cited_by_count"] = _int(work.get("cited_by_count"))
         ok_calls = client.requests - client.errors + client.cache_hits
 
     # --- foundational ----------------------------------------------------------
@@ -196,14 +232,15 @@ def build_citation_graph(
         if len(multi) < MIN_FOLLOWUPS_BEFORE_FILL:
             followups = (multi + singles)[:top_n]
 
-    # --- fill missing title / year from the local index ------------------------
+    # --- title / year: the local index always wins over OpenAlex ------------------
     for cand in foundational + followups:
         arxiv = cand.get("arxiv_id")
-        if arxiv and (not cand["title"] or cand["year"] is None):
-            meta = resolver.lookup_meta(arxiv)
-            if meta:
-                cand["title"] = cand["title"] or meta["title"]
-                cand["year"] = cand["year"] or _int(meta["year"])
+        meta = _index_meta(resolver, arxiv)
+        if meta:
+            if cand["id"] in mismatched:
+                cand["cited_by_count"] = None
+            cand["title"] = meta["title"]
+            cand["year"] = _int(meta["year"]) or cand["year"]
         if arxiv and cand["year"] is None:
             cand["year"] = year_from_arxiv_id(arxiv)
 
@@ -218,13 +255,14 @@ def build_citation_graph(
 
     for sid, paper in zip(sel_ids, papers):
         work = sel_work.get(sid) or {}
-        meta = resolver.lookup_meta(sid) if sid in sel_arxiv else None
-        year = _int(work.get("publication_year")) or _int((paper.published or "")[:4]) \
-            or (_int(meta["year"]) if meta else None) or (year_from_arxiv_id(sid) if sid in sel_arxiv else None)
+        meta = _index_meta(resolver, sid) if sid in sel_arxiv else None
+        oa_year = None if sid in mismatched else _int(work.get("publication_year"))
+        year = (_int(meta["year"]) if meta else None) or oa_year or _int((paper.published or "")[:4]) \
+            or (year_from_arxiv_id(sid) if sid in sel_arxiv else None)
         add_node({
             "id": sid, "arxiv_id": sid if sid in sel_arxiv else None,
             "title": _clean_title(paper.title), "year": year,
-            "cited_by_count": _int(work.get("cited_by_count")), "selected": True,
+            "cited_by_count": None if sid in mismatched else _int(work.get("cited_by_count")), "selected": True,
             "role": "selected", "support": 0,
         })
     edges: List[Dict[str, str]] = []
@@ -264,6 +302,7 @@ def build_citation_graph(
             "refs_ambiguous": resolver.counts.get("ambiguous", 0),
             "by_method": by_method,
             "openalex": status,
+            "openalex_mismatch": len(mismatched),
         },
     }
 
@@ -290,7 +329,8 @@ def citation_graph_node(state: ResearchState) -> Dict[str, Any]:
         graph = {
             "nodes": [], "edges": [],
             "stats": {"refs_total": 0, "refs_resolved": 0, "refs_ambiguous": 0,
-                      "by_method": {m: 0 for m in METHODS}, "openalex": "error" if client.has_key else "no_key"},
+                      "by_method": {m: 0 for m in METHODS}, "openalex": "error" if client.has_key else "no_key",
+                      "openalex_mismatch": 0},
         }
     stats = graph["stats"]
     logs.append(

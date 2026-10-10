@@ -155,6 +155,27 @@ def test_scoring_roles_on_toy_graph(tmp_path: Path) -> None:
     assert stats["by_method"]["explicit"] == 11
 
 
+def test_index_title_wins_and_mismatched_openalex_record_loses_count(tmp_path: Path) -> None:
+    resolver = RefResolver(_make_index(tmp_path / "index.sqlite"))
+    papers = [_paper("2301.00001", ["1706.03762", "2001.00001"]), _paper("2301.00002", ["1706.03762", "2001.00001"])]
+    works = {
+        "2301.00001": _work("W1", "P1", 2023, 1), "2301.00002": _work("W2", "P2", 2023, 1),
+        "1706.03762": _work("W10", "Totally Unrelated Corrupt Record", 1999, 777),         # wrong record
+        "2001.00001": _work("W11", "A study of sparse graph methods", 2021, 42),           # right record
+    }
+    citers = {"W1": [_work("W90", "Another Corrupt Title Here", 1990, 999, "2005.00005")]}
+    graph = cg.build_citation_graph(papers, resolver, FakeOpenAlex(works, citers), top_n=5)
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    wrong = by_id["1706.03762"]
+    assert (wrong["title"], wrong["year"], wrong["cited_by_count"]) == ("Attention Is All You Need", 2017, None)
+    ok = by_id["2001.00001"]                      # index title/year kept; OpenAlex count used
+    assert (ok["title"], ok["year"], ok["cited_by_count"]) == ("A Study of Sparse Graph Methods", 2020, 42)
+    citer = by_id["2005.00005"]                   # citer mapped to an indexed paper: same rule
+    assert (citer["title"], citer["cited_by_count"]) == ("Deep Learning", None)
+    assert graph["stats"]["openalex_mismatch"] == 2
+    resolver.close()
+
+
 def test_no_key_mode_still_yields_section_3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config, "OPENALEX_API_KEY", "")
     monkeypatch.setattr(config, "CITATION_INDEX_PATH", tmp_path / "missing.sqlite")

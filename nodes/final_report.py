@@ -30,7 +30,7 @@ from tools.llm_provider import extract_text_from_response, get_llm, invoke_struc
 SUMMARY_PIPELINE_VERSION = "v5"
 # Bump when the parallel report prompts or assembly change, so cached parallel
 # reports from an older layout are not reused.  The legacy key is unaffected.
-PARALLEL_REPORT_VERSION = "p9"
+PARALLEL_REPORT_VERSION = "p10"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -1023,22 +1023,37 @@ def _tail_labels() -> set[str]:
     } | {"sources", "source code", "repository", "bibtex", "citation", "mã nguồn", "trích xuất", "liên kết nguồn", "trích dẫn"}
 
 
+def _analysis_labels() -> set[str]:
+    return {
+        _SECTION_LABELS[mode][key].casefold()
+        for mode in _SECTION_LABELS
+        for key in ("problem", "method", "result", "limitation")
+    }
+
+
 def _normalize_paper_section(text: str, paper: PaperItem, language_mode: str) -> str:
     """Keep one ``###`` heading and the analysis bullets; add the results table and hardware line; append the tail.
 
     Any LLM line carrying a source-code, extraction, link or citation label is
-    removed, so the deterministic tail appears exactly once.
+    removed, so the deterministic tail appears exactly once.  A top-level bullet
+    whose label is not an analysis label (Problem, Methodology, Key results,
+    Limitations, or the Vietnamese equivalents) is removed with its sub-lines:
+    the user's broader question is answered only in the overview.
     """
 
     cleaned = _BIBTEX_FENCE_RE.sub("", str(text or "").replace("\r\n", "\n"))
     tail_labels = _tail_labels()
+    known_labels = _analysis_labels()
     kept: List[str] = []
     skipping = False
     for line in cleaned.split("\n"):
         label = re.match(r"^\s*[-*•]\s*\**([^*:\n]{1,40}?)\**\s*:", line)
-        if label and label.group(1).strip().casefold() in tail_labels:
-            skipping = True
-            continue
+        if label:
+            name = label.group(1).strip().casefold()
+            top_level = re.match(r"^ {0,1}[-*•]", line) is not None
+            if name in tail_labels or (top_level and name not in known_labels):
+                skipping = True
+                continue
         if skipping and (not line.strip() or re.match(r"^\s{2,}\S", line)):
             continue
         skipping = False

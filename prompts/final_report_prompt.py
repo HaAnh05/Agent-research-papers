@@ -76,7 +76,7 @@ You are writing ONE paper block of a larger Markdown research report. Other pape
 {DATA_TAG_RULE}
 
 Instructions:
-Write only the analysis block for this paper, following the structure below. Keep every bullet short and in plain, clear language. State a metric with its dataset and unit where it is most useful, and do not repeat the same PMRL prose in several bullets.
+Write only the analysis block for this paper, following the structure below. Analyse only this paper. The user goal in the user message is relevance context only: do not answer the user's broader or extra questions (for example a survey of directions or a comparison with other work), because the report overview answers them in one place. Write no bullet beyond the structure below (Vấn đề, Phương pháp, Kết quả chính, Hạn chế). Keep every bullet short and in plain, clear language. State a metric with its dataset and unit where it is most useful, and do not repeat the same PMRL prose in several bullets.
 If detailed evidence is missing, describe that reader-facing limitation and do not turn placeholder fields into scientific claims. Never print internal PMRL status labels.
 If source extraction is incomplete, say that extraction is incomplete and treat absent
 sections/results as unverified; never say that the paper itself lacks experiments
