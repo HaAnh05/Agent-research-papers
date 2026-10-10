@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import threading
 from pathlib import Path
 
@@ -39,17 +41,11 @@ $$
 
 - Ket qua.
 
-## 3. So sanh
-
-| A | B |
-|---|---|
-| 1 | 2 |
-
-## 4. Ket luan
+## 3. Ket luan
 
 Xong.
 
-## 5. Tai lieu
+## 4. Tai lieu
 
 [a](https://arxiv.org/abs/1111.11111) [b](https://arxiv.org/abs/2222.22222)
 """
@@ -104,7 +100,7 @@ def test_report_structure_passes_and_ignores_code_fences() -> None:
 
 @pytest.mark.parametrize("mutate", [
     lambda r: r.replace("# Research Report: topic\n", "", 1),
-    lambda r: r.replace("## 4. Ket luan", "## 6. Ket luan"),
+    lambda r: r.replace("## 3. Ket luan", "## 6. Ket luan"),
     lambda r: r.replace("### Paper B (arXiv 2222.22222)", "#### Paper B"),
 ])
 def test_report_structure_failures(mutate) -> None:
@@ -112,7 +108,7 @@ def test_report_structure_failures(mutate) -> None:
 
 
 def test_report_structure_requires_ordered_sections() -> None:
-    swapped = GOOD_REPORT.replace("## 3. So sanh", "## 4. X").replace("## 4. Ket luan", "## 3. Y")
+    swapped = GOOD_REPORT.replace("## 3. Ket luan", "## 4. X").replace("## 4. Tai lieu", "## 3. Y")
     assert v.check_report_structure(swapped, 2).status == "FAIL"
 
 
@@ -205,11 +201,8 @@ def test_display_equation_limit() -> None:
     assert v.check_equations(many, 2, th).status == "WARN"
 
 
-def test_comparison_table_required_only_if_baseline_has_one() -> None:
-    no_table = make_run(report=GOOD_REPORT.replace("| A | B |\n|---|---|\n| 1 | 2 |", "text"))
-    assert v.check_comparison_table(make_run(), no_table).status == "WARN"
-    assert v.check_comparison_table(no_table, make_run()).status == "PASS"
-    assert v.check_comparison_table(make_run(), make_run()).status == "PASS"
+def test_comparison_table_check_is_removed() -> None:
+    assert not hasattr(v, "check_comparison_table")
 
 
 # --- LATENCY / orchestration ---
@@ -234,14 +227,30 @@ def test_quality_warning_does_not_fail_unless_strict() -> None:
     assert v.exit_code(v.verify(make_run(), worse, strict=True)) == 1
 
 
+def _four_section_copy(tmp_path: Path) -> Path:
+    """Copy the frozen baseline, dropping its legacy comparison section (old ``## 3.``)."""
+
+    target = tmp_path / "baseline4"
+    shutil.copytree(BASELINE_DIR, target)
+    text = (target / "report.md").read_text(encoding="utf-8")
+    text = re.sub(r"(?ms)^## 3\..*?(?=^## 4\.)", "", text)
+    text = re.sub(r"(?m)^## 4\.", "## 3.", text)
+    text = re.sub(r"(?m)^## 5\.", "## 4.", text)
+    (target / "report.md").write_text(text, encoding="utf-8")
+    return target
+
+
 def test_real_baseline_verifies_against_itself(tmp_path: Path) -> None:
-    run = v.load_run(BASELINE_DIR)
+    # The frozen baseline report predates the removal of the comparison section
+    # (five ``##`` sections), so verify a four-section copy of it.
+    baseline = _four_section_copy(tmp_path)
+    run = v.load_run(baseline)
     assert len(run.paper_ids) == 3 and run.sources and run.card_statuses
     checks = v.verify(run, run)
     failed = [c for c in checks if c.group in ("HARD", "QUALITY") and c.status != "PASS"]
     assert not failed, failed
     out = tmp_path / "verify.json"
-    code = v.main(["--baseline", str(BASELINE_DIR), "--candidate", str(BASELINE_DIR), "--out", str(out)])
+    code = v.main(["--baseline", str(baseline), "--candidate", str(baseline), "--out", str(out)])
     assert code == 0
     assert json.loads(out.read_text())["exit_code"] == 0
 

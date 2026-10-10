@@ -53,6 +53,5 @@ QUALITY (WARN by default, FAIL under `--strict`):
 | `report_length` | report characters within 0.6x-1.6x baseline |
 | `number_grounding` | share of report numbers found in the union of source texts (`,`/`.` decimals and `%` tolerated; arXiv ids, URLs, code, LaTeX and bare integers below 10 skipped) not below baseline minus 5 points |
 | `display_equations` | at most 3 `$$` blocks per paper section |
-| `comparison_table` | a table in section 3 when the baseline has one |
 
 LATENCY (exit code 1 only with `--strict-latency`): total seconds, per-node wall seconds, longest LLM call, speedup vs baseline, and PASS/FAIL against `--target-seconds`.

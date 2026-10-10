@@ -98,14 +98,6 @@ def test_invoke_text_sends_system_and_user():
     assert _assert_pair(llm.inputs[0]) == ("S", "U")
 
 
-def test_compare_benchmark_keeps_plain_string_call():
-    import inspect
-    from nodes import compare_benchmark
-
-    source = inspect.getsource(compare_benchmark)
-    assert "system=" not in source  # still a one-string request, unchanged
-
-
 # --- call sites ---------------------------------------------------------------
 
 def test_router_sends_system_and_user(monkeypatch):
@@ -169,10 +161,10 @@ def test_cards_section_overview_send_pairs(monkeypatch):
     assert "@article" not in user and "arxiv.org" not in user
     assert block.startswith("### Paper one")
 
-    over = Recorder("## 1. Summary\nx\n\n## 4. Conclusion\ny\n")
-    final_report._write_overview(over, "q", "T", "English", [_paper()], "")
+    over = Recorder("## 1. Summary\nx\n\n## 3. Conclusion\ny\n")
+    final_report._write_overview(over, "q", "T", "English", [_paper()])
     system, user = _assert_pair(over.inputs[0])
-    assert "Do not write a comparison section" in system and "## 3." not in user
+    assert "omparison" not in system and "So sánh" not in user and "## 2." not in user
 
 
 def test_builders_are_pure_and_non_empty(monkeypatch, tmp_path):
@@ -188,15 +180,15 @@ def test_builders_are_pure_and_non_empty(monkeypatch, tmp_path):
         wn.build_pmrl_messages(papers[0]),
         final_report.build_cards_messages(papers[0], "Vietnamese"),
         final_report.build_section_messages(papers[0], 1, "q", "Vietnamese"),
-        final_report.build_overview_messages(papers[:1], "q", "T", "Vietnamese", ""),
-        final_report.build_overview_messages(papers, "q", "T", "Vietnamese", "=== BENCHMARK ===\n| a |"),
+        final_report.build_overview_messages(papers[:1], "q", "T", "Vietnamese"),
+        final_report.build_overview_messages(papers, "q", "T", "Vietnamese"),
     ]
     for system, user in pairs:
         assert system.strip() and user.strip()
         assert "{user_query}" not in user and "{language_mode}" not in user and "{label_" not in user
     multi_system, multi_user = pairs[4]
-    assert "<benchmark_matrix>" in multi_user and "## 3. So sánh" in multi_user
-    assert "cross-paper sections" in multi_system
+    assert "<benchmark_matrix>" not in multi_user and "So sánh" not in multi_user
+    assert "## 3. Kết luận" in multi_user and "covering several papers" in multi_system
     single_user = pairs[3][1]
     assert "So sánh" not in single_user and "<benchmark_matrix>" not in single_user
     # Report prompts keep the v0 rule text in system and state the data-tag rule once.
