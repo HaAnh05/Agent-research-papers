@@ -30,7 +30,7 @@ from tools.llm_provider import extract_text_from_response, get_llm, invoke_struc
 SUMMARY_PIPELINE_VERSION = "v5"
 # Bump when the parallel report prompts or assembly change, so cached parallel
 # reports from an older layout are not reused.  The legacy key is unaffected.
-PARALLEL_REPORT_VERSION = "p8"
+PARALLEL_REPORT_VERSION = "p9"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -360,6 +360,7 @@ def _report_cache_key(
     papers: List[PaperItem],
     *,
     parallel: bool = False,
+    context: str = "",
 ) -> tuple[str, Any]:
     """Resolve the report cache entry for the exact synthesis input (fail-open).
 
@@ -383,6 +384,8 @@ def _report_cache_key(
             RESULTS_SUMMARY_SYSTEM,
             SUMMARY_PIPELINE_VERSION,
             summary_inputs,
+            # The research-context section is part of the finished report text.
+            context,
             *(
                 (
                     "parallel_sections", PARALLEL_REPORT_VERSION,
@@ -469,14 +472,16 @@ _REPORT_HEADINGS: Dict[str, Dict[str, str]] = {
     "Vietnamese": {
         "summary": "1. Tóm tắt",
         "papers": "2. Phân tích bài báo",
-        "conclusion": "3. Kết luận",
-        "references": "4. Tài liệu tham khảo",
+        "context": "3. Bối cảnh nghiên cứu",
+        "conclusion": "4. Kết luận",
+        "references": "5. Tài liệu tham khảo",
     },
     "English": {
         "summary": "1. Summary",
         "papers": "2. Paper Analysis",
-        "conclusion": "3. Conclusion",
-        "references": "4. References",
+        "context": "3. Research Context",
+        "conclusion": "4. Conclusion",
+        "references": "5. References",
     },
 }
 _SECTION_LABELS: Dict[str, Dict[str, str]] = {
@@ -519,6 +524,110 @@ _FALLBACK_TEXT: Dict[str, Dict[str, str]] = {
 
 def _report_headings(language_mode: str) -> Dict[str, str]:
     return _REPORT_HEADINGS.get(language_mode, _REPORT_HEADINGS["English"])
+
+
+# --- Research context section (deterministic; built from state["citation_graph"]) ---
+
+_CONTEXT_TEXT: Dict[str, Dict[str, str]] = {
+    "Vietnamese": {
+        "foundational": "Bài nền tảng",
+        "followup": "Bài kế thừa",
+        "cited_many": "được {n}/{total} bài đã chọn trích dẫn",
+        "cited_one": "được bài đã chọn trích dẫn",
+        "cites_many": "trích dẫn {n}/{total} bài đã chọn",
+        "cites_one": "trích dẫn bài đã chọn",
+        "count": "{c} lượt trích dẫn",
+        "none_many": "Chưa tìm thấy bài nào được ít nhất 2 bài đã chọn cùng trích dẫn.",
+        "none_one": "Chưa xác định được tài liệu tham khảo nào có mã arXiv.",
+        "none_followup": "Chưa tìm thấy bài kế thừa.",
+        "no_key": "Cần OpenAlex API key (OPENALEX_API_KEY) để lấy các bài kế thừa.",
+        "error": "OpenAlex không phản hồi trong lần chạy này nên chưa có bài kế thừa.",
+        "resolved": "Đã xác định mã arXiv cho {r}/{t} mục tham khảo.",
+        "no_graph": "Chưa có dữ liệu trích dẫn trong lần chạy này.",
+    },
+    "English": {
+        "foundational": "Foundational papers",
+        "followup": "Follow-up papers",
+        "cited_many": "cited by {n}/{total} selected papers",
+        "cited_one": "cited by the selected paper",
+        "cites_many": "cites {n}/{total} selected papers",
+        "cites_one": "cites the selected paper",
+        "count": "{c} citations",
+        "none_many": "No paper is cited by at least 2 of the selected papers.",
+        "none_one": "No reference with an arXiv id was identified.",
+        "none_followup": "No follow-up paper was found.",
+        "no_key": "An OpenAlex API key (OPENALEX_API_KEY) is needed to list follow-up papers.",
+        "error": "OpenAlex did not respond in this run, so there are no follow-up papers.",
+        "resolved": "Resolved an arXiv id for {r}/{t} references.",
+        "no_graph": "No citation data is available for this run.",
+    },
+}
+_ARXIV_ID_SAFE_RE = re.compile(r"^(?:\d{4}\.\d{4,5}|[a-z][a-z.\-]*/\d{7})$", re.IGNORECASE)
+
+
+def _context_item(node: Dict[str, Any], reason: str, texts: Dict[str, str]) -> str:
+    title = " ".join(str(node.get("title") or node.get("id") or "").split())[:200]
+    title = title.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    arxiv_id = str(node.get("arxiv_id") or "")
+    head = f"[{title}](https://arxiv.org/abs/{arxiv_id})" if _ARXIV_ID_SAFE_RE.match(arxiv_id) else title
+    year = node.get("year")
+    if isinstance(year, int) and year > 0:
+        head += f" ({year})"
+    parts = [head]
+    count = node.get("cited_by_count")
+    if isinstance(count, int) and count >= 0:
+        parts.append(texts["count"].format(c=count))
+    parts.append(reason)
+    return "- " + " — ".join(parts)
+
+
+def _context_section(graph: Any, language_mode: str) -> str:
+    """Body of the research-context section; plain text when no graph exists."""
+
+    texts = _CONTEXT_TEXT.get(language_mode, _CONTEXT_TEXT["English"])
+    if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
+        return texts["no_graph"]
+    nodes = [node for node in graph["nodes"] if isinstance(node, dict)]
+    stats = graph.get("stats") if isinstance(graph.get("stats"), dict) else {}
+    total = sum(1 for node in nodes if node.get("selected")) or 1
+
+    def reasons(role: str) -> List[str]:
+        group = [node for node in nodes if node.get("role") == role]
+        lines: List[str] = []
+        for node in group:
+            support = node.get("support") if isinstance(node.get("support"), int) else 0
+            key = ("cited" if role == "foundational" else "cites") + ("_many" if total > 1 and support >= 1 else "_one")
+            lines.append(_context_item(node, texts[key].format(n=support, total=total), texts))
+        return lines
+
+    foundational = reasons("foundational")
+    followup = reasons("followup")
+    openalex = stats.get("openalex")
+    out = [f"**{texts['foundational']}**", ""]
+    out.extend(foundational or [f"- {texts['none_many'] if total > 1 else texts['none_one']}"])
+    out.extend(["", f"**{texts['followup']}**", ""])
+    if followup:
+        out.extend(followup)
+    elif openalex == "no_key":
+        out.append(f"- {texts['no_key']}")
+    elif openalex == "error":
+        out.append(f"- {texts['error']}")
+    else:
+        out.append(f"- {texts['none_followup']}")
+    resolved, refs_total = stats.get("refs_resolved"), stats.get("refs_total")
+    if isinstance(resolved, int) and isinstance(refs_total, int) and refs_total > 0:
+        out.extend(["", f"_{texts['resolved'].format(r=resolved, t=refs_total)}_"])
+    return "\n".join(out)
+
+
+def _insert_context_section(report_text: str, context: str, language_mode: str) -> str:
+    """Legacy single-call path: insert the section before the model's ``## 4.`` heading."""
+
+    heading = f"## {_report_headings(language_mode)['context']}\n\n{context}\n\n"
+    match = re.search(r"(?m)^##\s+4\s*[.)]", report_text)
+    if match:
+        return report_text[: match.start()] + heading + report_text[match.start():]
+    return report_text.rstrip("\n") + "\n\n" + heading.rstrip("\n") + "\n"
 
 
 def _clip(value: Any, limit: int) -> str:
@@ -1026,7 +1135,9 @@ def build_overview_messages(
     )
 
 
-_OVERVIEW_KEYS = {"1": "summary", "3": "conclusion"}
+# The prompt asks for "4. <conclusion>" (section 3 is the code-built research
+# context); "3" stays accepted for outputs that follow the older numbering.
+_OVERVIEW_KEYS = {"1": "summary", "3": "conclusion", "4": "conclusion"}
 
 
 def _parse_overview(text: str) -> Dict[str, str]:
@@ -1121,12 +1232,14 @@ def _assemble_parallel_report(
     papers: List[PaperItem],
     paper_blocks: List[str],
     overview: Dict[str, str],
+    context: str = "",
 ) -> str:
     headings = _report_headings(language_mode)
     parts = [
         f"# {title}",
         f"## {headings['summary']}\n\n{overview.get('summary') or _fallback_overview_part('summary', papers, language_mode)}",
         f"## {headings['papers']}\n\n" + "\n\n".join(paper_blocks),
+        f"## {headings['context']}\n\n{context or _context_section(None, language_mode)}",
         f"## {headings['conclusion']}\n\n{overview.get('conclusion') or _fallback_overview_part('conclusion', papers, language_mode)}",
         f"## {headings['references']}\n\n{_references_section(papers, language_mode)}",
     ]
@@ -1142,6 +1255,7 @@ def _run_parallel_report(
     title: str,
     language_mode: str,
     logs: List[str],
+    context: str = "",
 ) -> Dict[str, Any]:
     """Run every section, overview and summary-card call in ONE pool.
 
@@ -1194,7 +1308,7 @@ def _run_parallel_report(
 
     summarized_papers, summary_logs, summary_timings, summary_failed = _collect_summary_results(completed)
     report_text = _assemble_parallel_report(
-        title, language_mode, papers, paper_blocks, overview
+        title, language_mode, papers, paper_blocks, overview, context
     )
     llm_ms = max(
         [timing.get("llmMs", 0) for timing in section_timings.values()] + [overview_timing.get("llmMs", 0)]
@@ -1227,6 +1341,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
     if incomplete_sources:
         logs.append(f"[final_report] Cảnh báo trích xuất chưa hoàn chỉnh cho {len(incomplete_sources)} bài")
 
+    context = _context_section(state.get("citation_graph"), language_mode)
     breakdown = "\n\n".join(_paper_breakdown(paper, index) for index, paper in enumerate(papers, 1))
     prompt = FINAL_REPORT_PROMPT.format(
         user_query=user_query,
@@ -1258,6 +1373,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
             _, cache_path = _report_cache_key(
                 user_query, title, language_mode, breakdown, papers,
                 parallel=use_parallel,
+                context=context,
             )
             assert cache_path is not None
             restored = _restore_report_cache(papers, load_json_cache(cache_path))
@@ -1301,6 +1417,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                 title=title,
                 language_mode=language_mode,
                 logs=logs,
+                context=context,
             )
             report_text = outcome["report_text"]
             summarized_papers = outcome["summarized_papers"]
@@ -1321,6 +1438,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                     _post_report_summary, papers, "", language_mode, llm_summary
                 )
                 report_text, llm_ms = report_future.result()
+                report_text = _insert_context_section(report_text, context, language_mode)
                 summarized_papers, summary_logs, summary_timings, summary_failed = summary_future.result()
         logs.extend(summary_logs)
 

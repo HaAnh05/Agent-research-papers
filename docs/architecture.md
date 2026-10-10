@@ -30,8 +30,9 @@ flowchart TD
     WebEnrich --> WriteNotes["write_notes (PMRL Generator - Pydantic Output)"]
 
     %% CE3 Routing
-    WriteNotes -->|CE3: ok| FinalReport["final_report (Comprehensive Report Generator)"]
+    WriteNotes -->|CE3: ok| CitationGraph["citation_graph (code only: references + OpenAlex)"]
     WriteNotes -->|CE3: error| ErrorHandler
+    CitationGraph --> FinalReport["final_report (Comprehensive Report Generator)"]
 
     FinalReport --> End([End: Research Report])
     ErrorHandler --> End
@@ -43,6 +44,7 @@ flowchart TD
     style ReadPaper fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WebEnrich fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WriteNotes fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style CitationGraph fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style FinalReport fill:#ede7f6,stroke:#512da8,stroke-width:2px
     style ErrorHandler fill:#ffebee,stroke:#c62828,stroke-width:2px
 ```
@@ -58,7 +60,8 @@ flowchart TD
 |   5   | `read_paper`        | Đọc HTML trước (ar5iv → arxiv.org/html), PDF là phương án dự phòng; bóc tách sections, bảng, tài liệu tham khảo, link repo |
 |   6   | `web_enrich`        | Tìm repo GitHub 3 tầng + tạo BibTeX citation                                                 |
 |   7   | `write_notes`       | LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)                                 |
-|   8   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
+|   8   | `citation_graph`    | Code, không LLM: dựng đồ thị trích dẫn quanh các bài đã chọn (JSON `citation_graph`)       |
+|   9   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
 |   —   | `error_handler`     | Xử lý graceful fallback khi bất kỳ node nào gặp lỗi                                      |
 
 ---
@@ -191,7 +194,7 @@ def route_after_eval_search(state) -> str:
 
 def route_after_write_notes(state) -> str:
     # CE3: error → error_handler
-    #       còn lại → final_report
+    #       còn lại → citation_graph (rồi citation_graph → final_report)
 ```
 
 #### `build_research_graph()`
@@ -353,16 +356,31 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 **Chức năng**: Tổng hợp mọi thông tin thành **báo cáo nghiên cứu chuyên sâu** dạng Markdown.
 
-**Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Kết luận` → `## 4. Tài liệu tham khảo`. Không còn mục so sánh/benchmark; ý định `direct_compare` chỉ còn dùng ở router để chọn nhiều bài.
+**Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Bối cảnh nghiên cứu` (code, từ `citation_graph`) → `## 4. Kết luận` → `## 5. Tài liệu tham khảo`. Không còn mục so sánh/benchmark; ý định `direct_compare` chỉ còn dùng ở router để chọn nhiều bài.
 
 **Đặc điểm**:
 
-- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 3. Kết luận` (`REPORT_OVERVIEW_*`, bản 1 bài và nhiều bài), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài và mục 4 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
+- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 4. Kết luận` (`REPORT_OVERVIEW_*`; `_parse_overview` vẫn nhận số 3 cũ, bản 1 bài và nhiều bài), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài, mục 3 (Bối cảnh nghiên cứu) và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
 - `REPORT_PARALLEL_SECTIONS=false` hoặc không có bài: giữ đường cũ — gộp PMRL notes + GitHub info + BibTeX vào 1 prompt duy nhất (`FINAL_REPORT_PROMPT`)
 - **Khối "Kết quả chính" (PR 3)**: LLM nhận notes kèm insights, dòng eval_settings và setup, viết các sub-bullet `Insight` (đánh số), `Đại lượng đo`, `Thiết lập`, `Nhận xét` (tiếng Anh: Insight, Metrics, Setup, Remarks). **Code** dựng bảng kết quả từ `eval_settings` đã grounding (cột: Benchmark, Metric kèm đơn vị và ↑/↓, tên phương pháp, Baseline tốt nhất; `—` khi thiếu; dòng `*Nguồn: Table N trong paper*` khi nhãn bảng đã xác minh) và chèn trước sub-bullet `Nhận xét` (hoặc cuối khối Kết quả chính nếu thiếu); bảng thụt 2 dấu cách để nằm trong mục danh sách. Nếu `setup.hardware` rỗng mà `Thiết lập` không có câu về hardware, code thêm `Hardware: paper không nêu` (tiếng Anh: `Hardware: not stated in the paper`). Không có dòng đã grounding thì không có bảng. Lệnh section lỗi → `_deterministic_paper_section` dựng cùng cấu trúc từ notes. Overview nhận insights từng bài để "Tóm tắt" nêu insight xuyên suốt các bài.
-- Khóa cache báo cáo chứa chế độ; hai chế độ không dùng chung entry. Phiên bản: `PARALLEL_REPORT_VERSION = "p8"`, `SUMMARY_PIPELINE_VERSION = "v5"`; khóa cũng chứa input section và context overview nên đổi notes là đổi khóa
+- Khóa cache báo cáo chứa chế độ; hai chế độ không dùng chung entry. Phiên bản: `PARALLEL_REPORT_VERSION = "p9"`, `SUMMARY_PIPELINE_VERSION = "v5"`; khóa cũng chứa input section và context overview nên đổi notes là đổi khóa
+- Mục 3 do `_context_section()` dựng từ `state["citation_graph"]` (thiếu graph → một dòng "chưa có dữ liệu"); nội dung mục 3 nằm trong khóa cache báo cáo. Đường cũ (1 prompt) chèn mục 3 bằng `_insert_context_section()` trước `## 4.`
 - Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`
 - Dùng `extract_text_from_response()` để xử lý an toàn response từ mọi LLM provider
+
+---
+
+### 3.11b. Node: `citation_graph` (`nodes/citation_graph.py`)
+
+**Chức năng**: Dựng đồ thị trích dẫn quanh các bài đã chọn bằng code (không LLM, không gọi mạng trừ OpenAlex khi có key). Chạy sau `write_notes`, trước `final_report`; không bao giờ làm run lỗi (lỗi → đồ thị rỗng + log).
+
+- **Cạnh đi ra**: mỗi `PaperReference` của bài đã chọn được đổi thành arXiv id qua `tools/ref_resolver.py` (thứ tự: id có sẵn → DOI `10.48550/arXiv.X` → DOI trong index → tiêu đề chuẩn hóa khớp đúng 1 dòng trong index; tiêu đề < 4 từ hoặc khớp ≥ 2 dòng thì bỏ qua).
+- **Cạnh đi vào**: OpenAlex (`tools/openalex.py`): 1 lệnh lấy work theo DOI arXiv, 1 lệnh lấy 50 bài trích dẫn nhiều nhất cho mỗi bài đã chọn, và số trích dẫn của các ứng viên nền tảng. Không có `OPENALEX_API_KEY` → trạng thái `no_key`, vẫn có bài nền tảng từ co-citation.
+- **Bài nền tảng** = tài liệu tham khảo được ≥ 2 bài đã chọn trích dẫn (sắp theo số bài, rồi `cited_by_count`, rồi năm); chỉ 1 bài đã chọn → các tham khảo đã giải được có nhiều trích dẫn nhất (không có OpenAlex: theo thứ tự danh mục). **Bài kế thừa** = bài trích dẫn ≥ 2 bài đã chọn; nếu < 3 thì thêm các bài trích dẫn 1 bài có nhiều trích dẫn nhất. Mỗi nhóm tối đa `CITATION_TOP_N` (5); bài đã chọn không bao giờ là ứng viên.
+- **State/API**: `citation_graph` = `{nodes:[{id, arxiv_id, title, year, cited_by_count, selected, role, support}], edges:[{source, target, kind:"cites"}], stats:{refs_total, refs_resolved, refs_ambiguous, by_method, openalex: "ok"|"no_key"|"error"}}`. API thêm trường `citationGraph` vào `result` (giữ nguyên tên khóa JSON như trên). `node_timings.citation_graph` ghi `durationMs`, số request và cache hit OpenAlex.
+- **Index cục bộ** (`data/arxiv/index.sqlite`, nhánh `feat/local-index`): chỉ mở `mode=ro`, không tạo index mới. Tra tiêu đề bằng FTS5 (`title : "cụm từ"`) rồi so khớp chuẩn hóa trong Python. Tra DOI: cột `doi` không có index nên lần tra DOI đầu tiên của tiến trình quét 1 lần `WHERE doi != ''` (~160k dòng, ~0,5 s khi file đã nằm trong cache OS) vào dict trong RAM; không ghi file. Thiếu file index → chỉ dùng id có sẵn và DOI arXiv.
+- **Cấu hình**: `OPENALEX_API_KEY` (env/.env), `OPENALEX_MIN_INTERVAL_SEC` (0,2), `CITATION_TOP_N` (5), `CITATION_INDEX_PATH` (mặc định `data/arxiv/index.sqlite`, hoặc `LOCAL_INDEX_PATH`). Cache OpenAlex: `data/cache/openalex/<sha256(url không có key)>.json` (không lưu key).
+- Script thử offline (index thật, không OpenAlex): `.venv/bin/python -I bench/citation_graph_probe.py [thư mục]`.
 
 ---
 

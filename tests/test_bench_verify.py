@@ -47,11 +47,17 @@ $$
   - **Metrics**: Success rate.
   - **Setup**: Hardware: not stated in the paper.
 
-## 3. Ket luan
+## 3. Boi canh nghien cuu
+
+**Bai nen tang**
+
+- Khong co.
+
+## 4. Ket luan
 
 Xong.
 
-## 4. Tai lieu
+## 5. Tai lieu
 
 [a](https://arxiv.org/abs/1111.11111) [b](https://arxiv.org/abs/2222.22222)
 """
@@ -106,7 +112,7 @@ def test_report_structure_passes_and_ignores_code_fences() -> None:
 
 @pytest.mark.parametrize("mutate", [
     lambda r: r.replace("# Research Report: topic\n", "", 1),
-    lambda r: r.replace("## 3. Ket luan", "## 6. Ket luan"),
+    lambda r: r.replace("## 4. Ket luan", "## 6. Ket luan"),
     lambda r: r.replace("### Paper B (arXiv 2222.22222)", "#### Paper B"),
 ])
 def test_report_structure_failures(mutate) -> None:
@@ -114,8 +120,13 @@ def test_report_structure_failures(mutate) -> None:
 
 
 def test_report_structure_requires_ordered_sections() -> None:
-    swapped = GOOD_REPORT.replace("## 3. Ket luan", "## 4. X").replace("## 4. Tai lieu", "## 3. Y")
+    swapped = GOOD_REPORT.replace("## 4. Ket luan", "## 5. X").replace("## 5. Tai lieu", "## 4. Y")
     assert v.check_report_structure(swapped, 2).status == "FAIL"
+
+
+def test_context_section_check() -> None:
+    assert v.check_context_section(GOOD_REPORT).status == "PASS"
+    assert v.check_context_section(GOOD_REPORT.replace("**Bai nen tang**\n\n- Khong co.\n", "")).status == "FAIL"
 
 
 def test_arxiv_link_missing_fails() -> None:
@@ -253,23 +264,21 @@ def test_quality_warning_does_not_fail_unless_strict() -> None:
     assert v.exit_code(v.verify(make_run(), worse, strict=True)) == 1
 
 
-def _four_section_copy(tmp_path: Path) -> Path:
-    """Copy the frozen baseline, dropping its legacy comparison section (old ``## 3.``)."""
+def _five_section_copy(tmp_path: Path) -> Path:
+    """Copy the frozen baseline, replacing its legacy comparison section (old ``## 3.``) with a context stub."""
 
-    target = tmp_path / "baseline4"
+    target = tmp_path / "baseline5"
     shutil.copytree(BASELINE_DIR, target)
     text = (target / "report.md").read_text(encoding="utf-8")
-    text = re.sub(r"(?ms)^## 3\..*?(?=^## 4\.)", "", text)
-    text = re.sub(r"(?m)^## 4\.", "## 3.", text)
-    text = re.sub(r"(?m)^## 5\.", "## 4.", text)
+    text = re.sub(r"(?ms)^## 3\..*?(?=^## 4\.)", "## 3. Bối cảnh nghiên cứu\n\nChưa có dữ liệu trích dẫn.\n\n", text)
     (target / "report.md").write_text(text, encoding="utf-8")
     return target
 
 
 def test_real_baseline_verifies_against_itself(tmp_path: Path) -> None:
-    # The frozen baseline report predates the removal of the comparison section
-    # (five ``##`` sections), so verify a four-section copy of it.
-    baseline = _four_section_copy(tmp_path)
+    # The frozen baseline report has a legacy comparison as section 3; verify a
+    # copy whose section 3 is replaced by a research-context stub.
+    baseline = _five_section_copy(tmp_path)
     run = v.load_run(baseline)
     assert len(run.paper_ids) == 3 and run.sources and run.card_statuses
     checks = v.verify(run, run)

@@ -53,11 +53,13 @@ For each paper analyzed:
 - **Liên kết nguồn**: Giữ nguyên link ArXiv abstract/PDF chính xác. Không tự chế link.
 - **Trích dẫn**: BibTeX block.
 
-## 3. Kết luận
+(Section 3 "Bối cảnh nghiên cứu" is inserted by the system after your answer. Do not write it. Do not number any other section 3.)
+
+## 4. Kết luận
 - Khuyến nghị thực tiễn cho nhà nghiên cứu & kỹ sư ML.
 - Những thách thức mở còn lại trong lĩnh vực này.
 
-## 4. Tài liệu tham khảo
+## 5. Tài liệu tham khảo
 - Danh sách đầy đủ các trích dẫn kèm link ArXiv và PDF.
 """
 

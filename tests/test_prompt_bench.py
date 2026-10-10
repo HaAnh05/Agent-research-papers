@@ -242,13 +242,13 @@ def test_quality_uses_production_card_validation(runs: dict[str, pb.RunInput]) -
 
 
 def test_quality_text_and_overview_headings(runs: dict[str, pb.RunInput]) -> None:
-    text = "## 1. S\nvalue 99999.5 here\n\n$$\nx\n$$\n\n## 3. K\nend"
+    text = "## 1. S\nvalue 99999.5 here\n\n$$\nx\n$$\n\n## 4. K\nend"
     single = pb.quality_overview(text, runs["single"].sources, 1)
     assert single["headings_ok"] is True and single["equations"] == 1 and single["numeric_claims"] == 1
     assert single["grounding"] == 0.0
     multi = pb.quality_overview(text, runs["multi"].sources, 3)
     assert multi["headings_ok"] is True
-    stale = pb.quality_overview(text.replace("## 3. K", "## 4. K"), runs["multi"].sources, 3)
+    stale = pb.quality_overview(text.replace("## 4. K", "## 5. K"), runs["multi"].sources, 3)
     assert stale["headings_ok"] is False and stale["missing_headings"] == ["conclusion"]
     pmrl = pb.quality_pmrl(json.dumps({"problem": "a b", "method": "c", "result": "", "limitation": "d"}))
     assert pmrl["parse_ok"] and pmrl["words"]["problem"] == 2 and pmrl["all_nonempty"] is False
