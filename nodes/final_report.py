@@ -27,10 +27,10 @@ from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_c
 from tools.llm_provider import extract_text_from_response, get_llm, invoke_structured_output, invoke_text
 
 
-SUMMARY_PIPELINE_VERSION = "v4"
+SUMMARY_PIPELINE_VERSION = "v5"
 # Bump when the parallel report prompts or assembly change, so cached parallel
 # reports from an older layout are not reused.  The legacy key is unaffected.
-PARALLEL_REPORT_VERSION = "p7"
+PARALLEL_REPORT_VERSION = "p8"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -384,7 +384,13 @@ def _report_cache_key(
             SUMMARY_PIPELINE_VERSION,
             summary_inputs,
             *(
-                ("parallel_sections", PARALLEL_REPORT_VERSION, PAPER_SECTION_SYSTEM, PAPER_SECTION_USER, REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER, REPORT_OVERVIEW_SINGLE_SYSTEM, REPORT_OVERVIEW_SINGLE_USER)
+                (
+                    "parallel_sections", PARALLEL_REPORT_VERSION,
+                    PAPER_SECTION_SYSTEM, PAPER_SECTION_USER, REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER,
+                    REPORT_OVERVIEW_SINGLE_SYSTEM, REPORT_OVERVIEW_SINGLE_USER,
+                    # Insights, results rows and setup reach the section and overview calls.
+                    *(_paper_section_input(paper) for paper in papers), _papers_context(papers),
+                )
                 if parallel
                 else ()
             ),
@@ -542,6 +548,237 @@ def _bibtex_block(paper: PaperItem) -> str:
     return f"```bibtex\n{paper.bibtex or ''}\n```"
 
 
+# Sub-bullets of "Key results" and the text of the code-built results table.
+_RESULT_SUB_LABELS: Dict[str, Dict[str, str]] = {
+    "Vietnamese": {"insight": "Insight", "metrics": "Đại lượng đo", "setup": "Thiết lập", "remarks": "Nhận xét"},
+    "English": {"insight": "Insight", "metrics": "Metrics", "setup": "Setup", "remarks": "Remarks"},
+}
+_RESULT_TEXT: Dict[str, Dict[str, str]] = {
+    "Vietnamese": {
+        "benchmark": "Benchmark",
+        "metric": "Metric",
+        "baseline": "Baseline tốt nhất",
+        "source": "Nguồn: {labels} trong paper",
+        "no_hardware": "Hardware: paper không nêu",
+        "own_method": "Phương pháp của bài",
+        "higher": "càng cao càng tốt",
+        "lower": "càng thấp càng tốt",
+        "datasets": "Datasets",
+        "training": "Cấu hình huấn luyện",
+        "compute": "Compute",
+    },
+    "English": {
+        "benchmark": "Benchmark",
+        "metric": "Metric",
+        "baseline": "Best baseline",
+        "source": "Source: {labels} in the paper",
+        "no_hardware": "Hardware: not stated in the paper",
+        "own_method": "This paper",
+        "higher": "higher is better",
+        "lower": "lower is better",
+        "datasets": "Datasets",
+        "training": "Training",
+        "compute": "Compute",
+    },
+}
+_RESULT_SUB_KEYS = ("insight", "metrics", "setup", "remarks")
+_HARDWARE_WORD_RE = re.compile(r"hardware|phần cứng", re.IGNORECASE)
+
+
+def _result_texts(language_mode: str) -> Dict[str, str]:
+    return _RESULT_TEXT.get(language_mode, _RESULT_TEXT["English"])
+
+
+def _method_column_name(paper: PaperItem, language_mode: str) -> str:
+    """Short method name for the table header: notes name, else a short title prefix, else a generic label."""
+
+    notes = paper.notes
+    name = " ".join((notes.method_name if notes else "").split())
+    if name:
+        return name[:40]
+    head = (paper.title or "").split(":", 1)[0].strip()
+    if ":" in (paper.title or "") and 1 <= len(head.split()) <= 4:
+        return head[:40]
+    return _result_texts(language_mode)["own_method"]
+
+
+def _cell(value: Any) -> str:
+    return " ".join(str(value or "").split()).replace("|", "\\|") or "—"
+
+
+def _results_table_lines(paper: PaperItem, language_mode: str) -> List[str]:
+    """Markdown table built from the grounded ``eval_settings`` (no LLM text).
+
+    Empty list when there are no grounded rows.  Lines are indented by two
+    spaces so the table stays inside the "Key results" list item.
+    """
+
+    rows = list(paper.notes.eval_settings) if paper.notes else []
+    if not rows:
+        return []
+    texts = _result_texts(language_mode)
+    lines = [
+        f"| {texts['benchmark']} | {texts['metric']} | {_cell(_method_column_name(paper, language_mode))} | {texts['baseline']} |",
+        "|---|---|---|---|",
+    ]
+    labels: List[str] = []
+    for row in rows:
+        metric = row.metric.strip()
+        unit = row.unit.strip()
+        if unit and unit.casefold() not in metric.casefold() and unit.casefold() not in row.method_value.casefold():
+            metric += f" ({unit})"
+        if row.higher_is_better is True:
+            metric += " ↑"
+        elif row.higher_is_better is False:
+            metric += " ↓"
+        baseline = row.baseline_value.strip()
+        if baseline and row.baseline_name.strip():
+            baseline += f" ({row.baseline_name.strip()})"
+        lines.append(f"| {_cell(row.benchmark)} | {_cell(metric)} | {_cell(row.method_value)} | {_cell(baseline)} |")
+        label = " ".join(row.table_label.split())
+        if label and label not in labels:
+            labels.append(label)
+    out = ["  " + line for line in lines]
+    if labels:
+        out += ["", "  *" + texts["source"].format(labels=", ".join(labels)) + "*"]
+    return out
+
+
+def _sub_label_re(key: str) -> re.Pattern[str]:
+    names = {
+        "insight": ("insight", "insights"),
+        "metrics": ("đại lượng đo", "metrics", "metric"),
+        "setup": ("thiết lập", "setup"),
+        "remarks": ("nhận xét", "remarks", "remark", "caveats"),
+    }[key]
+    return re.compile(r"^\s*[-*•]\s*\**\s*(?:" + "|".join(re.escape(n) for n in names) + r")\s*\**\s*:", re.IGNORECASE)
+
+
+_MAIN_LABEL_KEYS = ("problem", "method", "result", "limitation")
+
+
+def _main_label_re(key: str) -> re.Pattern[str]:
+    names = {_SECTION_LABELS[mode][key].casefold() for mode in _SECTION_LABELS} | {
+        "problem": {"problem"}, "method": {"methodology", "method"}, "result": {"key results", "results"}, "limitation": {"limitations", "limitation"},
+    }[key]
+    return re.compile(r"^[-*•]\s*\**\s*(?:" + "|".join(re.escape(n) for n in sorted(names)) + r")\s*\**\s*:", re.IGNORECASE)
+
+
+def _find_line(lines: List[str], pattern: re.Pattern[str], start: int = 0, end: int | None = None) -> int:
+    for index in range(start, len(lines) if end is None else end):
+        if pattern.match(lines[index]):
+            return index
+    return -1
+
+
+def _inject_results(lines: List[str], paper: PaperItem, language_mode: str) -> List[str]:
+    """Add the code-built parts of "Key results" to an LLM-written (or fallback) block.
+
+    * If ``setup.hardware`` is empty and the Setup sub-bullet has no hardware
+      statement, append the localized "Hardware: not stated" line.
+    * Insert the results table before the Remarks sub-bullet, or at the end of
+      the Key results block when that sub-bullet is missing.
+    """
+
+    notes = paper.notes
+    texts = _result_texts(language_mode)
+    labels = _SECTION_LABELS.get(language_mode, _SECTION_LABELS["English"])
+    lines = list(lines)
+    table = _results_table_lines(paper, language_mode)
+    need_hardware = notes is not None and not notes.setup.hardware.strip()
+    if not table and not need_hardware:
+        return lines
+
+    main_res = [_main_label_re(key) for key in _MAIN_LABEL_KEYS]
+    start = _find_line(lines, main_res[2])
+    if start < 0:
+        # No Key results bullet: create an empty one before Limitations (or at the end).
+        limitation = _find_line(lines, main_res[3])
+        start = limitation if limitation >= 0 else len(lines)
+        lines.insert(start, f"- **{labels['result']}**:")
+
+    def block_end() -> int:
+        for index in range(start + 1, len(lines)):
+            if any(pattern.match(lines[index]) for pattern in main_res) or re.match(r"^\s{0,3}#", lines[index]):
+                return index
+        return len(lines)
+
+    def trim(end: int) -> int:
+        while end > start + 1 and not lines[end - 1].strip():
+            end -= 1
+        return end
+
+    remarks_re = _sub_label_re("remarks")
+    if need_hardware:
+        setup_at = _find_line(lines, _sub_label_re("setup"), start + 1, block_end())
+        if setup_at < 0:
+            remarks = _find_line(lines, remarks_re, start + 1, block_end())
+            at = remarks if remarks >= 0 else trim(block_end())
+            sub = _RESULT_SUB_LABELS.get(language_mode, _RESULT_SUB_LABELS["English"])
+            lines.insert(at, f"  - **{sub['setup']}**: {texts['no_hardware']}")
+        else:
+            next_sub = next(
+                (i for i in range(setup_at + 1, block_end()) if re.match(r"^\s*[-*•]\s*\*\*[^*\n]+\*\*\s*:", lines[i])),
+                block_end(),
+            )
+            last = next_sub - 1
+            while last > setup_at and not lines[last].strip():
+                last -= 1
+            if not _HARDWARE_WORD_RE.search("\n".join(lines[setup_at:last + 1])):
+                if last == setup_at and not lines[setup_at].rstrip().endswith(":"):
+                    lines[setup_at] = lines[setup_at].rstrip().rstrip(".;") + f"; {texts['no_hardware']}"
+                else:
+                    lines.insert(last + 1, f"    - {texts['no_hardware']}")
+
+    if table:
+        remarks = _find_line(lines, remarks_re, start + 1, block_end())
+        at = remarks if remarks >= 0 else trim(block_end())
+        before = [""] if at > 0 and lines[at - 1].strip() else []
+        after = [""] if at < len(lines) and lines[at].strip() else []
+        lines[at:at] = before + table + after
+    return lines
+
+
+def _results_sub_lines(paper: PaperItem, language_mode: str) -> List[str]:
+    """Notes-only "Key results" sub-bullets for the deterministic fallback."""
+
+    notes = paper.notes
+    sub = _RESULT_SUB_LABELS.get(language_mode, _RESULT_SUB_LABELS["English"])
+    texts = _result_texts(language_mode)
+    lines: List[str] = []
+    insights = [item for item in (notes.insights if notes else []) if item.finding.strip()]
+    if insights:
+        lines.append(f"  - **{sub['insight']}**:")
+        for number, item in enumerate(insights[:3], 1):
+            why = f" {item.why_it_matters.strip()}" if item.why_it_matters.strip() else ""
+            lines.append(f"    {number}. {item.finding.strip()}{why}")
+    else:
+        lines.append(f"  - **{sub['insight']}**: N/A")
+    metric_lines: List[str] = []
+    seen: set[str] = set()
+    for row in (notes.eval_settings if notes else []):
+        if row.metric.casefold() in seen:
+            continue
+        seen.add(row.metric.casefold())
+        detail = "; ".join(part for part in (
+            row.metric_meaning.strip(),
+            row.unit.strip(),
+            texts["higher"] if row.higher_is_better is True else texts["lower"] if row.higher_is_better is False else "",
+        ) if part)
+        metric_lines.append(f"    - {row.metric.strip()}" + (f": {detail}" if detail else ""))
+    lines.append(f"  - **{sub['metrics']}**:" if metric_lines else f"  - **{sub['metrics']}**: N/A")
+    lines += metric_lines
+    setup = notes.setup if notes else None
+    parts = [
+        f"{texts['datasets']}: {setup.datasets.strip()}" if setup and setup.datasets.strip() else "",
+        f"{texts['training']}: {setup.training_config.strip()}" if setup and setup.training_config.strip() else "",
+        f"Hardware: {setup.hardware.strip()}" if setup and setup.hardware.strip() else "",
+        f"{texts['compute']}: {setup.compute.strip()}" if setup and setup.compute.strip() else "",
+    ]
+    lines.append(f"  - **{sub['setup']}**: " + ("; ".join(part for part in parts if part) or "N/A"))
+    return lines
+
+
 def _paper_tail(paper: PaperItem, language_mode: str) -> List[str]:
     """Deterministic bullets: source code, extraction warning, links, BibTeX."""
 
@@ -575,9 +812,47 @@ def _deterministic_paper_section(paper: PaperItem, language_mode: str) -> str:
         f"- **{labels['problem']}**: {notes.problem if notes else 'N/A'}",
         f"- **{labels['method']}**: {notes.method if notes else 'N/A'}",
         f"- **{labels['result']}**: {notes.result if notes else 'N/A'}",
+        *_results_sub_lines(paper, language_mode),
         f"- **{labels['limitation']}**: {notes.limitation if notes else 'N/A'}",
     ]
-    return "\n".join(lines + _paper_tail(paper, language_mode))
+    return "\n".join(_inject_results(lines, paper, language_mode) + _paper_tail(paper, language_mode))
+
+
+def _structured_notes_text(paper: PaperItem) -> str:
+    """Insights, metric rows and setup of the PMRL notes, as plain text for the section call."""
+
+    notes = paper.notes
+    if notes is None:
+        return ""
+    lines: List[str] = []
+    if notes.method_name.strip():
+        lines.append(f"Method name: {notes.method_name.strip()}")
+    lines.append("Insights:")
+    insights = [item for item in notes.insights if item.finding.strip()]
+    lines += [
+        f"{number}. {item.finding.strip()}" + (f" (why it matters: {item.why_it_matters.strip()})" if item.why_it_matters.strip() else "")
+        for number, item in enumerate(insights, 1)
+    ] or ["none"]
+    lines.append("Metrics and verified result rows (code adds the results table itself; do not write a table):")
+    for row in notes.eval_settings:
+        direction = {True: "higher is better", False: "lower is better"}.get(row.higher_is_better, "direction unclear")
+        baseline = f"; best baseline {row.baseline_name.strip() or '?'} = {row.baseline_value.strip()}" if row.baseline_value.strip() else ""
+        lines.append(
+            f"- {row.benchmark.strip()} | {row.metric.strip()}: {row.metric_meaning.strip() or 'meaning not given'}; "
+            f"unit {row.unit.strip() or 'none'}; {direction}; method = {row.method_value.strip()}{baseline}"
+            + (f"; {row.table_label.strip()}" if row.table_label.strip() else "")
+        )
+    if not notes.eval_settings:
+        lines.append("none")
+    setup = notes.setup
+    lines += [
+        "Setup:",
+        f"- Datasets: {setup.datasets.strip() or 'not stated'}",
+        f"- Training: {setup.training_config.strip() or 'not stated'}",
+        f"- Hardware: {setup.hardware.strip() or 'NOT STATED IN THE PAPER'}",
+        f"- Compute: {setup.compute.strip() or 'not stated'}",
+    ]
+    return "\n".join(lines)
 
 
 def _paper_section_input(paper: PaperItem, index: int = 0) -> str:
@@ -593,6 +868,7 @@ def _paper_section_input(paper: PaperItem, index: int = 0) -> str:
         if _source_quality_complete(paper)
         else "Extraction warning: important source sections were not fully verified; absent evidence is unverified.\n"
     )
+    structured = _structured_notes_text(paper)
     return (
         f"Title: {paper.title}\n"
         f"ArXiv ID: {paper.arxiv_id or 'N/A'} | Published: {paper.published or 'N/A'}\n"
@@ -601,6 +877,7 @@ def _paper_section_input(paper: PaperItem, index: int = 0) -> str:
         f"Methodology: {notes.method if notes else 'N/A'}\n"
         f"Results & Metrics: {notes.result if notes else 'N/A'}\n"
         f"Limitations: {notes.limitation if notes else 'N/A'}\n"
+        f"{structured + chr(10) if structured else ''}"
         f"{extraction}"
     ).rstrip()
 
@@ -638,7 +915,7 @@ def _tail_labels() -> set[str]:
 
 
 def _normalize_paper_section(text: str, paper: PaperItem, language_mode: str) -> str:
-    """Keep one ``###`` heading and the four analysis bullets; append the tail.
+    """Keep one ``###`` heading and the analysis bullets; add the results table and hardware line; append the tail.
 
     Any LLM line carrying a source-code, extraction, link or citation label is
     removed, so the deterministic tail appears exactly once.
@@ -666,7 +943,7 @@ def _normalize_paper_section(text: str, paper: PaperItem, language_mode: str) ->
         kept[0] = re.sub(r"^(\s{0,3}###\s+)\d+\.\s*", r"\1", kept[0]).strip()
     else:
         kept.insert(0, f"### {paper.title}")
-    body = "\n".join(kept).strip()
+    body = "\n".join(_inject_results(kept, paper, language_mode)).strip()
     return body + "\n" + "\n".join(_paper_tail(paper, language_mode))
 
 
@@ -691,6 +968,14 @@ def _write_paper_section(
     return block, {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}
 
 
+def _insights_context(paper: PaperItem) -> str:
+    items = [item for item in (paper.notes.insights if paper.notes else []) if item.finding.strip()]
+    return " ".join(
+        f"({number}) {_clip(item.finding, 300)}" + (f" Why it matters: {_clip(item.why_it_matters, 250)}" if item.why_it_matters.strip() else "")
+        for number, item in enumerate(items[:3], 1)
+    ) or "none"
+
+
 def _papers_context(papers: List[PaperItem]) -> str:
     """Compact per-paper context for the overview call (no full breakdown)."""
 
@@ -702,6 +987,7 @@ def _papers_context(papers: List[PaperItem]) -> str:
             f"- Problem excerpt: {_clip(notes.problem if notes else '', 500) or 'N/A'}\n"
             f"- Method excerpt: {_clip(notes.method if notes else '', 600) or 'N/A'}\n"
             f"- Key result excerpt: {_clip(notes.result if notes else '', 1200) or 'N/A'}\n"
+            f"- Insights: {_insights_context(paper)}\n"
             f"- Limitation excerpt: {_clip(notes.limitation if notes else '', 700) or 'N/A'}"
             + ("" if _source_quality_complete(paper) else "\n- Source extraction: incomplete; absent evidence is unverified")
         )
@@ -793,7 +1079,8 @@ def _fallback_overview_part(
         lines: List[str] = []
         for paper in papers:
             notes = paper.notes
-            first = ((notes.brief_summary if notes else "") or "").strip().split("\n")[0]
+            insight = next((item.finding for item in (notes.insights if notes else []) if item.finding.strip()), "")
+            first = insight or ((notes.brief_summary if notes else "") or "").strip().split("\n")[0]
             detail = _clip(first or (notes.result if notes else ""), 300) or texts["no_summary"]
             lines.append(f"- **{paper.title}** ({paper.arxiv_id or 'N/A'}): {detail}")
         return "\n".join(lines) or texts["no_summary"]

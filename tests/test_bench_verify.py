@@ -26,6 +26,9 @@ Tong quan 46,9% cai thien.
 ### Paper A (arXiv 1111.11111)
 
 - Ket qua 46,9%.
+  - **Insight**: Dieu ta hoc duoc.
+  - **Đại lượng đo**: Ti le thanh cong.
+  - **Thiết lập**: Hardware: paper không nêu.
 
 $$
 x = y
@@ -40,6 +43,9 @@ $$
 ### Paper B (arXiv 2222.22222)
 
 - Ket qua.
+  - **Insight**: Dieu ta hoc duoc.
+  - **Metrics**: Success rate.
+  - **Setup**: Hardware: not stated in the paper.
 
 ## 3. Ket luan
 
@@ -133,6 +139,26 @@ def test_internal_lines_detected(line: str) -> None:
 def test_internal_lines_ignore_prose_and_code() -> None:
     prose = "Gom nhieu pipeline toi uu quy dao.\n```\nPMRL quality: x\n```\n"
     assert v.check_no_internal_lines(GOOD_REPORT + prose).status == "PASS"
+
+
+def test_results_format_requires_insight_metrics_setup() -> None:
+    assert v.check_results_format(GOOD_REPORT).status == "PASS"
+    broken = GOOD_REPORT.replace("  - **Metrics**: Success rate.\n", "")
+    check = v.check_results_format(broken)
+    assert check.status == "FAIL" and "Paper B" in check.detail and "Metrics" in check.detail
+
+
+def test_table_numbers_must_occur_in_the_paper_source() -> None:
+    table = (
+        "  | Benchmark | Metric | Diffuser | Best baseline |\n  |---|---|---|---|\n"
+        "  | Maze2D U-Maze | Score ↑ | {value} | 33,2 (MPPI-2) |\n"
+    )
+    run = make_run(sources={"arxiv_1111.11111": "Score 46.9 +- 3.1 and 33.2.", "arxiv_2222.22222": "x"})
+    good = GOOD_REPORT.replace("- Ket qua 46,9%.\n", "- Ket qua 46,9%.\n" + table.format(value="46,9 ± 3,1"), 1)
+    assert v.check_table_numbers(good, run).status == "PASS"
+    bad = GOOD_REPORT.replace("- Ket qua 46,9%.\n", "- Ket qua 46,9%.\n" + table.format(value="91,7"), 1)
+    check = v.check_table_numbers(bad, run)
+    assert check.status == "FAIL" and "91,7" in check.detail
 
 
 # --- QUALITY ---
@@ -247,12 +273,13 @@ def test_real_baseline_verifies_against_itself(tmp_path: Path) -> None:
     run = v.load_run(baseline)
     assert len(run.paper_ids) == 3 and run.sources and run.card_statuses
     checks = v.verify(run, run)
-    failed = [c for c in checks if c.group in ("HARD", "QUALITY") and c.status != "PASS"]
+    # The frozen baseline predates the results format (Insight/Metrics/Setup), so skip those checks.
+    failed = [c for c in checks if c.group in ("HARD", "QUALITY") and c.status != "PASS" and not c.name.startswith("results_")]
     assert not failed, failed
     out = tmp_path / "verify.json"
     code = v.main(["--baseline", str(baseline), "--candidate", str(baseline), "--out", str(out)])
-    assert code == 0
-    assert json.loads(out.read_text())["exit_code"] == 0
+    assert code == 1  # results_format FAILs on the legacy report; everything else passes
+    assert [c["name"] for c in json.loads(out.read_text())["checks"] if c["status"] == "FAIL" and c["group"] != "LATENCY"] == ["results_format"]
 
 
 # --- run_scenario plumbing (stub graph, no network, no LLM) ---
