@@ -67,9 +67,10 @@ def test_committed_rendered_dir_has_14_frozen_v0_prompts(runs: dict[str, pb.RunI
 def test_overview_cases_use_single_and_multi_prompts(runs: dict[str, pb.RunInput]) -> None:
     single = json.loads((RENDERED_DIR / "overview__single.json").read_text("utf-8"))["prompt"]
     multi = json.loads((RENDERED_DIR / "overview__multi.json").read_text("utf-8"))["prompt"]
+    # The saved v0 prompts are frozen: the multi-paper one still carries the old matrix.
     assert "BENCHMARK COMPARISON MATRIX" not in single
     assert "BENCHMARK COMPARISON MATRIX" in multi
-    assert runs["multi"].benchmark_section.startswith(pb.BENCHMARK_HEADER)
+    assert not hasattr(runs["multi"], "benchmark_section")
 
 
 class RecordingLLM:
@@ -190,7 +191,7 @@ def test_new_variant_runs_through_builders(variants_dir: Path, tmp_path: Path, m
     monkeypatch.setattr(fr, "build_cards_messages", lambda paper, lang: ("SYS-C", f"USER {lang}"), raising=False)
     monkeypatch.setattr(fr, "build_section_messages", lambda paper, i, q, lang: ("SYS-S", f"USER {i} {q}"), raising=False)
     monkeypatch.setattr(
-        fr, "build_overview_messages", lambda papers, q, t, lang, b: ("SYS-O", f"USER {len(papers)} {t}"), raising=False
+        fr, "build_overview_messages", lambda papers, q, t, lang: ("SYS-O", f"USER {len(papers)} {t}"), raising=False
     )
     summary = pb.run_bench(
         variants=["v0", "new"], stages=list(pb.STAGES), case_selector="all", n=3, concurrency=4,
@@ -241,12 +242,14 @@ def test_quality_uses_production_card_validation(runs: dict[str, pb.RunInput]) -
 
 
 def test_quality_text_and_overview_headings(runs: dict[str, pb.RunInput]) -> None:
-    text = "## 1. S\nvalue 99999.5 here\n\n$$\nx\n$$\n\n## 4. K\nend"
+    text = "## 1. S\nvalue 99999.5 here\n\n$$\nx\n$$\n\n## 3. K\nend"
     single = pb.quality_overview(text, runs["single"].sources, 1)
     assert single["headings_ok"] is True and single["equations"] == 1 and single["numeric_claims"] == 1
     assert single["grounding"] == 0.0
     multi = pb.quality_overview(text, runs["multi"].sources, 3)
-    assert multi["headings_ok"] is False and multi["missing_headings"] == ["compare"]
+    assert multi["headings_ok"] is True
+    stale = pb.quality_overview(text.replace("## 3. K", "## 4. K"), runs["multi"].sources, 3)
+    assert stale["headings_ok"] is False and stale["missing_headings"] == ["conclusion"]
     pmrl = pb.quality_pmrl(json.dumps({"problem": "a b", "method": "c", "result": "", "limitation": "d"}))
     assert pmrl["parse_ok"] and pmrl["words"]["problem"] == 2 and pmrl["all_nonempty"] is False
 

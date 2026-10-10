@@ -239,13 +239,7 @@ class SectionLLM:
         if "summary and conclusion of a research report" in prompt:
             if self.fail_overview:
                 raise RuntimeError("provider failure")
-            return SimpleNamespace(content="## 1. Tóm tắt\n- overview text\n\n## 4. Kết luận\n- done\n")
-        if "cross-paper sections" in prompt:
-            if self.fail_overview:
-                raise RuntimeError("provider failure")
-            return SimpleNamespace(content=(
-                "## 1. Tóm tắt\n- overview text\n\n## 3. So sánh\n### sub\ncompare text\n\n## 4. Kết luận\n- done\n"
-            ))
+            return SimpleNamespace(content="## 1. Tóm tắt\n- overview text\n\n## 3. Kết luận\n- done\n")
         return SimpleNamespace(content="# Legacy report\n\nlegacy body\n")
 
 
@@ -268,8 +262,8 @@ def _setup(monkeypatch, tmp_path, llm):
     monkeypatch.setattr(final_report, "invoke_structured_output", lambda *a, **k: cards)
 
 
-def _state(papers, matrix=None):
-    return {"user_query": "so sánh các bài báo", "selected_papers": papers, "benchmark_matrix": matrix}
+def _state(papers):
+    return {"user_query": "so sánh các bài báo", "selected_papers": papers}
 
 
 def test_parallel_report_assembles_in_order_with_deterministic_parts(monkeypatch, tmp_path):
@@ -280,13 +274,14 @@ def test_parallel_report_assembles_in_order_with_deterministic_parts(monkeypatch
         _paper("p1", "First Paper", "2303.04137", repo="https://github.com/o/r"),
         _paper("p2", "Second Paper", "2205.09991"),
     ]
-    result = final_report.final_report_node(_state(papers, matrix="| a | b |"))
+    result = final_report.final_report_node(_state(papers))
     report = result["final_report"]
 
     assert report.startswith("# Research Report:")
     heads = [line for line in report.split("\n") if line.startswith("## ")]
-    assert heads == ["## 1. Tóm tắt", "## 2. Phân tích bài báo", "## 3. So sánh", "## 4. Kết luận", "## 5. Tài liệu tham khảo"]
-    paper_section = report.split("## 2. Phân tích bài báo")[1].split("## 3. So sánh")[0]
+    assert heads == ["## 1. Tóm tắt", "## 2. Phân tích bài báo", "## 3. Kết luận", "## 4. Tài liệu tham khảo"]
+    assert "So sánh" not in report
+    paper_section = report.split("## 2. Phân tích bài báo")[1].split("## 3. Kết luận")[0]
     assert paper_section.count("### ") == 2
     assert "leaked heading" not in report
     assert "### 7." not in report and "### LLM block" in paper_section
@@ -300,7 +295,7 @@ def test_parallel_report_assembles_in_order_with_deterministic_parts(monkeypatch
     assert "đừng kết luận bài báo không có code" in paper_section  # paper 2 has no repo
     assert "@article{p1}" in paper_section
     assert "https://arxiv.org/abs/2303.04137" in paper_section
-    refs = report.split("## 5. Tài liệu tham khảo")[1]
+    refs = report.split("## 4. Tài liệu tham khảo")[1]
     assert refs.index("First Paper") < refs.index("Second Paper")
     assert "[ArXiv abstract](https://arxiv.org/abs/2303.04137) | [PDF](https://arxiv.org/pdf/2303.04137.pdf)" in refs
     assert "[Mã nguồn](https://github.com/o/r)" in refs
@@ -338,12 +333,11 @@ def test_parallel_report_overview_failure_uses_minimal_text(monkeypatch, tmp_pat
     llm = SectionLLM(fail_overview=True)
     _setup(monkeypatch, tmp_path, llm)
     papers = [_paper("p1", "First Paper", "2303.04137")]
-    result = final_report.final_report_node(_state(papers, matrix="| matrix |"))
+    result = final_report.final_report_node(_state(papers))
     report = result["final_report"]
     assert result["status"] == "degraded"
     assert "## 1. Tóm tắt" in report and "**First Paper** (2303.04137)" in report
-    assert "| matrix |" in report
-    assert "## 4. Kết luận" in report
+    assert "## 3. Kết luận" in report
 
 
 def test_parallel_report_caches_good_reports_separately_from_legacy(monkeypatch, tmp_path):
@@ -384,37 +378,39 @@ def test_section_prompt_has_no_code_link_or_bibtex_input(monkeypatch, tmp_path):
         assert "- **Mã nguồn**" not in prompt and "- **Trích dẫn**" not in prompt
 
 
-def test_single_paper_overview_has_no_compare_and_section3_is_fixed_text(monkeypatch, tmp_path):
+def test_single_paper_overview_has_two_sections_and_no_compare(monkeypatch, tmp_path):
     llm = SectionLLM()
     _setup(monkeypatch, tmp_path, llm)
     result = final_report.final_report_node(_state([_paper("p1", "First Paper", "2303.04137")]))
     overview_prompts = [p for p in llm.prompts if "summary and conclusion of a research report" in p]
-    assert len(overview_prompts) == 1 and not any("cross-paper sections" in p for p in llm.prompts)
-    assert "So sánh" not in overview_prompts[0] and "## 3." not in overview_prompts[0]
+    assert len(overview_prompts) == 1
+    assert "So sánh" not in overview_prompts[0] and "<benchmark_matrix>" not in overview_prompts[0]
     report = result["final_report"]
-    assert "## 3. So sánh\n\nBáo cáo này chỉ phân tích một bài báo nên không có so sánh giữa các bài báo; các kết quả định lượng nằm ở mục 2." in report
+    assert "So sánh" not in report
     assert [l for l in report.split("\n") if l.startswith("## ")] == [
-        "## 1. Tóm tắt", "## 2. Phân tích bài báo", "## 3. So sánh", "## 4. Kết luận", "## 5. Tài liệu tham khảo",
+        "## 1. Tóm tắt", "## 2. Phân tích bài báo", "## 3. Kết luận", "## 4. Tài liệu tham khảo",
     ]
-    assert result["status"] == "success"  # a missing compare part is not a degradation for n == 1
+    assert result["status"] == "success"
 
 
-def test_single_paper_english_mode_and_matrix_appended(monkeypatch, tmp_path):
+def test_single_paper_english_mode_headings(monkeypatch, tmp_path):
     llm = SectionLLM()
     _setup(monkeypatch, tmp_path, llm)
     result = final_report.final_report_node({
         "user_query": "summarize this paper", "selected_papers": [_paper("p1", "First Paper", "2303.04137")],
-        "benchmark_matrix": "| m |",
     })
     report = result["final_report"]
-    assert "## 3. Comparison\n\nThis report analyzes a single paper" in report
-    assert report.split("## 3. Comparison")[1].split("## 4.")[0].rstrip().endswith("| m |")
+    assert [l for l in report.split("\n") if l.startswith("## ")] == [
+        "## 1. Summary", "## 2. Paper Analysis", "## 3. Conclusion", "## 4. References",
+    ]
+    assert "Comparison" not in report
 
 
 def test_parallel_cache_key_includes_version(monkeypatch):
     paper = _paper("p1", "First Paper", "2303.04137")
-    first, _ = final_report._report_cache_key("q", "T", "English", "b", "", [paper], parallel=True)
+    assert final_report.PARALLEL_REPORT_VERSION == "p7"
+    first, _ = final_report._report_cache_key("q", "T", "English", "b", [paper], parallel=True)
     monkeypatch.setattr(final_report, "PARALLEL_REPORT_VERSION", "next")
-    second, _ = final_report._report_cache_key("q", "T", "English", "b", "", [paper], parallel=True)
-    legacy1, _ = final_report._report_cache_key("q", "T", "English", "b", "", [paper])
+    second, _ = final_report._report_cache_key("q", "T", "English", "b", [paper], parallel=True)
+    legacy1, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])
     assert first != second and legacy1 not in {first, second}

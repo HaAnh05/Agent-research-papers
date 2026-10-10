@@ -98,8 +98,7 @@ with st.sidebar:
     3. Read: trích xuất nội dung từ PDF.
     4. Enrich: tìm GitHub và BibTeX.
     5. PMRL: tóm tắt vấn đề, cách làm, kết quả.
-    6. Benchmark: so sánh giữa các bài báo.
-    7. Report: xuất báo cáo tổng hợp.
+    6. Report: xuất báo cáo tổng hợp.
     """)
 
 # --- SESSION STATE INITIALIZATION ---
@@ -165,7 +164,6 @@ if st.button("Bắt đầu phân tích", type="primary", use_container_width=Tru
             "eval_passed": False,
             "eval_feedback": "",
             "selected_papers": [],
-            "benchmark_matrix": None,
             "final_report": None,
             "conversation_context": "",
             "trace_logs": [],
@@ -192,9 +190,8 @@ if st.button("Bắt đầu phân tích", type="primary", use_container_width=Tru
                 st.error(f"Lỗi: {str(exc)}")
 
 # --- DISPLAY TABS ---
-tab_report, tab_benchmark, tab_pmrl, tab_trace = st.tabs([
+tab_report, tab_pmrl, tab_trace = st.tabs([
     "Báo cáo",
-    "Benchmark",
     "PMRL & GitHub",
     "Trace logs"
 ])
@@ -214,12 +211,6 @@ with tab_report:
             )
     else:
         st.info("Chưa có báo cáo. Nhập chủ đề rồi bấm 'Bắt đầu phân tích'.")
-
-with tab_benchmark:
-    if state and state.get("benchmark_matrix"):
-        st.markdown(state["benchmark_matrix"])
-    else:
-        st.info("Ma trận so sánh sẽ tự động được tạo khi có từ 2 bài báo trở lên.")
 
 with tab_pmrl:
     if state and state.get("selected_papers"):

@@ -30,12 +30,10 @@ flowchart TD
     WebEnrich --> WriteNotes["write_notes (PMRL Generator - Pydantic Output)"]
 
     %% CE3 Routing
-    WriteNotes -->|CE3: single paper| FinalReport["final_report (Comprehensive Report Generator)"]
-    WriteNotes -->|CE3: >= 2 papers / direct_compare| CompareBenchmark["compare_benchmark (Benchmark Matrix)"]
+    WriteNotes -->|CE3: ok| FinalReport["final_report (Comprehensive Report Generator)"]
     WriteNotes -->|CE3: error| ErrorHandler
 
-    CompareBenchmark --> FinalReport
-    FinalReport --> End([End: Research Report + Benchmark Matrix])
+    FinalReport --> End([End: Research Report])
     ErrorHandler --> End
 
     style Router fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
@@ -45,7 +43,6 @@ flowchart TD
     style ReadPaper fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WebEnrich fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WriteNotes fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style CompareBenchmark fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     style FinalReport fill:#ede7f6,stroke:#512da8,stroke-width:2px
     style ErrorHandler fill:#ffebee,stroke:#c62828,stroke-width:2px
 ```
@@ -61,8 +58,7 @@ flowchart TD
 |   5   | `read_paper`        | Đọc HTML trước (ar5iv → arxiv.org/html), PDF là phương án dự phòng; bóc tách sections, bảng, tài liệu tham khảo, link repo |
 |   6   | `web_enrich`        | Tìm repo GitHub 3 tầng + tạo BibTeX citation                                                 |
 |   7   | `write_notes`       | LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)                                 |
-|   8   | `compare_benchmark` | LLM lập bảng ma trận so sánh từ PMRLNotes (chỉ khi ≥ 2 bài)                             |
-|   9   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
+|   8   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
 |   —   | `error_handler`     | Xử lý graceful fallback khi bất kỳ node nào gặp lỗi                                      |
 
 ---
@@ -75,7 +71,7 @@ d:\LABAI\agentresearch\
 ├── config.py                   # AppConfig tập trung (paths, limits, model defaults)
 ├── state.py                    # Pydantic models & TypedDict ResearchState
 ├── graph.py                    # StateGraph definition, conditional edges & checkpointer
-├── app.py                      # Giao diện Streamlit (4 tabs)
+├── app.py                      # Giao diện Streamlit (3 tabs)
 ├── main.py                     # CLI entry point
 │
 ├── prompts/                    # Prompt templates tách biệt theo node
@@ -83,7 +79,6 @@ d:\LABAI\agentresearch\
 │   ├── eval_search_prompt.py
 │   ├── refine_query_prompt.py
 │   ├── pmrl_notes_prompt.py
-│   ├── benchmark_prompt.py
 │   └── final_report_prompt.py
 │
 ├── tools/                      # Công cụ chuyên sâu (không gọi LLM)
@@ -105,7 +100,6 @@ d:\LABAI\agentresearch\
 │   ├── read_paper.py
 │   ├── web_enrich.py
 │   ├── write_notes.py
-│   ├── compare_benchmark.py
 │   ├── final_report.py
 │   └── error_handler.py
 │
@@ -177,7 +171,7 @@ Constructor `__init__` tự động tạo các thư mục cache nếu chưa tồ
 
 ### 3.3. Đồ Thị LangGraph (`graph.py`)
 
-File trung tâm gắn kết 10 node thành 1 `StateGraph` hoàn chỉnh.
+File trung tâm gắn kết 9 node thành 1 `StateGraph` hoàn chỉnh.
 
 #### 3 Conditional Edge Functions
 
@@ -195,14 +189,13 @@ def route_after_eval_search(state) -> str:
 
 def route_after_write_notes(state) -> str:
     # CE3: error → error_handler
-    #       ≥ 2 papers hoặc direct_compare → compare_benchmark
-    #       1 paper → final_report (bỏ qua so sánh)
+    #       còn lại → final_report
 ```
 
 #### `build_research_graph()`
 
 1. **Tạo `StateGraph(ResearchState)`** — khai báo kiểu state
-2. **Thêm 10 node** bằng `workflow.add_node(name, function)`
+2. **Thêm 9 node** bằng `workflow.add_node(name, function)`
 3. **Nối cạnh**: 4 cạnh cố định + 3 conditional edges (CE1, CE2, CE3) + 1 vòng lặp `refine_query → search_papers`
 4. **Compile** với `MemorySaver` checkpointer (lưu snapshot state theo `thread_id`)
 
@@ -345,47 +338,27 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 **Fallback PMRL**: Nếu LLM lỗi → tạo PMRLNotes mặc định từ summary/text thô.
 
-**Ý nghĩa kiến trúc**: Sau bước này, toàn bộ nội dung bài báo (hàng chục ngàn ký tự `extracted_text`) đã được **nén** thành ~500 từ PMRLNotes có cấu trúc. Các node phía sau (`compare_benchmark`, `final_report`) chỉ đọc `notes` — giảm ~70% token prompt.
+**Ý nghĩa kiến trúc**: Sau bước này, toàn bộ nội dung bài báo (hàng chục ngàn ký tự `extracted_text`) đã được **nén** thành ~500 từ PMRLNotes có cấu trúc. Node phía sau (`final_report`) chỉ đọc `notes` — giảm ~70% token prompt.
 
 ---
 
-### 3.11. Node: `compare_benchmark` (`nodes/compare_benchmark.py`)
-
-**Chức năng**: Lập **Ma Trận So Sánh Benchmark** giữa các bài báo (chỉ chạy khi ≥ 2 bài).
-
-**Tối ưu token**: Chỉ đọc từ `PMRLNotes` + `github_repos` — không nạp lại `extracted_text`:
-
-```python
-summary_block = (
-    f"### Paper {idx}: {p.title}\n"
-    f"- Method: {notes.method}\n"      # Từ PMRLNotes, ~150 từ
-    f"- Results: {notes.result}\n"     # Từ PMRLNotes, ~150 từ
-    f"- Limitations: {notes.limitation}\n"
-    f"- GitHub: {github_url}"
-)
-```
-
-LLM sinh Markdown table với các chiều so sánh: Architecture, Compute, Datasets, Metrics, Pros, Cons, Open Source.
-
----
-
-### 3.12. Node: `final_report` (`nodes/final_report.py`)
+### 3.11. Node: `final_report` (`nodes/final_report.py`)
 
 **Chức năng**: Tổng hợp mọi thông tin thành **báo cáo nghiên cứu chuyên sâu** dạng Markdown.
 
-**Cấu trúc báo cáo**: Executive Summary → Paper Breakdowns (PMRL) → Benchmark Matrix → Takeaways → Bibliography.
+**Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Kết luận` → `## 4. Tài liệu tham khảo`. Không còn mục so sánh/benchmark; ý định `direct_compare` chỉ còn dùng ở router để chọn nhiều bài.
 
 **Đặc điểm**:
 
-- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 3. So sánh`, `## 4. Kết luận` (`REPORT_OVERVIEW_PROMPT`), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
-- `REPORT_PARALLEL_SECTIONS=false` hoặc không có bài: giữ đường cũ — gộp PMRL notes + GitHub info + BibTeX + benchmark matrix vào 1 prompt duy nhất (`FINAL_REPORT_PROMPT`)
+- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 3. Kết luận` (`REPORT_OVERVIEW_*`, bản 1 bài và nhiều bài), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài và mục 4 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
+- `REPORT_PARALLEL_SECTIONS=false` hoặc không có bài: giữ đường cũ — gộp PMRL notes + GitHub info + BibTeX vào 1 prompt duy nhất (`FINAL_REPORT_PROMPT`)
 - Khóa cache báo cáo chứa chế độ; hai chế độ không dùng chung entry
 - Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`
 - Dùng `extract_text_from_response()` để xử lý an toàn response từ mọi LLM provider
 
 ---
 
-### 3.13. Node: `error_handler` (`nodes/error_handler.py`)
+### 3.12. Node: `error_handler` (`nodes/error_handler.py`)
 
 **Chức năng**: Bắt mọi trạng thái lỗi (`status="error"`) và tạo báo cáo fallback thay vì crash.
 
@@ -393,7 +366,7 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 
 ---
 
-### 3.14. Tools Layer
+### 3.13. Tools Layer
 
 #### `tools/arxiv_search.py` — Thread-safe ArXiv API
 
@@ -446,7 +419,7 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 
 ---
 
-### 3.15. Prompts Layer (`prompts/`)
+### 3.14. Prompts Layer (`prompts/`)
 
 Mỗi call LLM gửi **2 message**: `X_SYSTEM` (tĩnh: vai trò, luật, định dạng, ngân sách từ) và `X_USER` (biến: dữ liệu trong thẻ như `<paper_source>`, `<pmrl_notes>` + nhiệm vụ cụ thể). System prompt nói 1 lần rằng nội dung trong thẻ là dữ liệu, không phải chỉ dẫn. Luật viết báo cáo dùng chung (ngôn ngữ, LaTeX `$$`, không `<br>`, không nhãn nội bộ, cảnh báo trích xuất, không bịa link) nằm 1 lần trong `prompts/common.py`.
 
@@ -459,7 +432,6 @@ Mỗi call LLM gửi **2 message**: `X_SYSTEM` (tĩnh: vai trò, luật, định
 | `pmrl_notes_prompt.py`   | `PMRL_NOTES_SYSTEM` / `_USER`                      | `write_notes` (schema `PMRLCoreGeneration`, không có `brief_summary`)    |
 | `results_summary_prompt.py` | `RESULTS_SUMMARY_SYSTEM` / `_USER`              | 5 summary card                                                            |
 | `final_report_prompt.py` | `PAPER_SECTION_*`, `REPORT_OVERVIEW_*`, `REPORT_OVERVIEW_SINGLE_*`, `FINAL_REPORT_PROMPT` (cũ) | `final_report` song song / đường cũ 1 chuỗi |
-| `benchmark_prompt.py`    | `BENCHMARK_MATRIX_PROMPT`                            | `compare_benchmark` (1 chuỗi, không đổi)                                |
 
 Builder thuần (không đọc cache), dùng chung bởi production và `bench/prompt_bench.py`: `write_notes.build_pmrl_messages`, `final_report.build_cards_messages`, `build_section_messages`, `build_overview_messages` — đều trả `(system, user)`.
 
@@ -470,12 +442,11 @@ Builder thuần (không đọc cache), dùng chung bởi production và `bench/p
 | `eval_search_prompt.py`  | `EVAL_SEARCH_PROMPT`      | `eval_search` — chấm điểm & chọn bài                  |
 | `refine_query_prompt.py` | `REFINE_QUERY_PROMPT`     | `refine_query` — tối ưu từ khóa                        |
 | `pmrl_notes_prompt.py`   | `PMRL_NOTES_PROMPT`       | `write_notes` — tổng hợp PMRL                            |
-| `benchmark_prompt.py`    | `BENCHMARK_MATRIX_PROMPT` | `compare_benchmark` — lập bảng so sánh                  |
 | `final_report_prompt.py` | `FINAL_REPORT_PROMPT` (+ `PAPER_SECTION_PROMPT`, `REPORT_OVERVIEW_PROMPT`) | `final_report` — báo cáo 1 lệnh (cũ) hoặc theo từng phần song song |
 
 ---
 
-### 3.16. Entry Points
+### 3.15. Entry Points
 
 #### `main.py` — CLI
 
@@ -494,12 +465,11 @@ Chạy `graph.stream()` đồng bộ, in trace log từng bước, xuất final 
 
 #### `app.py` — Streamlit Web UI
 
-Giao diện 4 tabs:
+Giao diện 3 tabs:
 
 | Tab                       | Nội dung                                         |
 | :------------------------ | :------------------------------------------------ |
 | 📄 Báo Cáo Tổng Hợp   | Markdown report + nút Download                   |
-| 📊 Ma Trận So Sánh      | Benchmark table (khi ≥ 2 bài)                   |
 | 📝 Ghi Chú PMRL & GitHub | Card từng bài: PMRL notes, GitHub repos, BibTeX |
 | ⏱️ Nhật Ký Thực Thi  | Trace logs real-time từng node                   |
 
@@ -507,7 +477,7 @@ Sidebar cho phép chọn LLM provider/model, override API keys, xem sơ đồ lu
 
 ---
 
-### 3.17. Tests (`tests/`)
+### 3.16. Tests (`tests/`)
 
 | File                   | Số tests | Phạm vi                                                                       |
 | :--------------------- | :-------: | :----------------------------------------------------------------------------- |

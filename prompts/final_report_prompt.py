@@ -1,7 +1,7 @@
 from prompts.common import DATA_TAG_RULE
 
 FINAL_REPORT_PROMPT = """You are a research analyst.
-Synthesize a clear, concise research report based on all gathered data, PMRL paper notes, GitHub repositories, and benchmark matrix.
+Synthesize a clear, concise research report based on all gathered data, PMRL paper notes, and GitHub repositories.
 
 User Goal / Topic:
 "{user_query}"
@@ -15,10 +15,8 @@ Language Mode:
 Individual Paper Analyses (PMRL + GitHub + BibTeX + verified source links):
 {detailed_papers_breakdown}
 
-{optional_benchmark_matrix_section}
-
 Instructions:
-Generate a clear research report in Markdown format following this structure. Use the supplied report title exactly for the first H1. Preserve every distinct supported finding, but avoid repeating PMRL prose or benchmark rows across sections. State a metric with its dataset and unit where it is most useful, then refer to that finding briefly elsewhere. Keep the executive summary and takeaways concise; do not expand the supplied matrix into another prose table.
+Generate a clear research report in Markdown format following this structure. Use the supplied report title exactly for the first H1. Preserve every distinct supported finding, but avoid repeating PMRL prose across sections. State a metric with its dataset and unit where it is most useful, then refer to that finding briefly elsewhere. Keep the executive summary and takeaways concise.
 If detailed evidence is missing, describe that reader-facing limitation and do not turn placeholder fields into scientific claims. Never print internal PMRL status labels.
 If source extraction is incomplete, say that extraction is incomplete and treat absent
 sections/results as unverified; never say that the paper itself lacks experiments
@@ -55,14 +53,11 @@ For each paper analyzed:
 - **Liên kết nguồn**: Giữ nguyên link ArXiv abstract/PDF chính xác. Không tự chế link.
 - **Trích dẫn**: BibTeX block.
 
-## 3. So sánh
-(Bảng so sánh và tổng hợp nếu nhiều bài báo được đánh giá).
-
-## 4. Kết luận
+## 3. Kết luận
 - Khuyến nghị thực tiễn cho nhà nghiên cứu & kỹ sư ML.
 - Những thách thức mở còn lại trong lĩnh vực này.
 
-## 5. Tài liệu tham khảo
+## 4. Tài liệu tham khảo
 - Danh sách đầy đủ các trích dẫn kèm link ArXiv và PDF.
 """
 
@@ -75,11 +70,11 @@ For each paper analyzed:
 # tagged data and the structure to fill.  Shared rules live in prompts/common.py.
 
 PAPER_SECTION_SYSTEM = f"""You are a research analyst.
-You are writing ONE paper block of a larger Markdown research report. Other paper blocks, the summary, the comparison, the conclusion and the references are written separately: write none of them.
+You are writing ONE paper block of a larger Markdown research report. Other paper blocks, the summary, the conclusion and the references are written separately: write none of them.
 {DATA_TAG_RULE}
 
 Instructions:
-Write only the analysis block for this paper, following the structure below. Preserve every distinct supported finding from the paper analysis. State a metric with its dataset and unit where it is most useful, and do not repeat the same PMRL prose or benchmark rows in several bullets.
+Write only the analysis block for this paper, following the structure below. Preserve every distinct supported finding from the paper analysis. State a metric with its dataset and unit where it is most useful, and do not repeat the same PMRL prose in several bullets.
 If detailed evidence is missing, describe that reader-facing limitation and do not turn placeholder fields into scientific claims. Never print internal PMRL status labels.
 If source extraction is incomplete, say that extraction is incomplete and treat absent
 sections/results as unverified; never say that the paper itself lacks experiments
@@ -118,7 +113,7 @@ Paper analysis (PMRL notes):
 Write the analysis block for this paper now."""
 
 
-_OVERVIEW_RULES = """Preserve every distinct supported finding, but avoid repeating PMRL prose or benchmark rows across sections. State a metric with its dataset and unit where it is most useful, then refer to that finding briefly elsewhere. Keep the executive summary and takeaways concise; do not expand the supplied matrix into another prose table.
+_OVERVIEW_RULES = """Preserve every distinct supported finding, but avoid repeating PMRL prose across sections. State a metric with its dataset and unit where it is most useful, then refer to that finding briefly elsewhere. Keep the executive summary and takeaways concise.
 Do not rank papers against each other when their metrics, datasets or units differ; say so instead.
 If detailed evidence is missing, describe that reader-facing limitation and do not turn placeholder fields into scientific claims. Never print internal PMRL status labels.
 If source extraction is incomplete, say that extraction is incomplete and treat absent
@@ -131,11 +126,11 @@ Use inline `$...$` only for individual math symbols or very short expressions. N
 Write in the language mode given in the user message. Keep the structure consistent with the requested language."""
 
 REPORT_OVERVIEW_SYSTEM = f"""You are a research analyst.
-You are writing the cross-paper sections of a research report. The individual paper blocks and the references are written separately: do not write them.
+You are writing the summary and conclusion of a research report covering several papers. The individual paper blocks and the references are written separately: do not write them.
 {DATA_TAG_RULE}
 
 Instructions:
-Write exactly three Markdown sections, in the order listed in the user message, with exactly those `##` headings and no other heading at levels `#` or `##`. Do not write an H1 title.
+Write exactly two Markdown sections, in the order listed in the user message, with exactly those `##` headings and no other heading at levels `#` or `##`. Do not write an H1 title.
 {_OVERVIEW_RULES}"""
 
 REPORT_OVERVIEW_USER = """User Goal / Topic:
@@ -151,28 +146,25 @@ Compact paper context (title, ID, summary, key result, limitation):
 <paper_context>
 {papers_context}
 </paper_context>
-{optional_benchmark_matrix_section}
-Write these three sections:
+
+Write these two sections:
 
 ## {heading_summary}
 - Tổng quan ngắn gọn về chủ đề nghiên cứu và các phát hiện chính.
-
-## {heading_compare}
-(Bảng so sánh và tổng hợp nếu nhiều bài báo được đánh giá).
 
 ## {heading_conclusion}
 - Khuyến nghị thực tiễn cho nhà nghiên cứu & kỹ sư ML.
 - Những thách thức mở còn lại trong lĩnh vực này."""
 
 
-# One-paper variant: no comparison section is requested at all (the report
-# builds a fixed sentence for "## 3." in code), which saves output tokens.
+# One-paper variant: keeps both sections short because the paper block already
+# holds the quantitative results, which saves output tokens.
 REPORT_OVERVIEW_SINGLE_SYSTEM = f"""You are a research analyst.
-You are writing the summary and conclusion of a research report about ONE paper. The paper block itself, the comparison note and the references are written separately: do not write them.
+You are writing the summary and conclusion of a research report about ONE paper. The paper block itself and the references are written separately: do not write them.
 {DATA_TAG_RULE}
 
 Instructions:
-Write exactly two Markdown sections, in the order listed in the user message, with exactly those `##` headings and no other heading at levels `#` or `##`. Do not write an H1 title. Do not write a comparison section.
+Write exactly two Markdown sections, in the order listed in the user message, with exactly those `##` headings and no other heading at levels `#` or `##`. Do not write an H1 title.
 Keep both sections concise. State a metric with its dataset and unit only where it is most useful; do not re-list the quantitative results, because the paper block already holds them.
 If detailed evidence is missing, describe that reader-facing limitation and do not turn placeholder fields into scientific claims. Never print internal PMRL status labels.
 If source extraction is incomplete, say that extraction is incomplete and treat absent
