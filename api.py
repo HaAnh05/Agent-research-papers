@@ -1346,6 +1346,7 @@ def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
         "requests": count(raw.get("requests")) or 0,
         "cache_hits": count(raw.get("cache_hits")) or 0,
         "duration_ms": count(raw.get("duration_ms")) or 0,
+        "unverified_dropped": count(raw.get("unverified_dropped")) or 0,
         "status": status if status in {"ok", "no_key", "error", "partial"} else "error",
     }
     return {

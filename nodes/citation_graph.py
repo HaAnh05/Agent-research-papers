@@ -271,7 +271,7 @@ def build_citation_graph(
 def _empty_similarity(status: str) -> Dict[str, Any]:
     return {
         "nodes": [], "edges": [], "prior_works": [], "derivative_works": [],
-        "stats": {"seeds": 0, "pool": 0, "requests": 0, "cache_hits": 0, "duration_ms": 0, "status": status},
+        "stats": {"seeds": 0, "pool": 0, "requests": 0, "cache_hits": 0, "unverified_dropped": 0, "duration_ms": 0, "status": status},
     }
 
 

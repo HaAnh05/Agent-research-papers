@@ -97,6 +97,14 @@ class _Budget:
         self.calls = 0
         self._lock = threading.Lock()
 
+    def expired(self) -> bool:
+        """True (and ``hit`` set) when the wall-clock budget is spent."""
+
+        with self._lock:
+            if self.clock() >= self.deadline:
+                self.hit = True
+            return self.hit
+
     def call(self, fn: Callable[[], Optional[Any]]) -> Optional[Any]:
         """Run one OpenAlex call unless the budget is spent; ``None`` = no data."""
 
@@ -115,7 +123,7 @@ class _Budget:
 def _empty(status: str, started: float, **stats: Any) -> Dict[str, Any]:
     return {
         "nodes": [], "edges": [], "prior_works": [], "derivative_works": [],
-        "stats": {"seeds": 0, "pool": 0, "requests": 0, "cache_hits": 0,
+        "stats": {"seeds": 0, "pool": 0, "requests": 0, "cache_hits": 0, "unverified_dropped": 0,
                   "duration_ms": max(0, int((time.perf_counter() - started) * 1000)), "status": status, **stats},
     }
 
@@ -231,7 +239,7 @@ def build_similarity_graph(
         if wid not in ident_cache:
             arxiv = hint or w_arxiv.get(wid) or clean_arxiv_id(arxiv_id_of_work(work))
             record = resolver.lookup_record(arxiv) if arxiv else None
-            if arxiv is None:
+            if arxiv is None and not budget.expired():       # local lookups count in the budget
                 arxiv = resolver.resolve_title(str(work.get("title") or ""))
                 record = resolver.lookup_record(arxiv) if arxiv else None
             ident_cache[wid] = (arxiv, record)
@@ -314,7 +322,7 @@ def build_similarity_graph(
     for refs in refsets.values():
         prior_count.update(refs)
     prior_ranked = [w for w, _ in sorted(prior_count.items(), key=lambda kv: (-kv[1], kv[0]))
-                    if w not in sel_wids and w not in node_set][:LIST_SIZE]
+                    if w not in sel_wids and w not in node_set][:3 * LIST_SIZE]
     missing = [w for w in prior_ranked if w not in details]
     for i in range(0, len(missing), BATCH):
         chunk = missing[i:i + BATCH]
@@ -322,25 +330,41 @@ def build_similarity_graph(
             wid = short_id(work.get("id"))
             if wid:
                 details[wid] = work
-    prior_works = []
+
+    dropped = 0
+
+    def list_item(wid: str, role: str, support: int) -> Optional[Dict[str, Any]]:
+        """Node dict, or ``None`` when the metadata cannot be verified (counted in ``dropped``)."""
+
+        nonlocal dropped
+        item = node_dict(wid, details[wid], role, 0.0)
+        if not item["arxiv_id"] and not _refs_of(details[wid]) and item["title_source"] == "openalex":
+            dropped += 1
+            return None
+        item.update(similarity=None, support=support)
+        return item
+
+    prior_works: List[Dict[str, Any]] = []
     for wid in prior_ranked:
+        if len(prior_works) >= LIST_SIZE:
+            break
         if wid in details:
-            item = node_dict(wid, details[wid], "prior", 0.0)
-            item.update(similarity=None, support=prior_count[wid])
-            prior_works.append(item)
+            item = list_item(wid, "prior", prior_count[wid])
+            if item:
+                prior_works.append(item)
 
     derivative_ranked = sorted(
         ((len(_refs_of(w) & node_set), wid) for wid, w in details.items()
          if wid not in node_set and wid not in sel_wids),
         key=lambda t: (-t[0], -(_count(details[t[1]]) or 0), t[1]),
     )
-    derivative_works = []
-    for support, wid in derivative_ranked[:LIST_SIZE]:
-        if support <= 0:
+    derivative_works: List[Dict[str, Any]] = []
+    for support, wid in derivative_ranked:
+        if support <= 0 or len(derivative_works) >= LIST_SIZE:
             break
-        item = node_dict(wid, details[wid], "derivative", 0.0)
-        item.update(similarity=None, support=support)
-        derivative_works.append(item)
+        item = list_item(wid, "derivative", support)
+        if item:
+            derivative_works.append(item)
 
     # --- 8. status ------------------------------------------------------------------------------------
     usable = bool(details or sel_works)
@@ -353,7 +377,7 @@ def build_similarity_graph(
     return {
         "nodes": nodes, "edges": edges, "prior_works": prior_works, "derivative_works": derivative_works,
         "stats": {
-            "seeds": len(seeds), "pool": len(pool_ids), "requests": budget.calls,
+            "seeds": len(seeds), "pool": len(pool_ids), "requests": budget.calls, "unverified_dropped": dropped,
             "cache_hits": getattr(client, "cache_hits", 0) - hits_before,
             "duration_ms": max(0, int((time.perf_counter() - started) * 1000)), "status": status,
         },
