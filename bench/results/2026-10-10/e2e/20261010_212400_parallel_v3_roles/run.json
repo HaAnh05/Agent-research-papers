@@ -1,0 +1,311 @@
+{
+  "description": "parallel_v3_roles",
+  "intent": "direct_compare",
+  "query": "So sánh các phương pháp diffusion cho robot",
+  "raw_inputs": [
+    "https://arxiv.org/abs/2303.04137",
+    "https://arxiv.org/abs/2205.09991",
+    "https://arxiv.org/abs/2209.14988"
+  ],
+  "scenario": "bench/baselines/direct_compare_3papers_20261010/run.json",
+  "fresh_llm_cache": true,
+  "total_seconds": 465.7,
+  "status": "success",
+  "node_wall_seconds": {
+    "router": 0.0,
+    "read_paper": 0.0,
+    "web_enrich": 93.8,
+    "write_notes": 0.0,
+    "compare_benchmark": 74.8,
+    "final_report": 297.1
+  },
+  "node_timings": {
+    "router": {
+      "durationMs": 18,
+      "llmMs": 0
+    },
+    "read_paper": {
+      "durationMs": 4,
+      "workerCount": 3,
+      "papers": {
+        "arxiv_2303.04137": {
+          "durationMs": 1,
+          "pdf": {
+            "durationMs": 1,
+            "cacheMs": 1,
+            "cache": "hit"
+          },
+          "arxiv": {}
+        },
+        "arxiv_2205.09991": {
+          "durationMs": 2,
+          "pdf": {
+            "durationMs": 2,
+            "cacheMs": 2,
+            "cache": "hit"
+          },
+          "arxiv": {}
+        },
+        "arxiv_2209.14988": {
+          "durationMs": 2,
+          "pdf": {
+            "durationMs": 2,
+            "cacheMs": 2,
+            "cache": "hit"
+          },
+          "arxiv": {}
+        }
+      }
+    },
+    "web_enrich": {
+      "durationMs": 93777,
+      "papers": {
+        "arxiv_2303.04137": {
+          "durationMs": 44803,
+          "github": {
+            "durationMs": 4,
+            "cache": "hit",
+            "tiers": {}
+          },
+          "pmrl": {
+            "durationMs": 44803,
+            "llmMs": 44798
+          }
+        },
+        "arxiv_2205.09991": {
+          "durationMs": 93515,
+          "github": {
+            "durationMs": 3,
+            "cache": "hit",
+            "tiers": {}
+          },
+          "pmrl": {
+            "durationMs": 93515,
+            "llmMs": 93514
+          }
+        },
+        "arxiv_2209.14988": {
+          "durationMs": 48719,
+          "github": {
+            "durationMs": 1,
+            "cache": "hit",
+            "tiers": {}
+          },
+          "pmrl": {
+            "durationMs": 48719,
+            "llmMs": 48711
+          }
+        }
+      },
+      "workerCount": 3
+    },
+    "write_notes": {
+      "durationMs": 0,
+      "llmMs": 0,
+      "reused": true,
+      "papers": {
+        "arxiv_2303.04137": {
+          "durationMs": 44803,
+          "llmMs": 44798
+        },
+        "arxiv_2205.09991": {
+          "durationMs": 93515,
+          "llmMs": 93514
+        },
+        "arxiv_2209.14988": {
+          "durationMs": 48719,
+          "llmMs": 48711
+        }
+      }
+    },
+    "compare_benchmark": {
+      "durationMs": 74752,
+      "llmMs": 74226,
+      "paperCount": 3,
+      "rowCount": 1
+    },
+    "final_report": {
+      "durationMs": 297093,
+      "llmMs": 163935,
+      "paperCount": 3,
+      "summaryMs": 297091,
+      "summaryPapers": {
+        "arxiv_2303.04137": {
+          "durationMs": 86758,
+          "llmMs": 86745,
+          "reason": ""
+        },
+        "arxiv_2205.09991": {
+          "durationMs": 94167,
+          "llmMs": 94153,
+          "reason": ""
+        },
+        "arxiv_2209.14988": {
+          "durationMs": 297076,
+          "llmMs": 297068,
+          "reason": ""
+        }
+      },
+      "sectionPapers": {
+        "arxiv_2303.04137": {
+          "durationMs": 94091,
+          "llmMs": 94091
+        },
+        "arxiv_2205.09991": {
+          "durationMs": 72115,
+          "llmMs": 72115
+        },
+        "arxiv_2209.14988": {
+          "durationMs": 63860,
+          "llmMs": 63858
+        }
+      },
+      "overviewMs": 163935
+    }
+  },
+  "llm_calls": [
+    {
+      "start_s": 0.29,
+      "seconds": 44.8,
+      "prompt_chars": 8317,
+      "input_tokens": 1826,
+      "output_tokens": 2777,
+      "reasoning_tokens": 2106,
+      "response_chars": 3515,
+      "thread": "ThreadPoolExecutor-4_0",
+      "node": "web_enrich"
+    },
+    {
+      "start_s": 0.3,
+      "seconds": 48.71,
+      "prompt_chars": 6974,
+      "input_tokens": 1609,
+      "output_tokens": 3615,
+      "reasoning_tokens": 2926,
+      "response_chars": 3229,
+      "thread": "ThreadPoolExecutor-4_2",
+      "node": "web_enrich"
+    },
+    {
+      "start_s": 0.29,
+      "seconds": 93.51,
+      "prompt_chars": 8791,
+      "input_tokens": 2000,
+      "output_tokens": 7192,
+      "reasoning_tokens": 6447,
+      "response_chars": 3478,
+      "thread": "ThreadPoolExecutor-4_1",
+      "node": "web_enrich"
+    },
+    {
+      "start_s": 93.81,
+      "seconds": 74.23,
+      "prompt_chars": 14770,
+      "input_tokens": 3241,
+      "output_tokens": 11780,
+      "reasoning_tokens": 10271,
+      "response_chars": 5816,
+      "thread": "MainThread",
+      "node": "compare_benchmark"
+    },
+    {
+      "start_s": 168.57,
+      "seconds": 63.86,
+      "prompt_chars": 6245,
+      "input_tokens": 1368,
+      "output_tokens": 4391,
+      "reasoning_tokens": 3278,
+      "response_chars": 3732,
+      "thread": "ThreadPoolExecutor-5_2",
+      "node": "final_report"
+    },
+    {
+      "start_s": 168.57,
+      "seconds": 72.12,
+      "prompt_chars": 6511,
+      "input_tokens": 1418,
+      "output_tokens": 4867,
+      "reasoning_tokens": 3675,
+      "response_chars": 4021,
+      "thread": "ThreadPoolExecutor-5_1",
+      "node": "final_report"
+    },
+    {
+      "start_s": 168.57,
+      "seconds": 86.74,
+      "prompt_chars": 14126,
+      "input_tokens": 2921,
+      "output_tokens": 5788,
+      "reasoning_tokens": 5245,
+      "response_chars": 1984,
+      "thread": "ThreadPoolExecutor-5_4",
+      "node": "final_report"
+    },
+    {
+      "start_s": 168.56,
+      "seconds": 94.09,
+      "prompt_chars": 6605,
+      "input_tokens": 1371,
+      "output_tokens": 6345,
+      "reasoning_tokens": 5129,
+      "response_chars": 4235,
+      "thread": "ThreadPoolExecutor-5_0",
+      "node": "final_report"
+    },
+    {
+      "start_s": 168.57,
+      "seconds": 94.15,
+      "prompt_chars": 14225,
+      "input_tokens": 3109,
+      "output_tokens": 5859,
+      "reasoning_tokens": 5278,
+      "response_chars": 1872,
+      "thread": "ThreadPoolExecutor-5_5",
+      "node": "final_report"
+    },
+    {
+      "start_s": 168.57,
+      "seconds": 163.94,
+      "prompt_chars": 12966,
+      "input_tokens": 2775,
+      "output_tokens": 9514,
+      "reasoning_tokens": 7636,
+      "response_chars": 6565,
+      "thread": "ThreadPoolExecutor-5_3",
+      "node": "final_report"
+    },
+    {
+      "start_s": 168.58,
+      "seconds": 297.07,
+      "prompt_chars": 12222,
+      "input_tokens": 2717,
+      "output_tokens": 22106,
+      "reasoning_tokens": 21530,
+      "response_chars": 1868,
+      "thread": "ThreadPoolExecutor-5_6",
+      "node": "final_report"
+    }
+  ],
+  "http_calls": [],
+  "artifacts": {
+    "report_markdown": "report.md",
+    "state": "state.json",
+    "source_text_dir": "source_text",
+    "source_text_papers": [
+      "arxiv_2303.04137",
+      "arxiv_2205.09991",
+      "arxiv_2209.14988"
+    ],
+    "llm_cache_files": [
+      "cache/pmrl_70d26780da3229d0.json",
+      "cache/pmrl_7fa0cced3b1e3891.json",
+      "cache/pmrl_c448f3c4ce9c7ab5.json",
+      "cache/report_38c192b0266e6ea5.json"
+    ]
+  },
+  "summary_quality": {
+    "arxiv_2303.04137": "complete",
+    "arxiv_2205.09991": "complete",
+    "arxiv_2209.14988": "complete"
+  }
+}

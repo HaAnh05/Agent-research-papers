@@ -4,7 +4,7 @@ import time
 from typing import Any, Dict, List
 from state import ResearchState, EvalSearchOutput, PaperItem
 from config import config
-from prompts.eval_search_prompt import EVAL_SEARCH_PROMPT
+from prompts.eval_search_prompt import EVAL_SEARCH_SYSTEM, EVAL_SEARCH_USER
 from tools.llm_provider import get_llm, invoke_structured_output
 
 
@@ -48,7 +48,7 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
         for idx, p in enumerate(candidates)
     ])
 
-    prompt = EVAL_SEARCH_PROMPT.format(
+    prompt = EVAL_SEARCH_USER.format(
         user_query=user_query,
         total_results=len(candidates),
         candidate_papers_text=candidates_text,
@@ -63,6 +63,7 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
             EvalSearchOutput,
             llm=llm,
             provider=config.DEFAULT_PROVIDER,
+            system=EVAL_SEARCH_SYSTEM,
         )
 
         # Select the chosen papers

@@ -1,0 +1,146 @@
+{
+  "exit_code": 0,
+  "thresholds": {
+    "word_ratio_lo": 0.6,
+    "word_ratio_hi": 1.6,
+    "report_ratio_lo": 0.6,
+    "report_ratio_hi": 1.6,
+    "grounding_drop": 0.05,
+    "max_equations_per_paper": 3,
+    "target_seconds": 60.0
+  },
+  "checks": [
+    {
+      "name": "status_not_error",
+      "group": "HARD",
+      "status": "PASS",
+      "detail": "status=degraded"
+    },
+    {
+      "name": "same_paper_ids",
+      "group": "HARD",
+      "status": "PASS",
+      "detail": "3 papers"
+    },
+    {
+      "name": "pmrl_notes_nonempty",
+      "group": "HARD",
+      "status": "PASS",
+      "detail": "all P/M/R/L set"
+    },
+    {
+      "name": "report_structure",
+      "group": "HARD",
+      "status": "PASS",
+      "detail": "H1, ## 1-5, 3 paper headings"
+    },
+    {
+      "name": "arxiv_links",
+      "group": "HARD",
+      "status": "PASS",
+      "detail": "all links present"
+    },
+    {
+      "name": "no_internal_lines",
+      "group": "HARD",
+      "status": "PASS",
+      "detail": "none"
+    },
+    {
+      "name": "summary_quality_rank",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "not worse than baseline"
+    },
+    {
+      "name": "complete_cards",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "candidate=14 baseline=13"
+    },
+    {
+      "name": "pmrl_word_counts",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "all within 0.6x-1.6x"
+    },
+    {
+      "name": "report_length",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "27568/19545 chars = 1.41x"
+    },
+    {
+      "name": "number_grounding",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "candidate=0.962 (53 numbers) baseline=0.911 (45) allowed drop=0.05"
+    },
+    {
+      "name": "display_equations",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "per paper=[3, 3, 3] limit=3"
+    },
+    {
+      "name": "comparison_table",
+      "group": "QUALITY",
+      "status": "PASS",
+      "detail": "table in section 3"
+    },
+    {
+      "name": "total_seconds",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=542.3s baseline=951.0s speedup=1.75x"
+    },
+    {
+      "name": "longest_llm_call",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=198.6s baseline=343.2s"
+    },
+    {
+      "name": "node:router",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=0.0s baseline=0.0s"
+    },
+    {
+      "name": "node:read_paper",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=0.6s baseline=49.2s"
+    },
+    {
+      "name": "node:web_enrich",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=147.8s baseline=231.1s"
+    },
+    {
+      "name": "node:write_notes",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=0.0s baseline=0.0s"
+    },
+    {
+      "name": "node:compare_benchmark",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=198.6s baseline=327.3s"
+    },
+    {
+      "name": "node:final_report",
+      "group": "LATENCY",
+      "status": "INFO",
+      "detail": "candidate=195.3s baseline=343.2s"
+    },
+    {
+      "name": "target_seconds",
+      "group": "LATENCY",
+      "status": "FAIL",
+      "detail": "542.3s vs target 60s"
+    }
+  ]
+}

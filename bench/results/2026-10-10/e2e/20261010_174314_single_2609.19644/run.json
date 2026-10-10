@@ -1,0 +1,220 @@
+{
+  "description": "single_2609.19644",
+  "intent": "direct_read",
+  "query": "Phân tích bài báo này",
+  "raw_inputs": [
+    "https://arxiv.org/abs/2609.19644"
+  ],
+  "scenario": "cli",
+  "fresh_llm_cache": true,
+  "total_seconds": 239.4,
+  "status": "degraded",
+  "node_wall_seconds": {
+    "router": 0.0,
+    "read_paper": 3.1,
+    "web_enrich": 99.4,
+    "write_notes": 0.0,
+    "final_report": 136.9
+  },
+  "node_timings": {
+    "router": {
+      "durationMs": 1,
+      "llmMs": 0
+    },
+    "read_paper": {
+      "durationMs": 3061,
+      "workerCount": 1,
+      "papers": {
+        "arxiv_2609.19644": {
+          "durationMs": 3059,
+          "pdf": {
+            "durationMs": 3059,
+            "cacheMs": 3059,
+            "downloadMs": 1479,
+            "extractMs": 1579,
+            "htmlMs": 0,
+            "cache": "download"
+          },
+          "arxiv": {
+            "durationMs": 686,
+            "cache": "miss",
+            "status": "ok"
+          }
+        }
+      }
+    },
+    "web_enrich": {
+      "durationMs": 99409,
+      "papers": {
+        "arxiv_2609.19644": {
+          "durationMs": 98581,
+          "github": {
+            "durationMs": 1802,
+            "cache": "miss",
+            "tiers": {
+              "arxiv_id": {
+                "durationMs": 647,
+                "status": "ok"
+              },
+              "title_keywords": {
+                "durationMs": 572,
+                "status": "ok"
+              },
+              "author_keywords": {
+                "durationMs": 579,
+                "status": "ok"
+              }
+            }
+          },
+          "pmrl": {
+            "durationMs": 98581,
+            "llmMs": 98581
+          }
+        }
+      },
+      "workerCount": 1
+    },
+    "write_notes": {
+      "durationMs": 0,
+      "llmMs": 0,
+      "reused": true,
+      "papers": {
+        "arxiv_2609.19644": {
+          "durationMs": 98581,
+          "llmMs": 98581
+        }
+      }
+    },
+    "final_report": {
+      "durationMs": 136930,
+      "llmMs": 136924,
+      "paperCount": 1,
+      "summaryMs": 136928,
+      "summaryPapers": {
+        "arxiv_2609.19644": {
+          "durationMs": 51876,
+          "llmMs": 51843,
+          "reason": "number_not_in_source:key_results=21"
+        }
+      },
+      "sectionPapers": {
+        "arxiv_2609.19644": {
+          "durationMs": 103168,
+          "llmMs": 103168
+        }
+      },
+      "overviewMs": 136924
+    }
+  },
+  "llm_calls": [
+    {
+      "start_s": 3.91,
+      "seconds": 98.58,
+      "prompt_chars": 12201,
+      "input_tokens": 2825,
+      "output_tokens": 6025,
+      "reasoning_tokens": 5112,
+      "response_chars": 4658,
+      "thread": "ThreadPoolExecutor-4_0",
+      "node": "web_enrich"
+    },
+    {
+      "start_s": 102.5,
+      "seconds": 51.84,
+      "prompt_chars": 18956,
+      "input_tokens": 4104,
+      "output_tokens": 3448,
+      "reasoning_tokens": 2874,
+      "response_chars": 2058,
+      "thread": "ThreadPoolExecutor-5_2",
+      "node": "final_report"
+    },
+    {
+      "start_s": 102.49,
+      "seconds": 103.17,
+      "prompt_chars": 8345,
+      "input_tokens": 1836,
+      "output_tokens": 7069,
+      "reasoning_tokens": 5437,
+      "response_chars": 5851,
+      "thread": "ThreadPoolExecutor-5_0",
+      "node": "final_report"
+    },
+    {
+      "start_s": 102.5,
+      "seconds": 136.92,
+      "prompt_chars": 4896,
+      "input_tokens": 1053,
+      "output_tokens": 8492,
+      "reasoning_tokens": 6976,
+      "response_chars": 5374,
+      "thread": "ThreadPoolExecutor-5_1",
+      "node": "final_report"
+    }
+  ],
+  "http_calls": [
+    {
+      "method": "GET",
+      "url": "https://arxiv.org/pdf/2609.19644.pdf",
+      "status": 301,
+      "start_s": 0.02,
+      "seconds": 0.54,
+      "thread": "ThreadPoolExecutor-2_0"
+    },
+    {
+      "method": "GET",
+      "url": "https://export.arxiv.org/api/query",
+      "status": 200,
+      "start_s": 0.02,
+      "seconds": 0.68,
+      "thread": "arxiv-meta_0"
+    },
+    {
+      "method": "GET",
+      "url": "https://arxiv.org/pdf/2609.19644",
+      "status": 200,
+      "start_s": 0.56,
+      "seconds": 0.3,
+      "thread": "ThreadPoolExecutor-2_0"
+    },
+    {
+      "method": "GET",
+      "url": "https://api.github.com/search/repositories",
+      "status": 200,
+      "start_s": 3.91,
+      "seconds": 0.65,
+      "thread": "ThreadPoolExecutor-3_0"
+    },
+    {
+      "method": "GET",
+      "url": "https://api.github.com/search/repositories",
+      "status": 200,
+      "start_s": 4.56,
+      "seconds": 0.57,
+      "thread": "ThreadPoolExecutor-3_0"
+    },
+    {
+      "method": "GET",
+      "url": "https://api.github.com/search/repositories",
+      "status": 200,
+      "start_s": 5.13,
+      "seconds": 0.58,
+      "thread": "ThreadPoolExecutor-3_0"
+    }
+  ],
+  "artifacts": {
+    "report_markdown": "report.md",
+    "state": "state.json",
+    "source_text_dir": "source_text",
+    "source_text_papers": [
+      "arxiv_2609.19644"
+    ],
+    "llm_cache_files": [
+      "cache/pmrl_b6f71be19ac72afc.json",
+      "cache/report_6283405a2919cc01.json"
+    ]
+  },
+  "summary_quality": {
+    "arxiv_2609.19644": "partial"
+  }
+}

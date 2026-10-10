@@ -8,12 +8,27 @@ from nodes import final_report
 from state import PaperItem, PMRLNotes, SummaryCards
 
 
+_OVERVIEW_OK = (
+    "## 1. Tóm tắt\n- Tổng quan.\n\n## 3. So sánh\nBảng so sánh.\n\n## 4. Kết luận\n- Kết luận.\n"
+)
+
+
 class FakeLLM:
     def __init__(self, calls: list | None = None):
         self.calls = calls if calls is not None else []
 
-    def invoke(self, prompt: str):
+    def invoke(self, prompt):
+        # Parallel mode sends [SystemMessage, HumanMessage]; flatten for matching.
+        prompt = prompt if isinstance(prompt, str) else "\n".join(str(m.content) for m in prompt)
         self.calls.append(prompt)
+        # Parallel mode sends a paper-block prompt and an overview prompt; the
+        # legacy single call keeps its one-line report.
+        if "ONE paper block" in prompt:
+            return SimpleNamespace(content="### Fake paper\n- **Vấn đề**: p\n")
+        if "cross-paper sections" in prompt:
+            return SimpleNamespace(content=_OVERVIEW_OK)
+        if "summary and conclusion of a research report" in prompt:
+            return SimpleNamespace(content="## 1. Tóm tắt\n- Tổng quan.\n\n## 4. Kết luận\n- Kết luận.\n")
         return SimpleNamespace(content="# Collision-safe report\n")
 
 
@@ -58,7 +73,8 @@ def test_final_report_uses_unique_readable_filename_and_trace(monkeypatch, tmp_p
     assert (reports_dir / second_name).is_file()
 
 
-def test_final_report_runs_summary_in_parallel_without_report_text(monkeypatch, tmp_path):
+def test_final_report_legacy_flag_runs_summary_in_parallel_without_report_text(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "REPORT_PARALLEL_SECTIONS", False)
     monkeypatch.setattr(config, "REPORTS_DIR", tmp_path / "reports")
     (tmp_path / "reports").mkdir()
     monkeypatch.setattr(config, "SUMMARY_CACHE_DIR", tmp_path / "summaries")

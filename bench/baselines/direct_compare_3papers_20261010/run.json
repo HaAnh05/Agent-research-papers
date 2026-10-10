@@ -1,0 +1,212 @@
+{
+ "description": "Baseline before parallelism work. Measured 2026-10-10 ~01:19-01:35 with fresh caches for these 3 papers. arXiv export API returned ReadTimeout/429 for metadata during this run.",
+ "intent": "direct_compare",
+ "query": "So sánh các phương pháp diffusion cho robot",
+ "raw_inputs": [
+  "https://arxiv.org/abs/2303.04137",
+  "https://arxiv.org/abs/2205.09991",
+  "https://arxiv.org/abs/2209.14988"
+ ],
+ "provider": "zai",
+ "model": "glm-5.3-flash",
+ "total_seconds": 951.0,
+ "status": "degraded",
+ "node_wall_seconds": {
+  "router": 0.0,
+  "read_paper": 49.2,
+  "web_enrich": 231.1,
+  "write_notes": 0.0,
+  "compare_benchmark": 327.3,
+  "final_report": 343.2
+ },
+ "node_timings": {
+  "router": {
+   "durationMs": 0,
+   "llmMs": 0
+  },
+  "read_paper": {
+   "durationMs": 49157,
+   "workerCount": 3,
+   "papers": {
+    "arxiv_2303.04137": {
+     "durationMs": 45844,
+     "pdf": {
+      "durationMs": 2852,
+      "downloadMs": 1165,
+      "extractMs": 1685,
+      "cache": "download"
+     },
+     "arxiv": {
+      "durationMs": 45837,
+      "cache": "miss",
+      "status": "error"
+     }
+    },
+    "arxiv_2205.09991": {
+     "durationMs": 42206,
+     "pdf": {
+      "durationMs": 2875,
+      "downloadMs": 2043,
+      "extractMs": 831,
+      "cache": "download"
+     },
+     "arxiv": {
+      "durationMs": 42201,
+      "cache": "miss",
+      "status": "error"
+     }
+    },
+    "arxiv_2209.14988": {
+     "durationMs": 49155,
+     "pdf": {
+      "durationMs": 2884,
+      "downloadMs": 2615,
+      "extractMs": 268,
+      "cache": "download"
+     },
+     "arxiv": {
+      "durationMs": 49148,
+      "cache": "miss",
+      "status": "error"
+     }
+    }
+   }
+  },
+  "web_enrich": {
+   "durationMs": 231103,
+   "workerCount": 2,
+   "papers": {
+    "arxiv_2303.04137": {
+     "github": {
+      "durationMs": 1520
+     },
+     "pmrl": {
+      "durationMs": 177222,
+      "llmMs": 177220
+     }
+    },
+    "arxiv_2205.09991": {
+     "github": {
+      "durationMs": 1171
+     },
+     "pmrl": {
+      "durationMs": 86976,
+      "llmMs": 86967
+     }
+    },
+    "arxiv_2209.14988": {
+     "github": {
+      "durationMs": 1146
+     },
+     "pmrl": {
+      "durationMs": 139890,
+      "llmMs": 139890
+     }
+    }
+   }
+  },
+  "write_notes": {
+   "durationMs": 0,
+   "reused": true
+  },
+  "compare_benchmark": {
+   "durationMs": 327250,
+   "llmMs": 327247,
+   "paperCount": 3,
+   "rowCount": 3
+  },
+  "final_report": {
+   "durationMs": 343204,
+   "llmMs": 343199,
+   "paperCount": 3,
+   "summaryMs": 343202,
+   "summaryPapers": {
+    "arxiv_2303.04137": {
+     "llmMs": 133125,
+     "reason": ""
+    },
+    "arxiv_2205.09991": {
+     "llmMs": 133233,
+     "reason": "number_not_in_source:key_results=10"
+    },
+    "arxiv_2209.14988": {
+     "llmMs": 55097,
+     "reason": "number_not_in_source:why_it_matters=1.5"
+    }
+   }
+  }
+ },
+ "llm_calls": [
+  {
+   "stage": "pmrl",
+   "paper": "arxiv_2303.04137",
+   "start_s": 49.8,
+   "seconds": 177.22,
+   "prompt_chars": 9085
+  },
+  {
+   "stage": "pmrl",
+   "paper": "arxiv_2205.09991",
+   "start_s": 52.5,
+   "seconds": 86.97,
+   "prompt_chars": 9616
+  },
+  {
+   "stage": "pmrl",
+   "paper": "arxiv_2209.14988",
+   "start_s": 140.6,
+   "seconds": 139.89,
+   "prompt_chars": 7816
+  },
+  {
+   "stage": "compare",
+   "start_s": 280.5,
+   "seconds": 327.25,
+   "prompt_chars": 14656
+  },
+  {
+   "stage": "summary_cards",
+   "start_s": 607.8,
+   "seconds": 133.12,
+   "prompt_chars": 15540
+  },
+  {
+   "stage": "summary_cards",
+   "start_s": 607.8,
+   "seconds": 133.23,
+   "prompt_chars": 15616
+  },
+  {
+   "stage": "final_synth",
+   "start_s": 607.8,
+   "seconds": 343.2,
+   "prompt_chars": 24435
+  },
+  {
+   "stage": "summary_cards",
+   "start_s": 740.9,
+   "seconds": 55.1,
+   "prompt_chars": 13584
+  }
+ ],
+ "artifacts": {
+  "report_markdown": "report.md",
+  "report_cache": "cache/report_3c814d1ff9bf7d50.json",
+  "pmrl_cache": [
+   "cache/pmrl_3a3159af7c1f48f3.json",
+   "cache/pmrl_8a77b0f65a9439a4.json",
+   "cache/pmrl_788338c670eeeae3.json"
+  ],
+  "pmrl_by_paper": {
+   "arxiv_2205.09991": "cache/pmrl_3a3159af7c1f48f3.json",
+   "arxiv_2303.04137": "cache/pmrl_8a77b0f65a9439a4.json",
+   "arxiv_2209.14988": "cache/pmrl_788338c670eeeae3.json"
+  },
+  "source_text_dir": "source_text"
+ },
+ "summary_quality": {
+  "arxiv_2303.04137": "complete",
+  "arxiv_2205.09991": "partial",
+  "arxiv_2209.14988": "partial"
+ }
+}

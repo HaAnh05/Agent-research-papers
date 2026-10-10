@@ -6,7 +6,7 @@ from typing import Any, Dict, Literal
 from pydantic import BaseModel, Field
 
 from config import config
-from prompts.router_prompt import ROUTER_SYSTEM_PROMPT
+from prompts.router_prompt import ROUTER_SYSTEM, ROUTER_USER
 from state import ResearchState, PaperItem
 from tools.cache_manager import canonicalize_paper_key
 from tools.arxiv_search import get_cached_arxiv_metadata
@@ -152,7 +152,7 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
     try:
         llm = get_llm()
         llm_started = time.perf_counter()
-        prompt_text = ROUTER_SYSTEM_PROMPT.format(
+        prompt_text = ROUTER_USER.format(
             user_query=user_query,
             raw_inputs=(f"{len(raw_inputs)} validated paper input(s)" if raw_inputs else "none"),
             conversation_context=conversation_context[:6000] or "(empty)",
@@ -162,6 +162,7 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
             RouterDecision,
             llm=llm,
             provider=config.DEFAULT_PROVIDER,
+            system=ROUTER_SYSTEM,
         )
         llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
         

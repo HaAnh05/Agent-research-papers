@@ -1,0 +1,127 @@
+{
+  "meta": {
+    "variants": [
+      "v0",
+      "new"
+    ],
+    "stages": [
+      "cards"
+    ],
+    "n": 3,
+    "concurrency": 8,
+    "dry_run": false,
+    "provider": "zai",
+    "model": "glm-5.3-flash",
+    "created": "2026-10-10T21:48:52",
+    "calls": 24,
+    "failed": 0
+  },
+  "unavailable": {},
+  "stages": {
+    "cards": {
+      "variants": {
+        "new": {
+          "n_calls": 12,
+          "n_failed": 0,
+          "metrics": {
+            "output_tokens": {
+              "n": 12,
+              "median": 15661.0,
+              "p90": 21719.5
+            },
+            "reasoning_tokens": {
+              "n": 12,
+              "median": 15102.0,
+              "p90": 21138.0
+            },
+            "seconds": {
+              "n": 12,
+              "median": 207.79,
+              "p90": 283.01
+            },
+            "input_tokens": {
+              "n": 12,
+              "median": 3538.0,
+              "p90": 4240.0
+            }
+          },
+          "output_tokens_rep_spread": 1.62,
+          "quality": {
+            "parse_rate": 1.0,
+            "complete_rate": 0.8333,
+            "cards_complete_mean": 4.8333,
+            "status_counts": {
+              "complete": 10,
+              "partial": 2
+            }
+          }
+        },
+        "v0": {
+          "n_calls": 12,
+          "n_failed": 0,
+          "metrics": {
+            "output_tokens": {
+              "n": 12,
+              "median": 6693.5,
+              "p90": 10966.7
+            },
+            "reasoning_tokens": {
+              "n": 12,
+              "median": 6079.5,
+              "p90": 10416.2
+            },
+            "seconds": {
+              "n": 12,
+              "median": 97.02,
+              "p90": 146.05
+            },
+            "input_tokens": {
+              "n": 12,
+              "median": 3590.0,
+              "p90": 4292.0
+            }
+          },
+          "output_tokens_rep_spread": 2.75,
+          "quality": {
+            "parse_rate": 1.0,
+            "complete_rate": 0.5833,
+            "cards_complete_mean": 4.5833,
+            "status_counts": {
+              "complete": 7,
+              "partial": 5
+            }
+          }
+        }
+      },
+      "delta_vs_v0": {
+        "new": {
+          "pct": {
+            "output_tokens": {
+              "median": 134.0,
+              "p90": 98.0
+            },
+            "reasoning_tokens": {
+              "median": 148.4,
+              "p90": 102.9
+            },
+            "seconds": {
+              "median": 114.2,
+              "p90": 93.8
+            },
+            "input_tokens": {
+              "median": -1.4,
+              "p90": -1.2
+            }
+          },
+          "quality_pct": {
+            "cards_complete_mean": 5.5
+          },
+          "quality_abs": {
+            "parse_rate": 0.0,
+            "complete_rate": 0.25
+          }
+        }
+      }
+    }
+  }
+}

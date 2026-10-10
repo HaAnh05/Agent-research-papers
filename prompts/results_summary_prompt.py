@@ -1,25 +1,14 @@
-"""Prompt for the post-report five-card Results summary."""
+"""Prompts for the five-card Results summary.
 
-RESULTS_SUMMARY_PROMPT = """You are preparing the default Results view for one research paper.
+The text is the v0 prompt, split into a system message (rules) and a user
+message (tagged data).  The always-empty "Final report excerpt" block is gone.
+Measured: rewritten card rules raised reasoning tokens, so the v0 wording stays.
+"""
 
-Paper metadata:
-- Title: {title}
-- ArXiv ID: {arxiv_id}
-- Authors: {authors}
-- Published: {published}
-- Output language: {language_mode}
+from prompts.common import DATA_TAG_RULE
 
-Detailed PMRL notes:
-{pmrl_notes}
-
-Final report excerpt:
-{final_report}
-
-Measured source quality (a warning, not permission to invent missing evidence):
-{source_quality}
-
-Source evidence (the only authority for factual claims and numbers):
-{source_text}
+RESULTS_SUMMARY_SYSTEM = f"""You are preparing the default Results view for one research paper.
+{DATA_TAG_RULE}
 
 Return five concise Markdown-safe prose fields. Treat the word ranges as
 concise writing targets; factual support matters more than filling a field.
@@ -39,5 +28,24 @@ support independently for each field. An incomplete parser status does not by
 itself forbid a card when the available evidence supports it. Use an empty
 field only for the specific card that lacks evidence; in particular, leave
 key_results empty when no result evidence was extracted. Do not fill a gap
-with a generic claim. Return only the structured object required by the schema.
-"""
+with a generic claim. Return only the structured object required by the schema."""
+
+RESULTS_SUMMARY_USER = """Paper metadata:
+- Title: {title}
+- ArXiv ID: {arxiv_id}
+- Authors: {authors}
+- Published: {published}
+- Output language: {language_mode}
+
+Detailed PMRL notes:
+<pmrl_notes>
+{pmrl_notes}
+</pmrl_notes>
+
+Measured source quality (a warning, not permission to invent missing evidence):
+{source_quality}
+
+Source evidence (the only authority for factual claims and numbers):
+<source_evidence>
+{source_text}
+</source_evidence>"""

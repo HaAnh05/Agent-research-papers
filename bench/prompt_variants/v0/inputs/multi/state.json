@@ -1,0 +1,310 @@
+{
+  "source_run": "20261010_180642_parallel_v2",
+  "user_query": "So sánh các phương pháp diffusion cho robot",
+  "intent": "direct_compare",
+  "selected_papers": [
+    {
+      "paper_id": "arxiv_2303.04137",
+      "title": "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion",
+      "summary": "This paper introduces Diffusion Policy, a new way of generating robot behavior by representing a robot's visuomotor policy as a conditional denoising diffusion process. We benchmark Diffusion Policy across 12 different tasks from 4 different robot manipulation benchmarks and find that it consistently outperforms existing state-of-the-art robot learning methods with an average improvement of 46.9%. Diffusion Policy learns the gradient of the action-distribution score function and iteratively optimizes with respect to this gradient field during inference via a series of stochastic Langevin dynamics steps. We find that the diffusion formulation yields powerful advantages when used for robot policies, including gracefully handling multimodal action distributions, being suitable for high-dimensional action spaces, and exhibiting impressive training stability. To fully unlock the potential of diffusion models for visuomotor policy learning on physical robots, this paper presents a set of key technical contributions including the incorporation of receding horizon control, visual conditioning, and the time-series diffusion transformer. We hope this work will help motivate a new generation of policy learning techniques that are able to leverage the powerful generative modeling capabilities of diffusion models. Code, data, and training details is publicly available diffusion-policy.cs.columbia.edu",
+      "authors": [
+        "Cheng Chi",
+        "Zhenjia Xu",
+        "Siyuan Feng",
+        "Eric Cousineau",
+        "Yilun Du",
+        "Benjamin Burchfiel",
+        "Russ Tedrake",
+        "Shuran Song"
+      ],
+      "published": "2023-03-07",
+      "subjects": [
+        "cs.RO"
+      ],
+      "source_type": "arxiv",
+      "arxiv_id": "2303.04137",
+      "arxiv_abs_url": "https://arxiv.org/abs/2303.04137v5",
+      "arxiv_html_url": "https://arxiv.org/html/2303.04137v5",
+      "pdf_url": "https://arxiv.org/pdf/2303.04137v5.pdf",
+      "local_pdf_path": null,
+      "metadata_status": "complete",
+      "github_repos": [
+        {
+          "name": "44David/diffusion-policy",
+          "url": "https://github.com/44David/diffusion-policy",
+          "stars": 0,
+          "framework": "Python",
+          "is_official": true,
+          "description": "Implementation of the diffusion policy. arXiv:2303.04137"
+        }
+      ],
+      "bibtex": "@article{chi2023diffusion,\n  title={Diffusion Policy: Visuomotor Policy Learning via Action Diffusion},\n  author={Cheng Chi and Zhenjia Xu and Siyuan Feng and Eric Cousineau and Yilun Du and Benjamin Burchfiel and Russ Tedrake and Shuran Song},\n  journal={arXiv preprint arXiv:2303.04137},\n  year={2023},\n  eprint={2303.04137},\n  archivePrefix={arXiv},\n  primaryClass={cs.AI}\n}",
+      "notes": {
+        "problem": "Imitation learning for robot manipulation demands policies that can represent multimodal action distributions: from a single observation, multiple demonstrator-consistent behaviors may be valid (e.g., pushing a T-block around either its left or right side). Existing behavior-cloning (BC) baselines handle this poorly. Explicit scalar-regression policies average over modes; explicit mixture models (LSTM-GMM/BC-RNN) and implicit energy-based policies (IBC) are biased toward a single mode; and the Behavior Transformer (BET) fails to commit to one mode within a rollout because independently sampled per-step actions lack temporal action consistency, causing jittery alternation between valid trajectories. Implicit policies, while more expressive, are additionally hard to train stably and struggle to sample high-dimensional action spaces with non-smooth energy landscapes.\n\nA second bottleneck is output dimensionality and control mode. Most prior BC methods avoid predicting long action sequences because sampling from high-dimensional multimodal outputs is difficult (GMM/k-means-style methods such as BC-RNN and BET must pre-specify the number of modes). Consequently they rely on single-step or short-horizon velocity control, which suffers from compounding errors. Position control, by contrast, suffers less from compounding error and is more suitable for action-sequence prediction, but its action multimodality is more pronounced — precisely the regime where prior policies fail — so position control's advantages have remained unexploited.",
+        "method": "Diffusion Policy represents a robot's visuomotor policy as a conditional denoising diffusion process (DDPM) over actions. Rather than directly regressing an action, the model learns the gradient of the action-distribution score function via a noise-prediction network εθ(o_t, x_t^k, k), trained with the standard denoising objective E[||ε − εθ(o_t, x_t^k, k)||]; at inference, an initial Gaussian noise sample is iteratively refined into an action through a series of stochastic Langevin dynamics denoising steps conditioned on the observation. This DDPM formulation gracefully handles multimodal action distributions, scales well to high-dimensional outputs without sacrificing expressiveness (as shown in image generation), and exhibits strong training stability.\n\nTo unlock diffusion for real-robot visuomotor control, the paper contributes: (1) receding horizon control — the policy predicts a high-dimensional sequence of future actions and executes only a subset before replanning with fresh observations, yielding temporal action consistency and robustness to idle/paused actions common in teleoperation (which trap single-step policies like BC-RNN and IBC); (2) visual conditioning — camera images and robot states are injected through observation encoders via FiLM conditioning into a 1D temporal-convolution backbone (DiffusionPolicy-C) or as cross-attended tokens in a time-series diffusion transformer (DiffusionPolicy-T), rather than naive concatenation, decoupling observation encoding from action denoising; and (3) the time-series diffusion transformer architecture. The policy operates in position-control mode, whose advantages diffusion's multimodal expressiveness can exploit without incurring its usual drawbacks.",
+        "result": "Benchmarked on 15 tasks spanning 4 robot manipulation benchmarks (including the 2D PushT simulation, RoboMimic simulated manipulation, and real-robot teleoperation tasks), Diffusion Policy consistently outperforms prior state-of-the-art imitation-learning methods with an average improvement of 46.9% over baselines such as BC-RNN (LSTM-GMM), IBC, and BET. On multimodal pushing, 40-step rollouts show Diffusion Policy learns both action modes and commits to exactly one mode per rollout, whereas LSTM-GMM and IBC are biased toward one mode and BET fails to commit due to lack of temporal action consistency. Ablations support the design hypotheses: switching from velocity to position control degrades BC-RNN and BET but improves Diffusion Policy (Fig. 4, Square/Kitchen/p4), showing it exploits position control's advantages while avoiding its drawbacks; and sweeping action horizons from 1 to 128 steps against 0–7 observation-latency steps (Fig. 5) demonstrates the benefits of sequence prediction — temporal consistency and robustness to idle actions — together with a measurable trade-off between horizon length and latency robustness, reported as relative success-rate change with respect to each task's maximum.",
+        "limitation": "Documented trade-offs center on iterative inference and horizon design. First, generating each action chunk requires multiple stochastic denoising (Langevin) steps with a pre-specified number of iterations and no explicit convergence criterion, making inference slower than single-shot regression policies — a practical concern for high-frequency physical-robot control. Second, the receding-horizon scheme introduces a trade-off between action-horizon length and robustness to observation latency: the Fig. 5 sweep (action horizons 1–128 steps, latency 0–7 steps) shows relative success-rate change degrading as latency grows, so the horizon must be tuned per task. Third, the advantage over velocity control is tied to diffusion's expressiveness for position-control multimodality, so gains may shrink for tasks or control regimes where multimodality is less pronounced. (The paper's dedicated Limitations/Future-Work section was not present in the extracted content; these points are grounded in the ablation evidence and design discussion above.)",
+        "summary_cards": {
+          "tldr": "Diffusion Policy biểu diễn chính sách trực giác–cảm vận của robot như một quá trình khuyếch tán khử nhiễu có điều kiện, kèm ba đóng góp kỹ thuật: receding horizon control, điều kiện hóa thị giác và time-series diffusion transformer. Trên 15 tác vụ thuộc 4 benchmark manipulation, phương pháp vượt các phương pháp imitation learning tiên tiến với mức cải thiện trung bình 46,9%.",
+          "problem": "Học bắt chước cho manipulation phải biểu diễn phân phối hành động đa mode: từ một quan sát, nhiều hành động hợp lệ cùng tồn tại. Hồi quy scalar trung bình hóa các mode; LSTM-GMM và IBC thiên lệch về một mode; BET thiếu nhất quán thời gian nên dao động giữa các quỹ đạo. Vì khó lấy mẫu đầu ra nhiều chiều, các phương pháp trước né dự đoán chuỗi hành động, bám vào velocity control chịu lỗi cộng dồn, bỏ ngỏ ưu thế của position control.",
+          "method": "Chính sách là DDPM có điều kiện trên quan sát: mạng dự đoán nhiễu εθ học gradient của hàm score phân phối hành động qua mục tiêu khử nhiễu chuẩn, còn suy luận tinh chỉnh mẫu nhiễu Gaussian qua các bước Langevin ngẫu nhiên. Mô hình dự đoán chuỗi hành động, chỉ thực thi một phần rồi lập kế hoạch lại; ảnh và trạng thái robot được nạp qua FiLM vào CNN 1D (DiffusionPolicy-C) hoặc cross-attention trong transformer (DiffusionPolicy-T), chạy ở chế độ position control.",
+          "key_results": "Trên 15 tác vụ thuộc 4 benchmark manipulation (PushT 2D, RoboMimic, teleoperation thật), Diffusion Policy cải thiện trung bình 46,9% so với BC-RNN, IBC và BET. Trong rollout 40 bước đẩy khối T đa mode, nó học cả hai mode và cam kết đúng một mode mỗi rollout, khác LSTM-GMM/IBC (thiên lệch một mode) và BET (không cam kết). Chuyển từ velocity sang position control làm giảm LSTM-GMM và BET nhưng cải thiện Diffusion Policy (Fig. 4), kèm đánh đổi giữa độ dài horizon và độ trễ quan sát (Fig. 5).",
+          "why_it_matters": "Nghiên cứu cho thấy generative modeling kiểu diffusion mở khóa position control và dự đoán chuỗi hành động trên robot thật: mang lại nhất quán thời gian, chịu được hành động idle khi teleoperation và huấn luyện ổn định trong không gian hành động nhiều chiều. Tuy nhiên, ưu thế gắn với tính đa mode của tác vụ, suy luận lặp nhiều bước khử nhiễu chậm hơn hồi quy một lần, và cặp horizon–latency phải tinh chỉnh theo từng tác vụ."
+        },
+        "summary_quality": "complete",
+        "summary_card_statuses": {
+          "tldr": "complete",
+          "problem": "complete",
+          "method": "complete",
+          "key_results": "complete",
+          "why_it_matters": "complete"
+        },
+        "summary_card_reasons": {},
+        "brief_summary": ""
+      },
+      "source_quality": {
+        "heading": "heading",
+        "parserStatus": "success",
+        "source": "pdf",
+        "sourceFormat": "pdf",
+        "coverage": "complete",
+        "coverageStatus": "complete",
+        "missingSections": [],
+        "codeStatus": "unknown",
+        "codeUrls": [],
+        "htmlFallback": "not_needed"
+      },
+      "notes_quality": "complete",
+      "processing_metadata": {
+        "pdf": {
+          "durationMs": 1,
+          "cacheMs": 1,
+          "cache": "hit"
+        },
+        "summary": {
+          "status": "complete",
+          "wordCount": 410,
+          "reason": "",
+          "cardReasons": {}
+        },
+        "pmrl": {
+          "durationMs": 187309,
+          "llmMs": 187307
+        },
+        "pmrl_precomputed": true,
+        "github": {
+          "durationMs": 1,
+          "cache": "hit",
+          "tiers": {}
+        },
+        "web_enrich": {
+          "githubError": false,
+          "pmrlStatus": "ok"
+        }
+      },
+      "extracted_text_chars": 15000,
+      "sections_chars": {
+        "abstract": 2000,
+        "methodology": 232,
+        "experiments": 4000,
+        "limitations": 0
+      }
+    },
+    {
+      "paper_id": "arxiv_2205.09991",
+      "title": "Planning with Diffusion for Flexible Behavior Synthesis",
+      "summary": "Model-based reinforcement learning methods often use learning only for the purpose of estimating an approximate dynamics model, offloading the rest of the decision-making work to classical trajectory optimizers. While conceptually simple, this combination has a number of empirical shortcomings, suggesting that learned models may not be well-suited to standard trajectory optimization. In this paper, we consider what it would look like to fold as much of the trajectory optimization pipeline as possible into the modeling problem, such that sampling from the model and planning with it become nearly identical. The core of our technical approach lies in a diffusion probabilistic model that plans by iteratively denoising trajectories. We show how classifier-guided sampling and image inpainting can be reinterpreted as coherent planning strategies, explore the unusual and useful properties of diffusion-based planning methods, and demonstrate the effectiveness of our framework in control settings that emphasize long-horizon decision-making and test-time flexibility.",
+      "authors": [
+        "Michael Janner",
+        "Yilun Du",
+        "Joshua B. Tenenbaum",
+        "Sergey Levine"
+      ],
+      "published": "2022-05-20",
+      "subjects": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "source_type": "arxiv",
+      "arxiv_id": "2205.09991",
+      "arxiv_abs_url": "https://arxiv.org/abs/2205.09991v2",
+      "arxiv_html_url": "https://arxiv.org/html/2205.09991v2",
+      "pdf_url": "https://arxiv.org/pdf/2205.09991v2.pdf",
+      "local_pdf_path": null,
+      "metadata_status": "complete",
+      "github_repos": [],
+      "bibtex": "@article{janner2022planning,\n  title={Planning with Diffusion for Flexible Behavior Synthesis},\n  author={Michael Janner and Yilun Du and Joshua B. Tenenbaum and Sergey Levine},\n  journal={arXiv preprint arXiv:2205.09991},\n  year={2022},\n  eprint={2205.09991},\n  archivePrefix={arXiv},\n  primaryClass={cs.AI}\n}",
+      "notes": {
+        "problem": "Standard model-based reinforcement learning factors decision-making into two stages: learning is used only to approximate an unknown dynamics model (a supervised learning problem), and the rest of the work is offloaded to a classical trajectory optimizer (e.g., iLQG/MPC-style routines as in Tassa et al. 2012, Posa et al. 2014, Kelly 2017). The paper argues this composition is empirically brittle: powerful trajectory optimizers aggressively exploit inaccuracies in the learned model, so the resulting plans often resemble adversarial examples rather than feasible, near-optimal trajectories (Talvitie 2014; Ke et al. 2018). The difficulty is not purely a modeling issue either - MPPI driven by ground-truth dynamics performs poorly on long-horizon sparse-reward control, and model-free offline RL algorithms struggle with credit assignment when reaching a goal requires hundreds of steps.\n\nA second bottleneck concerns flexibility. Offline model-free agents such as IQL perform well mainly in the single-goal setting they were trained for and degrade substantially when the goal location is randomized (multi-task), and prior methods like BCQ and CQL score near zero on conditional task variants such as stacking blocks in a specified order or matching novel rearrangements - i.e., they cannot adapt to new test-time goal configurations without retraining. The paper therefore asks what it would look like to fold as much of the trajectory-optimization pipeline as possible into the modeling problem itself, such that sampling from the model and planning with it become nearly identical.",
+        "method": "Diffuser is a diffusion probabilistic model defined directly over state-action trajectories. A forward diffusion process q(tau^i | tau^{i-1}) progressively corrupts a complete trajectory with noise, and a learned reverse denoising model p_theta(tau^{i-1} | tau^i) - implemented as a temporal U-Net that treats the (state, action) sequence like an image across time - is trained to undo one corruption step at a time. Planning then becomes ancestral sampling from the reverse process: starting from pure noise, the model iteratively refines it into a coherent trajectory. In this formulation, 'sampling from the model' and 'planning with the model' are nearly the same operation, eliminating the separation between model estimation and an external optimizer.\n\nTwo standard generative-modeling tools are reinterpreted as coherent planning strategies. First, classifier-guided sampling: gradients of a learned value/reward signal steer reverse-diffusion samples toward high-return regions, replacing the explicit cost minimization of a trajectory optimizer with reward-guided denoising. Second, inpainting: a subset of trajectory elements (e.g., the start state and goal state) is clamped to specified values at every denoising step while the model 'inpaints' the remaining states and actions, yielding test-time goal conditioning ('planning as inpainting'). Because conditioning happens at sampling time, a single trained model serves as a multi-task planner - changing the goal only requires changing the conditioning - and the same mechanism supports flexible test-time specifications such as desired block-stacking orders or rearrangements.",
+        "result": "On long-horizon multi-task planning in Maze2D (D4RL; reward of 1 only at the goal location, episodes spanning hundreds of steps), Diffuser plans by inpainting a fixed start and goal state and executes the sampled trajectory as an open-loop plan. It achieves scores above 100 in all three maze sizes (U-Maze, Medium, Large), outperforming a reference expert policy and the best model-free offline RL baselines (IQL being the strongest), while MPPI with ground-truth dynamics performs poorly - showing long-horizon planning is hard even without prediction error. In the multi-task variant (Multi2D) where the goal is randomized each episode, Diffuser performs as well as in the single-task setting with no retraining (only the conditioning goal changes), whereas the best model-free method, IQL with hindsight experience relabeling (Andrychowicz et al., 2017), suffers a substantial performance drop.\n\nFor test-time flexibility, all methods were trained on 10,000 demonstration trajectories generated by PDDLStream for block stacking (sparse reward of 1 upon successful stack placements). Diffuser obtains 58.7 +/- 2.5 on Unconditional Stacking, 45.6 +/- 3.1 on Conditional Stacking (specified block order), and 58.9 +/- 3.4 on Rearrangement (matching reference blocks in a novel arrangement), for an average of 54.4. In contrast, CQL achieves only 24.4 on Unconditional Stacking and 0.0 on both conditional tasks (average 8.1), and BCQ scores 0.0 on all tasks (average 0.0). Diffuser thus generalizes to goal configurations unseen during training where model-free baselines fail entirely. The paper also studies practical runtime considerations, identifying effective ways to speed up the diffusion sampling procedure while suffering minimal performance degradation.",
+        "limitation": "The most explicit documented constraint is computational: iterative denoising makes planning expensive at decision time, and the authors devote analysis to 'practical runtime considerations of diffusion-based planning,' studying the most effective ways to speed up planning (e.g., reducing the number of denoising steps) while suffering minimal performance loss - indicating an inherent compute-versus-quality trade-off. In the Maze2D evaluation the sampled trajectory is used purely as an open-loop plan, so robustness to compounding errors under closed-loop, receding-horizon execution is not exercised in these results. Planning quality further depends on the learned guidance signal (value/reward model) that steers denoising, and flexible task specification relies on casting goals or constraints as trajectory elements that can be inpainted, which may not capture arbitrary constraint types. Finally, the heterogeneous-data recovery capability is demonstrated on the studied control suites, leaving broader domain generalization untested in the presented results.",
+        "summary_cards": {
+          "tldr": "Diffuser là mô hình khuếch tán xác suất trên quỹ đạo trạng thái–hành động, gộp tối ưu hóa quỹ đạo vào bài toán mô hình hóa: kế hoạch được tạo bằng khử nhiễu lặp với điều kiện đặt lúc kiểm thử. Trên Maze2D và xếp khối, Diffuser vượt chuyên gia tham chiếu và baseline offline RL, tổng quát hóa sang mục tiêu mới không cần huấn luyện lại.",
+          "problem": "RL dựa trên mô hình tách quyết định thành hai pha: học chỉ để xấp xỉ động lực học, phần còn lại giao cho bộ tối ưu hóa quỹ đạo cổ điển. Bộ tối ưu mạnh khai thác sai lệch mô hình, khiến kế hoạch giống adversarial examples; đồng thời các agent offline như IQL, BCQ, CQL suy giảm mạnh khi mục tiêu hoặc cấu hình tác vụ thay đổi lúc kiểm thử.",
+          "method": "Diffuser là mô hình khuếch tán xác suất trên quỹ đạo (trạng thái, hành động): mạng U-Net theo thời gian học khử nhiễu từng bước ngược quá trình khuếch tán thuận, lập kế hoạch gần trùng với lấy mẫu từ nhiễu thuần. Classifier guidance dẫn mẫu về vùng trả thưởng cao bằng gradient tín hiệu giá trị; inpainting kẹp trạng thái bắt đầu và mục tiêu ở mỗi bước khử nhiễu, cho phép điều kiện hóa lúc kiểm thử.",
+          "key_results": "",
+          "why_it_matters": "Gộp lấy mẫu mô hình và lập kế hoạch cho phép một mô hình duy nhất làm bộ lập kế hoạch đa nhiệm: đổi mục tiêu chỉ cần thay điều kiện hóa lúc kiểm thử, không cần huấn luyện lại. Điều này chỉ ra khuếch tán có thể là nền tảng linh hoạt cho ra quyết định, dù chi phí khử nhiễu lặp tạo đánh đổi tính toán–chất lượng mà bài báo phân tích qua các cách tăng tốc."
+        },
+        "summary_quality": "partial",
+        "summary_card_statuses": {
+          "tldr": "complete",
+          "problem": "complete",
+          "method": "complete",
+          "key_results": "unsupported",
+          "why_it_matters": "complete"
+        },
+        "summary_card_reasons": {
+          "key_results": "number_not_in_source:10"
+        },
+        "brief_summary": ""
+      },
+      "source_quality": {
+        "heading": "heading",
+        "parserStatus": "success",
+        "source": "pdf",
+        "sourceFormat": "pdf",
+        "coverage": "complete",
+        "coverageStatus": "complete",
+        "missingSections": [],
+        "codeStatus": "unknown",
+        "codeUrls": [],
+        "htmlFallback": "not_needed"
+      },
+      "notes_quality": "complete",
+      "processing_metadata": {
+        "pdf": {
+          "durationMs": 1,
+          "cacheMs": 1,
+          "cache": "hit"
+        },
+        "summary": {
+          "status": "partial",
+          "wordCount": 299,
+          "reason": "number_not_in_source:key_results=10",
+          "cardReasons": {
+            "key_results": "number_not_in_source:10"
+          }
+        },
+        "pmrl": {
+          "durationMs": 136607,
+          "llmMs": 136604
+        },
+        "pmrl_precomputed": true,
+        "github": {
+          "durationMs": 3,
+          "cache": "hit",
+          "tiers": {}
+        },
+        "web_enrich": {
+          "githubError": false,
+          "pmrlStatus": "ok"
+        }
+      },
+      "extracted_text_chars": 15000,
+      "sections_chars": {
+        "abstract": 1109,
+        "methodology": 1654,
+        "experiments": 4000,
+        "limitations": 0
+      }
+    },
+    {
+      "paper_id": "arxiv_2209.14988",
+      "title": "DreamFusion: Text-to-3D using 2D Diffusion",
+      "summary": "Recent breakthroughs in text-to-image synthesis have been driven by diffusion models trained on billions of image-text pairs. Adapting this approach to 3D synthesis would require large-scale datasets of labeled 3D data and efficient architectures for denoising 3D data, neither of which currently exist. In this work, we circumvent these limitations by using a pretrained 2D text-to-image diffusion model to perform text-to-3D synthesis. We introduce a loss based on probability density distillation that enables the use of a 2D diffusion model as a prior for optimization of a parametric image generator. Using this loss in a DeepDream-like procedure, we optimize a randomly-initialized 3D model (a Neural Radiance Field, or NeRF) via gradient descent such that its 2D renderings from random angles achieve a low loss. The resulting 3D model of the given text can be viewed from any angle, relit by arbitrary illumination, or composited into any 3D environment. Our approach requires no 3D training data and no modifications to the image diffusion model, demonstrating the effectiveness of pretrained image diffusion models as priors.",
+      "authors": [
+        "Ben Poole",
+        "Ajay Jain",
+        "Jonathan T. Barron",
+        "Ben Mildenhall"
+      ],
+      "published": "2022-09-29",
+      "subjects": [
+        "cs.CV",
+        "cs.LG",
+        "stat.ML"
+      ],
+      "source_type": "arxiv",
+      "arxiv_id": "2209.14988",
+      "arxiv_abs_url": "https://arxiv.org/abs/2209.14988v1",
+      "arxiv_html_url": "https://arxiv.org/html/2209.14988v1",
+      "pdf_url": "https://arxiv.org/pdf/2209.14988v1.pdf",
+      "local_pdf_path": null,
+      "metadata_status": "complete",
+      "github_repos": [],
+      "bibtex": "@article{poole2022dreamfusion,\n  title={DreamFusion: Text-to-3D using 2D Diffusion},\n  author={Ben Poole and Ajay Jain and Jonathan T. Barron and Ben Mildenhall},\n  journal={arXiv preprint arXiv:2209.14988},\n  year={2022},\n  eprint={2209.14988},\n  archivePrefix={arXiv},\n  primaryClass={cs.AI}\n}",
+      "notes": {
+        "problem": "Text-to-3D synthesis is bottlenecked by data and architecture: the breakthroughs in text-to-image generation came from diffusion models trained on billions of image-text pairs, whereas an analogous 3D approach would require large-scale datasets of labeled 3D data and efficient architectures for denoising 3D data, neither of which exist. Prior zero-shot text-to-3D baselines (Dream Fields, CLIP-Mesh) therefore guide a 3D representation with a discriminative image-text model (CLIP) rather than a generative image prior; because CLIP is trained only for caption-image contrastive matching, it can be exploited with adversarial, physically implausible renderings, yielding assets with flat geometry, texture painted on top, and artifacts such as multi-headed objects.\n\nA second challenge is evaluation: standard 3D metrics like Chamfer Distance (against ground-truth geometry) and PSNR (against held-out photographs) cannot be applied to zero-shot generation from arbitrary text prompts because there is no \"true\" 3D scene corresponding to a prompt, and the authors observe that existing CLIP-based metrics often yield high values even when texture is painted on flat geometry, failing to capture geometric quality.",
+        "method": "DreamFusion performs text-to-3D synthesis by using a frozen, pretrained 2D text-to-image diffusion model as a prior for optimizing a parametric image generator, requiring no 3D training data and no modifications to the diffusion model. The core mechanism is a loss based on probability density distillation — Score Distillation Sampling (SDS): the diffusion model defines an implicit distribution over images conditioned on the prompt, and its denoising score is evaluated at noised renderings x_t = α_t·x + σ_t·ε; the resulting gradient, approximately ∇_θ L_SDS(θ) ≈ E_{t,ε}[ w(t)·( ε̂_φ(x_t; t, y) − ε )·∂x/∂θ ], is backpropagated through a differentiable volume renderer into the parameters of a randomly initialized Neural Radiance Field (NeRF). Optimization follows a DeepDream-like procedure: the NeRF is optimized via gradient descent so that its 2D renderings from random camera angles achieve a low distillation loss, producing a 3D model that can be viewed from any angle, relit by arbitrary illumination, or composited into any 3D environment.\n\nAccurate geometry further requires a set of optimization refinements identified in the paper: (i) ViewAug — augmenting over a large range of viewpoints; (ii) ViewDep — conditioning on view-dependent text prompts (e.g., \"viewed from the front/back/side\"); (iii) Lighting — optimizing illuminated renders produced with a point light and Lambertian shading in addition to unlit albedo color renders; and (iv) Textureless — optimizing textureless shaded geometry (normal-map) images in addition to textured renders.",
+        "result": "Quantitative evaluation uses CLIP R-Precision (following Dream Fields, Jain et al. 2022) on the 153 prompts of the object-centric COCO validation subset of Dream Fields — the accuracy with which CLIP retrieves the correct caption among a set of distractors given a rendering of the scene. Baselines are Dream Fields, CLIP-Mesh (which optimizes a mesh with CLIP), an enhanced reimplementation of Dream Fields using DreamFusion's 3D representation, and an oracle that evaluates the original captioned MS-COCO image pairs. Despite Dream Fields and CLIP-Mesh having the unfair advantage of using CLIP during training, DreamFusion outperforms both baselines on color images and approaches the performance of ground truth images. On textureless renders that probe geometry, the reimplemented Dream Fields performs nearly at chance while DreamFusion's geometry is consistent with the caption 58.5% of the time.\n\nAblations progressively adding view augmentation (ViewAug), view-dependent prompts (ViewDep), lighting (Lighting), and textureless shaded renders (Textureless) show geometry improving with each optimization choice and a +12.5% improvement in full renderings; notably, the base albedo-only model achieves the highest R-Precision on albedo renders yet exhibits poor geometry (a dog with multiple heads), demonstrating that textured albedo metrics are deceiving. Qualitatively, DreamFusion generates coherent, compositional 3D scenes (e.g., \"a hamburger\", \"a vase with pink flowers\", \"a matte painting of a castle made of cheesecake surrounded by a moat made of ice cream\") that surpass Dream Fields and CLIP-Mesh, with a large gallery of 3D assets, extended videos, and meshes released at dreamfusion3d.github.io.",
+        "limitation": "Documented limitations are primarily evaluative and computational. Because zero-shot text-to-3D has no ground-truth scene, reference-based metrics (Chamfer Distance, PSNR) are inapplicable, and the paper shows that even CLIP R-Precision is unreliable: it often yields high values when texture is painted on flat geometry, and albedo renders can be deceiving (the base model scored highest on albedo R-Precision despite exhibiting a multi-headed dog), so geometric quality must be probed separately with textureless renders. The method optimizes a full NeRF per prompt via gradient descent rather than amortized feed-forward generation, making synthesis computationally expensive (on the order of hours of accelerator time per asset), and accurate geometry depends on stacking several heuristics (view augmentation, view-dependent prompts, illumination, and textureless shaded renders) whose omission produces artifacts such as duplicated object parts. The probability density distillation objective is mode-seeking — the generator need only match high-likelihood modes of the 2D diffusion prior rather than its full diversity — so quality and diversity are bounded by the frozen 2D prior, pointing toward future work on faster/amortized generation and geometry-aware evaluation metrics.",
+        "summary_cards": {
+          "tldr": "DreamFusion tạo mô hình 3D từ văn bản bằng cách dùng một mô hình khuếch tán 2D huấn luyện sẵn làm prior, thông qua hàm mất mát chưng cất mật độ xác suất (Score Distillation Sampling) để tối ưu một NeRF bằng gradient descent. Phương pháp không cần dữ liệu huấn luyện 3D hay thay đổi mô hình khuếch tán, và vượt Dream Fields cùng CLIP-Mesh trên CLIP R-Precision, tiến gần chất lượng ảnh gốc MS-COCO.",
+          "problem": "Tổng hợp 3D từ văn bản bị chặn bởi dữ liệu: các đột phá tạo ảnh 2D đến từ mô hình khuếch tán huấn luyện trên hàng tỷ cặp ảnh-văn bản, còn hướng 3D tương tự đòi hỏi bộ dữ liệu 3D gán nhãn quy mô lớn và kiến trúc khử nhiễu cho dữ liệu 3D, vốn chưa tồn tại. Baseline zero-shot trước đó dựa vào CLIP phân biệt, dễ tạo hình học phẳng và artifact; đồng thời Chamfer Distance hay PSNR không áp dụng được vì không có scene 3D 'đúng' cho prompt.",
+          "method": "DreamFusion đóng băng một mô hình khuếch tán 2D tạo ảnh từ văn bản làm prior và tối ưu một NeRF khởi tạo ngẫu nhiên: kết xuất được nhiễu hóa x_t = α_t·x + σ_t·ε được đưa qua bước khử nhiễu, sinh gradient SDS xấp xỉ w(t)(ε̂_φ − ε) truyền ngược qua bộ kết xuất thể tích vi phân. Tối ưu kiểu DeepDream từ các góc camera ngẫu nhiên; hình học chính xác cần bổ sung ViewAug, ViewDep, Lighting và Textureless.",
+          "key_results": "Trên 153 prompt từ tập COCO validation object-centric của Dream Fields, DreamFusion vượt Dream Fields và CLIP-Mesh về CLIP R-Precision trên ảnh màu dù hai baseline này dùng CLIP khi huấn luyện, và tiến gần oracle ảnh gốc MS-COCO. Trên kết xuất không texture để đo hình học, DreamFusion khớp caption 58,5% trong khi Dream Fields tái hiện gần bằng ngẫu nhiên. Ablation thêm dần từng lựa chọn tối ưu cải thiện kết xuất đầy đủ +12,5%.",
+          "why_it_matters": "Nghiên cứu chứng minh mô hình khuếch tán ảnh 2D đóng băng có thể làm prior hiệu quả cho 3D, mở đường tạo nội dung 3D không cần dữ liệu gán nhãn: mô hình thu được xem được từ mọi góc, chiếu sáng lại hoặc ghép vào môi trường 3D. Tuy nhiên, tối ưu từng NeRF theo prompt tốn nhiều giờ accelerator và mục tiêu chưng cất thiên về mode nên bị giới hạn bởi prior 2D, gợi ý hướng tới sinh amortized và chỉ số đánh giá hình học tốt hơn."
+        },
+        "summary_quality": "complete",
+        "summary_card_statuses": {
+          "tldr": "complete",
+          "problem": "complete",
+          "method": "complete",
+          "key_results": "complete",
+          "why_it_matters": "complete"
+        },
+        "summary_card_reasons": {},
+        "brief_summary": ""
+      },
+      "source_quality": {
+        "heading": "heading",
+        "parserStatus": "success",
+        "source": "pdf",
+        "sourceFormat": "pdf",
+        "coverage": "complete",
+        "coverageStatus": "complete",
+        "missingSections": [],
+        "codeStatus": "unknown",
+        "codeUrls": [],
+        "htmlFallback": "not_needed"
+      },
+      "notes_quality": "complete",
+      "processing_metadata": {
+        "pdf": {
+          "durationMs": 1,
+          "cacheMs": 1,
+          "cache": "hit"
+        },
+        "summary": {
+          "status": "complete",
+          "wordCount": 420,
+          "reason": "",
+          "cardReasons": {}
+        },
+        "pmrl": {
+          "durationMs": 145256,
+          "llmMs": 145252
+        },
+        "pmrl_precomputed": true,
+        "github": {
+          "durationMs": 9,
+          "cache": "hit",
+          "tiers": {}
+        },
+        "web_enrich": {
+          "githubError": false,
+          "pmrlStatus": "ok"
+        }
+      },
+      "extracted_text_chars": 15000,
+      "sections_chars": {
+        "abstract": 1251,
+        "methodology": 223,
+        "experiments": 3489,
+        "limitations": 0
+      }
+    }
+  ],
+  "benchmark_matrix": "| Metric | Dataset | Unit | Diffusion Policy: Visuomotor Policy Learning via Action Diffusion | Planning with Diffusion for Flexible Behavior Synthesis | DreamFusion: Text-to-3D using 2D Diffusion |\n|---|---|---|---|---|---|\n| relative success rate change (velocity to position control) | RoboMimic Square and Kitchen (Figure 4) | relative success rate change | Not directly comparable | Not directly comparable | Not directly comparable |\n| Note |  |  | Not directly comparable: fewer than two paper values; model did not mark this row comparable |  |  |\n| score | Maze2D | score (as reported; no explicit unit stated in excerpt) | Not directly comparable | Not directly comparable | Not directly comparable |\n| Note |  |  | Not directly comparable: fewer than two paper values; arxiv_2205.09991: source quote does not identify the dataset; model did not mark this row comparable |  |  |\n| CLIP R-Precision (textureless renders, geometry) | 153 prompts from the object-centric COCO validation subset of Dream Fields | % | Not directly comparable | Not directly comparable | Not directly comparable |\n| Note |  |  | Not directly comparable: fewer than two paper values; arxiv_2209.14988: source quote does not identify the dataset; model did not mark this row comparable |  |  |\n\n**Synthesis**\n- The three papers apply diffusion models at different levels of the stack: action generation (Diffusion Policy), trajectory-level planning (Diffuser), and 3D asset optimization via a frozen 2D prior (DreamFusion), so their benchmarks and headline metrics do not overlap.\n- Diffuser's open-loop inpainted plans still exceed a reference expert (score over 100) on long-horizon Maze2D, where the excerpt notes even the best model-free algorithms struggle with credit assignment over hundreds of steps.\n- Diffusion Policy's advantage is distributional rather than numeric in this excerpt: it expresses action multimodality and exploits position control where BC-RNN and BET degrade, but no success-rate numbers are quotable for quantitative comparison.\n- DreamFusion trades 3D supervision for a distilled 2D diffusion prior, beating CLIP-trained baselines on color renders and reaching 58.5% CLIP R-Precision on textureless geometry, where its CLIP-based Dream Fields reimplementation is near chance.\n- Cross-paper quantitative comparison is unsupported: datasets (manipulation benchmarks vs Maze2D vs COCO prompts), metrics (success rate vs score vs CLIP R-Precision), and evaluation protocols all differ across the three papers."
+}
