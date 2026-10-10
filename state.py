@@ -124,6 +124,36 @@ class GitHubRepoInfo(BaseModel):
     description: str = ""
 
 
+class PaperTable(BaseModel):
+    """One table parsed from a paper's LaTeXML HTML (header row first)."""
+
+    caption: str = ""
+    label: str = ""                        # e.g. "Table 2"
+    rows: List[List[str]] = Field(default_factory=list)
+    section: str = ""                      # heading the table appears under
+
+
+class PaperReference(BaseModel):
+    """One bibliography entry parsed from a paper's LaTeXML HTML."""
+
+    index: int = 0                         # 1-based position in the bibliography
+    text: str = ""
+    title: str = ""                        # best effort; may be empty
+    arxiv_id: Optional[str] = None         # no version suffix
+    doi: Optional[str] = None
+    urls: List[str] = Field(default_factory=list)
+
+
+class RepoLink(BaseModel):
+    """A code or project-page link found in a paper's HTML."""
+
+    url: str
+    kind: Literal["github", "project_page", "other"] = "other"
+    context: str = ""                      # at most 200 chars of surrounding text
+    in_bibliography: bool = False
+    is_primary_candidate: bool = False
+
+
 class PaperItem(BaseModel):
     """Data model representing an academic paper across the lifecycle."""
     paper_id: str                          # Canonical key (e.g. arxiv_2312.00752 or local_hash)
@@ -146,6 +176,11 @@ class PaperItem(BaseModel):
     # Text Extraction
     extracted_text: Optional[str] = None    # Raw full text excerpts
     sections: Dict[str, str] = Field(default_factory=dict) # {"abstract": "...", "methodology": "...", "experiments": "...", "limitations": "..."}
+    # Structured HTML extraction (empty for PDF-only papers and for cached
+    # extractions that predate these fields).
+    tables: List[PaperTable] = Field(default_factory=list)
+    references: List[PaperReference] = Field(default_factory=list)
+    repo_links: List[RepoLink] = Field(default_factory=list)
     
     # Enrichment
     github_repos: List[GitHubRepoInfo] = Field(default_factory=list)
