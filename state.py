@@ -75,45 +75,6 @@ class PMRLNotes(BaseModel):
     )
 
 
-class ComparisonMetric(BaseModel):
-    """One metric claim with explicit comparability evidence."""
-
-    metric: str = ""
-    dataset: str = ""
-    unit: str = ""
-    value: str = ""
-    source_quote: str = ""
-
-
-class ComparisonPaper(BaseModel):
-    """Short per-paper findings used by the comparison artifact."""
-
-    paper_id: str = ""
-    title: str = ""
-    findings: List[str] = Field(default_factory=list)
-    metrics: List[ComparisonMetric] = Field(default_factory=list)
-
-
-class ComparisonRow(BaseModel):
-    """A comparison row validated against each paper's source text."""
-
-    metric: str = ""
-    dataset: str = ""
-    unit: str = ""
-    values: Dict[str, str] = Field(default_factory=dict)
-    source_quotes: Dict[str, str] = Field(default_factory=dict)
-    comparable: bool = False
-    reason: str = ""
-
-
-class ComparisonArtifact(BaseModel):
-    """Structured comparison returned by the single benchmark LLM call."""
-
-    papers: List[ComparisonPaper] = Field(default_factory=list)
-    rows: List[ComparisonRow] = Field(default_factory=list)
-    synthesis: List[str] = Field(default_factory=list)
-
-
 class GitHubRepoInfo(BaseModel):
     """Metadata for an open-source repository matching a paper."""
     name: str
@@ -201,8 +162,6 @@ class ResearchState(TypedDict):
     selected_papers: List[PaperItem]
     
     # Output Synthesis
-    benchmark_matrix: Optional[str]          # Markdown benchmark comparison table
-    comparison_artifact: Optional[Dict[str, Any]]  # Structured comparison for Results UI
     final_report: Optional[str]              # Comprehensive research report (Markdown)
 
     # Append-only measured timings.  Each node writes its own key, preserving

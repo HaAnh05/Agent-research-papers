@@ -56,3 +56,6 @@ dist/
 .claude/distill/
 
 bench/runs/
+
+# arXiv dataset (HF secemp9/arxiv-complete) and derived indexes
+data/arxiv/

@@ -15,7 +15,7 @@ query / ArXiv / PDF
         │                         ▲                    │ │
         └─────────────────────────┴────────────────────┘ │
                                                          ▼
-PDF parsing → GitHub + BibTeX → PMRL notes → benchmark → final report
+PDF parsing → GitHub + BibTeX → PMRL notes → final report
 ```
 
 Graph chỉ chạy một workflow tại một thời điểm. Run đang chạy được giữ trong memory của FastAPI; Markdown report hoàn tất được lưu dưới `reports/`.

@@ -213,13 +213,13 @@ def check_report_structure(report: str, n_papers: int) -> Check:
     if not re.search(r"^#\s+\S", text, flags=re.MULTILINE):
         problems.append("no H1")
     numbers = [int(m.group(1)) for m in SECTION_HEADING_RE.finditer(text)]
-    if numbers != [1, 2, 3, 4, 5]:
-        problems.append(f"section headings {numbers} != [1,2,3,4,5]")
+    if numbers != [1, 2, 3, 4]:
+        problems.append(f"section headings {numbers} != [1,2,3,4]")
     section2 = split_sections(report).get(2, "")
     found = len(paper_blocks(section2))
     if found < n_papers:
         problems.append(f"### headings in section 2: {found} < {n_papers} papers")
-    return Check("report_structure", "HARD", "FAIL" if problems else "PASS", "; ".join(problems) or f"H1, ## 1-5, {found} paper headings")
+    return Check("report_structure", "HARD", "FAIL" if problems else "PASS", "; ".join(problems) or f"H1, ## 1-4, {found} paper headings")
 
 
 def check_arxiv_links(report: str, run: Run) -> Check:
@@ -393,13 +393,6 @@ def check_equations(report: str, n_papers: int, th: Thresholds, strict: bool = F
     return Check("display_equations", "QUALITY", _quality_status(ok, strict), f"per paper={counts} limit={limit}")
 
 
-def check_comparison_table(baseline: Run, candidate: Run, strict: bool = False) -> Check:
-    if not has_table(split_sections(baseline.report).get(3, "")):
-        return Check("comparison_table", "QUALITY", "PASS", "baseline has none; not required")
-    ok = has_table(split_sections(candidate.report).get(3, ""))
-    return Check("comparison_table", "QUALITY", _quality_status(ok, strict), "table in section 3" if ok else "no table in section 3")
-
-
 # --- LATENCY ---------------------------------------------------------------
 
 
@@ -446,7 +439,6 @@ def verify(baseline: Run, candidate: Run, th: Thresholds | None = None, *, stric
         check_report_length(baseline, candidate, th, strict),
         check_grounding(baseline, candidate, th, strict),
         check_equations(candidate.report, n, th, strict),
-        check_comparison_table(baseline, candidate, strict),
     ]
     return checks + latency_checks(baseline, candidate, th)
 

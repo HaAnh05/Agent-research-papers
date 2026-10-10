@@ -30,7 +30,7 @@ from tools.llm_provider import extract_text_from_response, get_llm, invoke_struc
 SUMMARY_PIPELINE_VERSION = "v4"
 # Bump when the parallel report prompts or assembly change, so cached parallel
 # reports from an older layout are not reused.  The legacy key is unaffected.
-PARALLEL_REPORT_VERSION = "p6"
+PARALLEL_REPORT_VERSION = "p7"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -357,7 +357,6 @@ def _report_cache_key(
     title: str,
     language_mode: str,
     breakdown: str,
-    benchmark_section: str,
     papers: List[PaperItem],
     *,
     parallel: bool = False,
@@ -381,7 +380,6 @@ def _report_cache_key(
             title,
             language_mode,
             breakdown,
-            benchmark_section,
             RESULTS_SUMMARY_SYSTEM,
             SUMMARY_PIPELINE_VERSION,
             summary_inputs,
@@ -465,16 +463,14 @@ _REPORT_HEADINGS: Dict[str, Dict[str, str]] = {
     "Vietnamese": {
         "summary": "1. Tóm tắt",
         "papers": "2. Phân tích bài báo",
-        "compare": "3. So sánh",
-        "conclusion": "4. Kết luận",
-        "references": "5. Tài liệu tham khảo",
+        "conclusion": "3. Kết luận",
+        "references": "4. Tài liệu tham khảo",
     },
     "English": {
         "summary": "1. Summary",
         "papers": "2. Paper Analysis",
-        "compare": "3. Comparison",
-        "conclusion": "4. Conclusion",
-        "references": "5. References",
+        "conclusion": "3. Conclusion",
+        "references": "4. References",
     },
 }
 _SECTION_LABELS: Dict[str, Dict[str, str]] = {
@@ -503,18 +499,14 @@ _FALLBACK_TEXT: Dict[str, Dict[str, str]] = {
     "Vietnamese": {
         "no_repo": "Không tìm thấy repository được xác minh trong lần chạy này; đừng kết luận bài báo không có code.",
         "extraction": "Trích xuất nguồn chưa đầy đủ; nội dung thiếu được coi là chưa xác minh.",
-        "no_compare": "Chưa có bảng so sánh tự động; xem phân tích từng bài ở mục 2.",
         "conclusion": "Xem phân tích từng bài ở mục 2. Các số liệu từ bộ dữ liệu và đơn vị khác nhau không so sánh trực tiếp được.",
         "no_summary": "Chưa có tóm tắt chi tiết.",
-        "single_compare": "Báo cáo này chỉ phân tích một bài báo nên không có so sánh giữa các bài báo; các kết quả định lượng nằm ở mục 2.",
     },
     "English": {
         "no_repo": "No verified repository was found in this run; do not conclude that the paper has no code.",
         "extraction": "Source extraction is incomplete; missing content is unverified.",
-        "no_compare": "No automatic comparison table is available; see the per-paper analysis in section 2.",
         "conclusion": "See the per-paper analysis in section 2. Metrics on different datasets or units are not directly comparable.",
         "no_summary": "No detailed summary is available.",
-        "single_compare": "This report analyzes a single paper, so there is no comparison between papers; the quantitative results are in section 2.",
     },
 }
 
@@ -721,12 +713,11 @@ def build_overview_messages(
     user_query: str,
     title: str,
     language_mode: str,
-    benchmark_section: str,
 ) -> tuple[str, str]:
     """Return the pure ``(system, user)`` pair for the overview call.
 
-    One paper uses the summary + conclusion variant; several papers use the
-    summary + comparison + conclusion variant with the benchmark matrix.
+    Both variants write the summary + conclusion sections; the single-paper
+    variant keeps them shorter.
     """
 
     headings = _report_headings(language_mode)
@@ -739,20 +730,17 @@ def build_overview_messages(
             heading_summary=headings["summary"],
             heading_conclusion=headings["conclusion"],
         )
-    matrix = f"\n<benchmark_matrix>\n{benchmark_section}\n</benchmark_matrix>\n" if benchmark_section else ""
     return REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER.format(
         user_query=user_query,
         report_title=title,
         language_mode=language_mode,
         papers_context=_papers_context(papers),
-        optional_benchmark_matrix_section=matrix,
         heading_summary=headings["summary"],
-        heading_compare=headings["compare"],
         heading_conclusion=headings["conclusion"],
     )
 
 
-_OVERVIEW_KEYS = {"1": "summary", "3": "compare", "4": "conclusion"}
+_OVERVIEW_KEYS = {"1": "summary", "3": "conclusion"}
 
 
 def _parse_overview(text: str) -> Dict[str, str]:
@@ -781,12 +769,11 @@ def _write_overview(
     title: str,
     language_mode: str,
     papers: List[PaperItem],
-    benchmark_section: str,
 ) -> tuple[Dict[str, str], Dict[str, int]]:
-    """One LLM call writing the summary, comparison and conclusion sections."""
+    """One LLM call writing the summary and conclusion sections."""
 
     started = time.perf_counter()
-    system_text, user_text = build_overview_messages(papers, user_query, title, language_mode, benchmark_section)
+    system_text, user_text = build_overview_messages(papers, user_query, title, language_mode)
     llm_started = time.perf_counter()
     response = invoke_text(llm, system_text, user_text)
     llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
@@ -796,20 +783,10 @@ def _write_overview(
     return _parse_overview(raw), {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}
 
 
-def _single_paper_compare_text(language_mode: str, benchmark_matrix: Any) -> str:
-    """Fixed section 3 text for a one-paper report (no LLM output)."""
-
-    text = _FALLBACK_TEXT.get(language_mode, _FALLBACK_TEXT["English"])["single_compare"]
-    if benchmark_matrix and str(benchmark_matrix).strip():
-        text += f"\n\n{str(benchmark_matrix).strip()}"
-    return text
-
-
 def _fallback_overview_part(
     key: str,
     papers: List[PaperItem],
     language_mode: str,
-    benchmark_matrix: Any,
 ) -> str:
     texts = _FALLBACK_TEXT.get(language_mode, _FALLBACK_TEXT["English"])
     if key == "summary":
@@ -820,10 +797,6 @@ def _fallback_overview_part(
             detail = _clip(first or (notes.result if notes else ""), 300) or texts["no_summary"]
             lines.append(f"- **{paper.title}** ({paper.arxiv_id or 'N/A'}): {detail}")
         return "\n".join(lines) or texts["no_summary"]
-    if key == "compare":
-        if len(papers) == 1:
-            return _single_paper_compare_text(language_mode, benchmark_matrix)
-        return str(benchmark_matrix).strip() if benchmark_matrix else texts["no_compare"]
     return texts["conclusion"]
 
 
@@ -861,20 +834,13 @@ def _assemble_parallel_report(
     papers: List[PaperItem],
     paper_blocks: List[str],
     overview: Dict[str, str],
-    benchmark_matrix: Any,
 ) -> str:
     headings = _report_headings(language_mode)
     parts = [
         f"# {title}",
-        f"## {headings['summary']}\n\n{overview.get('summary') or _fallback_overview_part('summary', papers, language_mode, benchmark_matrix)}",
+        f"## {headings['summary']}\n\n{overview.get('summary') or _fallback_overview_part('summary', papers, language_mode)}",
         f"## {headings['papers']}\n\n" + "\n\n".join(paper_blocks),
-        f"## {headings['compare']}\n\n"
-        + (
-            _single_paper_compare_text(language_mode, benchmark_matrix)
-            if len(papers) == 1
-            else overview.get("compare") or _fallback_overview_part("compare", papers, language_mode, benchmark_matrix)
-        ),
-        f"## {headings['conclusion']}\n\n{overview.get('conclusion') or _fallback_overview_part('conclusion', papers, language_mode, benchmark_matrix)}",
+        f"## {headings['conclusion']}\n\n{overview.get('conclusion') or _fallback_overview_part('conclusion', papers, language_mode)}",
         f"## {headings['references']}\n\n{_references_section(papers, language_mode)}",
     ]
     return _sanitize_report_text("\n\n".join(parts), title)
@@ -888,8 +854,6 @@ def _run_parallel_report(
     user_query: str,
     title: str,
     language_mode: str,
-    benchmark_matrix: Any,
-    benchmark_section: str,
     logs: List[str],
 ) -> Dict[str, Any]:
     """Run every section, overview and summary-card call in ONE pool.
@@ -906,7 +870,7 @@ def _run_parallel_report(
             for index, paper in enumerate(papers, 1)
         ]
         overview_future = executor.submit(
-            _write_overview, llm_synth, user_query, title, language_mode, papers, benchmark_section
+            _write_overview, llm_synth, user_query, title, language_mode, papers
         )
         summary_futures = [
             executor.submit(_summarize_one, paper, "", language_mode, llm_summary) for paper in papers
@@ -934,8 +898,7 @@ def _run_parallel_report(
             degraded = True
             logs.append(f"[final_report] Overview degraded ({type(exc).__name__})")
         else:
-            required = ("summary", "conclusion") if len(papers) == 1 else ("summary", "compare", "conclusion")
-            missing = [key for key in required if not overview.get(key)]
+            missing = [key for key in ("summary", "conclusion") if not overview.get(key)]
             if missing:
                 degraded = True
                 logs.append(f"[final_report] Overview degraded (missing sections: {', '.join(missing)})")
@@ -944,7 +907,7 @@ def _run_parallel_report(
 
     summarized_papers, summary_logs, summary_timings, summary_failed = _collect_summary_results(completed)
     report_text = _assemble_parallel_report(
-        title, language_mode, papers, paper_blocks, overview, benchmark_matrix
+        title, language_mode, papers, paper_blocks, overview
     )
     llm_ms = max(
         [timing.get("llmMs", 0) for timing in section_timings.values()] + [overview_timing.get("llmMs", 0)]
@@ -970,7 +933,6 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
     started = time.perf_counter()
     user_query = state.get("user_query") or "Research Analysis"
     papers = list(state.get("selected_papers", []) or [])
-    benchmark_matrix = state.get("benchmark_matrix")
     language_mode = detect_response_language(user_query)
     title = report_title(user_query, papers)
     logs = [f"[final_report] Tổng hợp báo cáo cho '{user_query}'"]
@@ -978,18 +940,12 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
     if incomplete_sources:
         logs.append(f"[final_report] Cảnh báo trích xuất chưa hoàn chỉnh cho {len(incomplete_sources)} bài")
 
-    benchmark_section = (
-        f"=== BENCHMARK COMPARISON MATRIX & TRADE-OFFS ===\n{benchmark_matrix}"
-        if benchmark_matrix
-        else ""
-    )
     breakdown = "\n\n".join(_paper_breakdown(paper, index) for index, paper in enumerate(papers, 1))
     prompt = FINAL_REPORT_PROMPT.format(
         user_query=user_query,
         report_title=title,
         language_mode=language_mode,
         detailed_papers_breakdown=breakdown,
-        optional_benchmark_matrix_section=benchmark_section,
     )
 
     def write_report_file(report_text: str) -> Path:
@@ -1013,7 +969,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
         # degenerate states keep unique per-run artifacts.
         if papers:
             _, cache_path = _report_cache_key(
-                user_query, title, language_mode, breakdown, benchmark_section, papers,
+                user_query, title, language_mode, breakdown, papers,
                 parallel=use_parallel,
             )
             assert cache_path is not None
@@ -1057,8 +1013,6 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                 user_query=user_query,
                 title=title,
                 language_mode=language_mode,
-                benchmark_matrix=benchmark_matrix,
-                benchmark_section=benchmark_section,
                 logs=logs,
             )
             report_text = outcome["report_text"]

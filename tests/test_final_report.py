@@ -9,7 +9,7 @@ from state import PaperItem, PMRLNotes, SummaryCards
 
 
 _OVERVIEW_OK = (
-    "## 1. Tóm tắt\n- Tổng quan.\n\n## 3. So sánh\nBảng so sánh.\n\n## 4. Kết luận\n- Kết luận.\n"
+    "## 1. Tóm tắt\n- Tổng quan.\n\n## 3. Kết luận\n- Kết luận.\n"
 )
 
 
@@ -25,10 +25,8 @@ class FakeLLM:
         # legacy single call keeps its one-line report.
         if "ONE paper block" in prompt:
             return SimpleNamespace(content="### Fake paper\n- **Vấn đề**: p\n")
-        if "cross-paper sections" in prompt:
-            return SimpleNamespace(content=_OVERVIEW_OK)
         if "summary and conclusion of a research report" in prompt:
-            return SimpleNamespace(content="## 1. Tóm tắt\n- Tổng quan.\n\n## 4. Kết luận\n- Kết luận.\n")
+            return SimpleNamespace(content=_OVERVIEW_OK)
         return SimpleNamespace(content="# Collision-safe report\n")
 
 
@@ -57,7 +55,6 @@ def test_final_report_uses_unique_readable_filename_and_trace(monkeypatch, tmp_p
     state = {
         "user_query": "collision test",
         "selected_papers": [],
-        "benchmark_matrix": None,
     }
 
     first = final_report.final_report_node(state)
@@ -96,7 +93,7 @@ def test_final_report_legacy_flag_runs_summary_in_parallel_without_report_text(m
 
     monkeypatch.setattr(final_report, "invoke_structured_output", fake_structured)
 
-    state = {"user_query": "parallel test", "selected_papers": [_cached_paper()], "benchmark_matrix": None}
+    state = {"user_query": "parallel test", "selected_papers": [_cached_paper()]}
     result = final_report.final_report_node(state)
 
     assert result["status"] == "success"
@@ -141,7 +138,6 @@ def test_final_report_generates_supported_cards_for_incomplete_source(monkeypatc
     result = final_report.final_report_node({
         "user_query": "incomplete source test",
         "selected_papers": [paper],
-        "benchmark_matrix": None,
     })
 
     assert len(calls) == 1
@@ -160,7 +156,6 @@ def test_final_report_generates_supported_cards_for_incomplete_source(monkeypatc
     cached = final_report.final_report_node({
         "user_query": "incomplete source test",
         "selected_papers": [paper],
-        "benchmark_matrix": None,
     })
     cached_paper = cached["selected_papers"][0]
     assert cached["node_timings"]["final_report"]["cache"] is True
@@ -191,7 +186,7 @@ def test_final_report_reuses_cache_on_identical_rerun(monkeypatch, tmp_path):
     def fake_structured(prompt: str, schema, **kwargs):
         raise AssertionError("summary LLM must not run on a full cache hit")
 
-    state = {"user_query": "cache test", "selected_papers": [_cached_paper()], "benchmark_matrix": None}
+    state = {"user_query": "cache test", "selected_papers": [_cached_paper()]}
     first = final_report.final_report_node(state)
     assert first["node_timings"]["final_report"].get("cache") is not True
     assert first["status"] == "success"
@@ -202,7 +197,7 @@ def test_final_report_reuses_cache_on_identical_rerun(monkeypatch, tmp_path):
     calls.clear()
     # Identical synthesis input (same notes content) must hit the cache even
     # though the summary LLM is now rigged to explode.
-    second_state = {"user_query": "cache test", "selected_papers": [_cached_paper()], "benchmark_matrix": None}
+    second_state = {"user_query": "cache test", "selected_papers": [_cached_paper()]}
     second = final_report.final_report_node(second_state)
 
     assert calls == []
@@ -215,11 +210,11 @@ def test_final_report_reuses_cache_on_identical_rerun(monkeypatch, tmp_path):
 def test_report_cache_key_versions_the_summary_pipeline(monkeypatch):
     paper = _cached_paper()
     first_key, _ = final_report._report_cache_key(
-        "cache version", "Report", "English", "breakdown", "", [paper]
+        "cache version", "Report", "English", "breakdown", [paper]
     )
     monkeypatch.setattr(final_report, "SUMMARY_PIPELINE_VERSION", "next-version")
     second_key, _ = final_report._report_cache_key(
-        "cache version", "Report", "English", "breakdown", "", [paper]
+        "cache version", "Report", "English", "breakdown", [paper]
     )
     assert first_key != second_key
 
