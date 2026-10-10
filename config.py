@@ -99,7 +99,7 @@ class AppConfig:
     # file means explicit ids only.  OpenAlex needs a free API key; without one
     # the node still builds outgoing edges and foundational papers.
     CITATION_INDEX_PATH: Path = Path(os.getenv("LOCAL_INDEX_PATH") or (DATA_DIR / "arxiv" / "index.sqlite"))
-    OPENALEX_API_KEY: str = os.getenv("OPENALEX_API_KEY", "")
+    OPENALEX_API_KEY: str = os.getenv("OPENALEX_API_KEY") or os.getenv("OPEN_ALEX_API_KEY", "")
     OPENALEX_MIN_INTERVAL_SEC: float = float(os.getenv("OPENALEX_MIN_INTERVAL_SEC", "0.2"))
     OPENALEX_CACHE_DIR: Path = CACHE_DIR / "openalex"
     CITATION_TOP_N: int = int(os.getenv("CITATION_TOP_N", "5"))
