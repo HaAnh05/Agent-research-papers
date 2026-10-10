@@ -96,6 +96,11 @@ class FakeOpenAlex:
     def work_by_arxiv(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
         return self.works.get(arxiv_id)
 
+    titles: Dict[str, Dict[str, Any]] = {}      # normalized-index-title lookups for work_by_title
+
+    def work_by_title(self, title: str, min_jaccard: float = 0.8) -> Optional[Dict[str, Any]]:
+        return self.titles.get(title)
+
     def citing_works(self, work_id: str, per_page: int = 50) -> List[Dict[str, Any]]:
         return self.citers.get(work_id.rsplit("/", 1)[-1], [])
 
@@ -155,24 +160,28 @@ def test_scoring_roles_on_toy_graph(tmp_path: Path) -> None:
     assert stats["by_method"]["explicit"] == 11
 
 
-def test_index_title_wins_and_mismatched_openalex_record_loses_count(tmp_path: Path) -> None:
+def test_mismatched_record_uses_title_search_else_keeps_node_without_count(tmp_path: Path) -> None:
     resolver = RefResolver(_make_index(tmp_path / "index.sqlite"))
-    papers = [_paper("2301.00001", ["1706.03762", "2001.00001"]), _paper("2301.00002", ["1706.03762", "2001.00001"])]
+    papers = [_paper("2301.00001", ["1706.03762", "2001.00001", "2005.00005"]),
+              _paper("2301.00002", ["1706.03762", "2001.00001", "2005.00005"])]
     works = {
         "2301.00001": _work("W1", "P1", 2023, 1), "2301.00002": _work("W2", "P2", 2023, 1),
-        "1706.03762": _work("W10", "Totally Unrelated Corrupt Record", 1999, 777),         # wrong record
+        "1706.03762": _work("W10", "Totally Unrelated Corrupt Record", 1999, 777),         # wrong, title search finds it
         "2001.00001": _work("W11", "A study of sparse graph methods", 2021, 42),           # right record
+        "2005.00005": _work("W12", "Another Corrupt Title Here", 1990, 999),               # wrong, no title match
     }
-    citers = {"W1": [_work("W90", "Another Corrupt Title Here", 1990, 999, "2005.00005")]}
-    graph = cg.build_citation_graph(papers, resolver, FakeOpenAlex(works, citers), top_n=5)
+    client = FakeOpenAlex(works, {})
+    client.titles = {"Attention Is All You Need": _work("W99", "Attention is all you need", 2017, 120000)}
+    graph = cg.build_citation_graph(papers, resolver, client, top_n=5)
     by_id = {n["id"]: n for n in graph["nodes"]}
-    wrong = by_id["1706.03762"]
-    assert (wrong["title"], wrong["year"], wrong["cited_by_count"]) == ("Attention Is All You Need", 2017, None)
+    fixed = by_id["1706.03762"]
+    assert (fixed["title"], fixed["year"], fixed["cited_by_count"]) == ("Attention Is All You Need", 2017, 120000)
     ok = by_id["2001.00001"]                      # index title/year kept; OpenAlex count used
     assert (ok["title"], ok["year"], ok["cited_by_count"]) == ("A Study of Sparse Graph Methods", 2020, 42)
-    citer = by_id["2005.00005"]                   # citer mapped to an indexed paper: same rule
-    assert (citer["title"], citer["cited_by_count"]) == ("Deep Learning", None)
-    assert graph["stats"]["openalex_mismatch"] == 2
+    unknown = by_id["2005.00005"]                 # kept, count unknown, ranked last
+    assert (unknown["title"], unknown["year"], unknown["cited_by_count"]) == ("Deep Learning", 2020, None)
+    assert [n["id"] for n in graph["nodes"] if n["role"] == "foundational"] == ["1706.03762", "2001.00001", "2005.00005"]
+    assert graph["stats"]["openalex_mismatch"] == 2 and graph["stats"]["openalex_title_fallback"] == 1
     resolver.close()
 
 

@@ -79,7 +79,8 @@ def _openalex_mismatch(meta: Optional[Dict[str, str]], openalex_title: Any) -> b
 
 
 def _sort_key(cand: Dict[str, Any]) -> Tuple[int, int, int, int]:
-    return (-cand["support"], -(cand.get("cited_by_count") or 0), -(cand.get("year") or 0), cand["order"])
+    count = cand.get("cited_by_count")          # unknown count ranks below any known count
+    return (-cand["support"], -(count if count is not None else -1), -(cand.get("year") or 0), cand["order"])
 
 
 def build_citation_graph(
@@ -139,9 +140,21 @@ def build_citation_graph(
 
     # --- OpenAlex ------------------------------------------------------------
     sel_work: Dict[str, Dict[str, Any]] = {}
+    sel_count_fix: Dict[str, Optional[int]] = {}
     citers: Dict[str, Dict[str, Any]] = {}   # W id -> candidate
     ok_calls = 0
     mismatched: set = set()                  # ids whose OpenAlex record is a different paper
+    fallback_used: set = set()               # mismatches repaired by a title search
+
+    def title_fallback(key: str, meta: Dict[str, str]) -> Optional[int]:
+        """Count from a title search with the index title (one request); ``None`` = no match."""
+
+        assert client is not None
+        found = client.work_by_title(meta["title"])
+        if not found:
+            return None
+        fallback_used.add(key)
+        return _int(found.get("cited_by_count"))
     if use_openalex:
         assert client is not None
         with ThreadPoolExecutor(max_workers=OPENALEX_WORKERS) as pool:
@@ -150,8 +163,10 @@ def build_citation_graph(
             for sid, work in zip(sel_list, works):
                 if work:
                     sel_work[sid] = work
-                    if _openalex_mismatch(_index_meta(resolver, sid), work.get("title")):
+                    meta = _index_meta(resolver, sid)
+                    if _openalex_mismatch(meta, work.get("title")):
                         mismatched.add(sid)
+                        sel_count_fix[sid] = title_fallback(sid, meta)       # type: ignore[arg-type]
             with_work = [sid for sid in sel_list if sid in sel_work]
             citing = list(pool.map(lambda sid: client.citing_works(sel_work[sid]["id"]), with_work))
             for sid, items in zip(with_work, citing):
@@ -202,7 +217,8 @@ def build_citation_graph(
                     cand["year"] = _int(work.get("publication_year")) or cand["year"]
                     cand["title"] = _clean_title(work.get("title")) or cand["title"]
                 elif _openalex_mismatch(meta, work.get("title")):
-                    mismatched.add(cand["id"])   # wrong record: no count; title/year come from the index below
+                    mismatched.add(cand["id"])   # wrong record: title search for the count; title/year from the index
+                    cand["cited_by_count"] = title_fallback(cand["id"], meta)
                 else:
                     cand["cited_by_count"] = _int(work.get("cited_by_count"))
         ok_calls = client.requests - client.errors + client.cache_hits
@@ -212,9 +228,8 @@ def build_citation_graph(
         foundational = sorted((c for c in cited.values() if c["support"] >= 2), key=_sort_key)[:top_n]
     else:
         pool_cands = list(cited.values())
-        counted = [c for c in pool_cands if c["cited_by_count"] is not None]
-        if counted:
-            foundational = sorted(counted, key=_sort_key)[:top_n]
+        if any(c["cited_by_count"] is not None for c in pool_cands):
+            foundational = sorted(pool_cands, key=_sort_key)[:top_n]
         else:
             foundational = sorted(pool_cands, key=lambda c: c["order"])[:top_n]
 
@@ -237,8 +252,8 @@ def build_citation_graph(
         arxiv = cand.get("arxiv_id")
         meta = _index_meta(resolver, arxiv)
         if meta:
-            if cand["id"] in mismatched:
-                cand["cited_by_count"] = None
+            if cand.get("wid") and cand["id"] in mismatched and cand["cited_by_count"] is None:   # citer: one title search
+                cand["cited_by_count"] = title_fallback(cand["id"], meta)
             cand["title"] = meta["title"]
             cand["year"] = _int(meta["year"]) or cand["year"]
         if arxiv and cand["year"] is None:
@@ -262,7 +277,8 @@ def build_citation_graph(
         add_node({
             "id": sid, "arxiv_id": sid if sid in sel_arxiv else None,
             "title": _clean_title(paper.title), "year": year,
-            "cited_by_count": None if sid in mismatched else _int(work.get("cited_by_count")), "selected": True,
+            "cited_by_count": sel_count_fix[sid] if sid in sel_count_fix else _int(work.get("cited_by_count")),
+            "selected": True,
             "role": "selected", "support": 0,
         })
     edges: List[Dict[str, str]] = []
@@ -303,6 +319,7 @@ def build_citation_graph(
             "by_method": by_method,
             "openalex": status,
             "openalex_mismatch": len(mismatched),
+            "openalex_title_fallback": len(fallback_used),
         },
     }
 
@@ -330,7 +347,7 @@ def citation_graph_node(state: ResearchState) -> Dict[str, Any]:
             "nodes": [], "edges": [],
             "stats": {"refs_total": 0, "refs_resolved": 0, "refs_ambiguous": 0,
                       "by_method": {m: 0 for m in METHODS}, "openalex": "error" if client.has_key else "no_key",
-                      "openalex_mismatch": 0},
+                      "openalex_mismatch": 0, "openalex_title_fallback": 0},
         }
     stats = graph["stats"]
     logs.append(
