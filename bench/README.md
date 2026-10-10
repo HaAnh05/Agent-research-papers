@@ -53,6 +53,42 @@ QUALITY (WARN by default, FAIL under `--strict`):
 | `report_length` | report characters within 0.6x-1.6x baseline |
 | `number_grounding` | share of report numbers found in the union of source texts (`,`/`.` decimals and `%` tolerated; arXiv ids, URLs, code, LaTeX and bare integers below 10 skipped) not below baseline minus 5 points |
 | `display_equations` | at most 3 `$$` blocks per paper section |
-| `comparison_table` | a table in section 3 when the baseline has one |
 
 LATENCY (exit code 1 only with `--strict-latency`): total seconds, per-node wall seconds, longest LLM call, speedup vs baseline, and PASS/FAIL against `--target-seconds`.
+
+## Search recall bench (`bench/recall/`)
+
+Measures how many of a survey's cited papers a search system finds from the survey's topic. Gold set = survey bibliographies. No LLM calls.
+
+Step 1. Build the gold set (needs `data/arxiv/metadata.parquet`; fetches ar5iv HTML once, then reads the cache):
+
+```bash
+.venv/bin/python -I bench/recall/build_goldset.py            # 200 cs.AI surveys, seed 42
+# offline, local HTML only (survey ids bypass selection):
+.venv/bin/python -I bench/recall/build_goldset.py --html-dir data/arxiv/html_probe \
+    --ids 2205.09991 2303.04137 --min-refs 1 --out-dir /tmp/recall_dry
+```
+
+Flags: `--category`, `--year-from/--year-to` (id prefix), `--title-regex`, `--sample N`, `--seed`, `--min-refs 15`, `--out-dir`, `--metadata`.
+Output in `data/arxiv/recall/` (git-ignored): `goldset.jsonl`, `goldset_stats.json`, `html/` (raw HTML cache). The committed `bench/recall/goldset_manifest.json` has survey ids, queries and gold id lists only.
+Resolution order per reference: explicit arXiv id, DOI `10.48550/arXiv.<id>`, DOI match in metadata, exact normalized title (4 or more words, unambiguous). Only references older than the survey count; the survey itself is dropped.
+
+Step 2. Run the systems:
+
+```bash
+.venv/bin/python -I bench/recall/run_recall.py --systems arxiv_api            # baseline
+.venv/bin/python -I bench/recall/run_recall.py --systems arxiv_api,local_fts  # after feat/local-index
+.venv/bin/python -I bench/recall/run_recall.py --systems fake --goldset /tmp/recall_dry/goldset.jsonl   # offline plumbing check
+```
+
+Each (system, query) result is cached in `data/arxiv/recall/results/`; a rerun costs nothing. Output: `bench/results/recall/<YYYY-MM-DD>/recall.{json,md}` with Recall@5/20/100, Precision@5, HitRate@5, MRR and latency p50/p90.
+
+Runtime estimates:
+
+| Step | Estimate |
+|---|---|
+| Gold-set build, 200 surveys | about 3 s per ar5iv page, so about 10 min, plus about 1 min for the metadata scans |
+| `arxiv_api`, 200 queries | at least 3.5 s per query, so about 12 min |
+| `local_fts`, 200 queries | seconds (local index) |
+
+`arxiv_search` returns at most 10 results, so `arxiv_api` Recall@20 and Recall@100 equal Recall@10. The table column `max results` shows this.

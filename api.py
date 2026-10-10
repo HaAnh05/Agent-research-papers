@@ -68,6 +68,8 @@ class TraceFacts(TypedDict, total=False):
     repositoryCount: int
     bibtexCount: int
     noteFallbackPaperIds: list[str]
+    # Deprecated: the comparison step was removed.  Kept for client
+    # compatibility; always ``False`` / ``[]`` on the final report event.
     comparisonAvailable: bool
     comparedPaperIds: list[str]
     reportAvailable: bool
@@ -164,42 +166,6 @@ class SourceQualityDTO(APIModel):
     warning: str | None = None
 
 
-class ComparisonMetricDTO(APIModel):
-    metric: str = ""
-    dataset: str = ""
-    unit: str = ""
-    value: str = ""
-    source_quote: str = Field(default="", alias="sourceQuote")
-
-
-class ComparisonPaperDTO(APIModel):
-    paper_id: str = Field(default="", alias="paperId")
-    title: str = ""
-    findings: list[str] = Field(default_factory=list)
-    metrics: list[ComparisonMetricDTO] = Field(default_factory=list)
-
-
-class ComparisonRowDTO(APIModel):
-    metric: str = ""
-    dataset: str = ""
-    unit: str = ""
-    values: dict[str, str] = Field(default_factory=dict)
-    source_quotes: dict[str, str] = Field(default_factory=dict, alias="sourceQuotes")
-    comparable: bool = False
-    reason: str = ""
-
-
-class ComparisonArtifactDTO(APIModel):
-    """Structured comparison generated alongside the legacy Markdown matrix."""
-
-    available: bool = False
-    papers: list[ComparisonPaperDTO] = Field(default_factory=list)
-    rows: list[ComparisonRowDTO] = Field(default_factory=list)
-    synthesis: list[str] = Field(default_factory=list)
-    markdown: str | None = None
-    warning: str | None = None
-
-
 class RepoDTO(APIModel):
     name: str
     url: str
@@ -242,12 +208,17 @@ class PaperDTO(APIModel):
 
 class RunResult(APIModel):
     papers: list[PaperDTO] = Field(default_factory=list)
-    benchmark: str | None = None
-    comparison_artifact: ComparisonArtifactDTO | None = Field(default=None, alias="comparisonArtifact")
+    # Deprecated: the benchmark/comparison feature was removed.  Both keys stay
+    # in the response (always ``null``) so existing clients keep working.
+    benchmark: None = None
+    comparison_artifact: None = Field(default=None, alias="comparisonArtifact")
     report: str | None = None
     report_id: str | None = Field(default=None, alias="reportId")
     bibtex: str | None = None
     answer: str | None = None
+    # Citation graph for a future UI: {"nodes": [...], "edges": [...], "stats": {...}}
+    # (same JSON as the ``citation_graph`` state channel); ``null`` when not built.
+    citation_graph: dict[str, Any] | None = Field(default=None, alias="citationGraph")
 
 
 class RunSnapshot(APIModel):
@@ -338,7 +309,7 @@ NODE_LABELS: dict[str, str] = {
     "read_paper": "PDF parsing",
     "web_enrich": "GitHub and BibTeX enrichment",
     "write_notes": "PMRL notes",
-    "compare_benchmark": "Benchmark comparison",
+    "citation_graph": "Citation graph",
     "final_report": "Final report",
     "error_handler": "Error handler",
 }
@@ -351,7 +322,7 @@ NODE_KINDS: dict[str, str] = {
     "read_paper": "artifact",
     "web_enrich": "artifact",
     "write_notes": "artifact",
-    "compare_benchmark": "artifact",
+    "citation_graph": "artifact",
     "final_report": "artifact",
     "error_handler": "error",
 }
@@ -1110,14 +1081,6 @@ _NOTE_FALLBACK_RE = re.compile(
     r"^\s*\[write_notes\]\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,255})\s*:\s*PMRL\s+fallback\b",
     re.IGNORECASE,
 )
-_BENCHMARK_ERROR_MARKERS = (
-    "không thể tạo ma trận so sánh tự động",
-    "unable to generate benchmark",
-    "could not generate benchmark",
-    "failed to generate benchmark",
-    "error generating benchmark",
-    "benchmark comparison unavailable",
-)
 _REPORT_ERROR_MARKERS = (
     "error generating final report",
     "research workflow execution notice",
@@ -1131,7 +1094,6 @@ _PUBLIC_FAILURE_MESSAGES = {
     "read_paper": "Could not read source PDFs. Check the source files or network, then start again.",
     "web_enrich": "Could not enrich sources. Related repositories or citations may be unavailable. Start again.",
     "write_notes": "Could not write structured notes. The language-model provider did not respond. Start again.",
-    "compare_benchmark": "Could not compare selected papers. The language-model provider did not respond. Start again.",
     "final_report": "Could not prepare the research report. The language-model provider did not respond. Start again.",
     "error_handler": "Research failed. Edit the request or start again.",
     "workflow": "Research failed. Edit the request or start again.",
@@ -1264,39 +1226,6 @@ def _state_timings(state: Mapping[str, Any] | None) -> dict[str, int]:
     return dict(list(result.items())[:128])
 
 
-def _paper_ids(papers: Any) -> list[str]:
-    """Project selected paper records to safe, stable public IDs."""
-
-    result: list[str] = []
-    seen: set[str] = set()
-    for paper in _sequence_items(papers):
-        raw = _model_dump(paper)
-        if not isinstance(raw, Mapping):
-            continue
-        paper_id = _public_identifier(raw.get("paper_id") or raw.get("paperId"))
-        if paper_id and paper_id not in seen:
-            result.append(paper_id)
-            seen.add(paper_id)
-        if len(result) >= 64:
-            break
-    return result
-
-
-def _valid_benchmark(value: Any) -> bool:
-    """Recognize a generated benchmark while rejecting node error placeholders."""
-
-    if not isinstance(value, str):
-        return False
-    text = value.strip()
-    if not text:
-        return False
-    # The compare node's failure output is a short Markdown emphasis string.
-    # Match only its leading semantic marker; a genuine matrix may mention an
-    # error or unavailable metric in a later cell.
-    lowered = text.lstrip(" \t\r\n*_`#(").casefold()
-    return not any(lowered.startswith(marker) for marker in _BENCHMARK_ERROR_MARKERS)
-
-
 def _valid_report(value: Any) -> bool:
     """Recognize a final Markdown report rather than an error notice."""
 
@@ -1307,132 +1236,6 @@ def _valid_report(value: Any) -> bool:
         return False
     lowered = text.lstrip(" \t\r\n*_`#(").casefold()
     return not any(lowered.startswith(marker) for marker in _REPORT_ERROR_MARKERS)
-
-
-def _comparison_text(value: Any, limit: int = 800) -> str:
-    return _safe_text(str(value), limit) if value is not None else ""
-
-
-def _comparison_metric(value: Any) -> ComparisonMetricDTO | None:
-    raw = _model_dump(value)
-    if not isinstance(raw, Mapping):
-        return None
-    try:
-        return ComparisonMetricDTO(
-            metric=_comparison_text(raw.get("metric") or raw.get("name"), 180),
-            dataset=_comparison_text(raw.get("dataset"), 180),
-            unit=_comparison_text(raw.get("unit"), 100),
-            value=_comparison_text(raw.get("value"), 300),
-            sourceQuote=_comparison_text(raw.get("source_quote") or raw.get("sourceQuote"), 1000),
-        )
-    except Exception:
-        return None
-
-
-def _comparison_paper(value: Any) -> ComparisonPaperDTO | None:
-    raw = _model_dump(value)
-    if not isinstance(raw, Mapping):
-        return None
-    paper_id = _public_identifier(raw.get("paper_id") or raw.get("paperId")) or ""
-    findings_value = raw.get("findings") or raw.get("differences") or []
-    if isinstance(findings_value, str):
-        findings_value = [findings_value]
-    findings = [_comparison_text(item, 700) for item in _sequence_items(findings_value) if _comparison_text(item, 700)]
-    metrics_value = raw.get("metrics") or []
-    metrics = [item for item in (_comparison_metric(metric) for metric in _sequence_items(metrics_value)) if item is not None]
-    try:
-        return ComparisonPaperDTO(
-            paperId=paper_id,
-            title=_comparison_text(raw.get("title") or raw.get("paper_title") or raw.get("paperTitle"), 260),
-            findings=findings[:8],
-            metrics=metrics[:16],
-        )
-    except Exception:
-        return None
-
-
-def _comparison_row(value: Any) -> ComparisonRowDTO | None:
-    raw = _model_dump(value)
-    if not isinstance(raw, Mapping):
-        return None
-    values_raw = _model_dump(raw.get("values") or {})
-    values: dict[str, str] = {}
-    if isinstance(values_raw, Mapping):
-        for key, item in list(values_raw.items())[:16]:
-            safe_key = _safe_text(key, 160)
-            safe_value = _comparison_text(item, 300)
-            if safe_key and safe_value:
-                values[safe_key] = safe_value
-    quotes_raw = _model_dump(raw.get("source_quotes") or raw.get("sourceQuotes") or {})
-    source_quotes: dict[str, str] = {}
-    if isinstance(quotes_raw, Mapping):
-        for key, item in list(quotes_raw.items())[:16]:
-            safe_key = _safe_text(key, 160)
-            safe_quote = _comparison_text(item, 1000)
-            if safe_key and safe_quote:
-                source_quotes[safe_key] = safe_quote
-    requested_comparable = raw.get("comparable") is True
-    metric = _comparison_text(raw.get("metric"), 180)
-    dataset = _comparison_text(raw.get("dataset"), 180)
-    unit = _comparison_text(raw.get("unit"), 100)
-    # The API repeats the model-side safety gate: a pair of values is only
-    # comparable when metric, dataset, unit, and source evidence are present.
-    comparable = requested_comparable and bool(metric and dataset and unit) and len(values) >= 2 and len(source_quotes) >= 2
-    reason = _comparison_text(raw.get("reason"), 500)
-    if not comparable:
-        reason = reason or "Not directly comparable"
-    try:
-        return ComparisonRowDTO(
-            metric=metric,
-            dataset=dataset,
-            unit=unit,
-            values=values,
-            sourceQuotes=source_quotes,
-            comparable=comparable,
-            reason=reason,
-        )
-    except Exception:
-        return None
-
-
-def _comparison_artifact(state: Mapping[str, Any]) -> ComparisonArtifactDTO | None:
-    raw_value = next(
-        (
-            state.get(key)
-            for key in ("comparison_artifact", "comparisonArtifact", "benchmark_comparison", "benchmarkComparison")
-            if state.get(key) is not None
-        ),
-        None,
-    )
-    raw = _model_dump(raw_value)
-    if not isinstance(raw, Mapping):
-        return None
-    papers_raw = raw.get("papers") or raw.get("paper_summaries") or []
-    rows_raw = raw.get("rows") or raw.get("metrics") or []
-    synthesis_raw = raw.get("synthesis") or raw.get("findings") or []
-    if isinstance(synthesis_raw, str):
-        synthesis_raw = [synthesis_raw]
-    papers = [item for item in (_comparison_paper(value) for value in _sequence_items(papers_raw)) if item is not None]
-    rows = [item for item in (_comparison_row(value) for value in _sequence_items(rows_raw)) if item is not None]
-    synthesis = [_comparison_text(item, 900) for item in _sequence_items(synthesis_raw) if _comparison_text(item, 900)]
-    markdown_value = raw.get("markdown") or raw.get("benchmark_matrix") or raw.get("benchmarkMatrix")
-    markdown = _safe_text(markdown_value, 20_000) if _valid_benchmark(markdown_value) else None
-    available_raw = raw.get("available")
-    available = bool(available_raw) if isinstance(available_raw, bool) else bool(papers or rows or synthesis)
-    warning = _comparison_text(raw.get("warning"), 500) or None
-    if not available and not (papers or rows or synthesis):
-        return ComparisonArtifactDTO(available=False, markdown=markdown, warning=warning)
-    try:
-        return ComparisonArtifactDTO(
-            available=available,
-            papers=papers[:16],
-            rows=rows[:32],
-            synthesis=synthesis[:16],
-            markdown=markdown,
-            warning=warning,
-        )
-    except Exception:
-        return None
 
 
 def _failed_pdf_count(update: Mapping[str, Any]) -> int:
@@ -1492,6 +1295,48 @@ def _report_id_from_state(state: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _public_citation_graph(value: Any) -> dict[str, Any] | None:
+    """Return a bounded, JSON-safe copy of the citation graph, or ``None``."""
+
+    if not isinstance(value, Mapping) or not isinstance(value.get("nodes"), list):
+        return None
+
+    def text(item: Any, limit: int) -> str | None:
+        return _safe_text(item, limit) if item not in (None, "") else None
+
+    def count(item: Any) -> int | None:
+        return item if isinstance(item, int) and not isinstance(item, bool) and item >= 0 else None
+
+    nodes = []
+    for node in value["nodes"][:100]:
+        if not isinstance(node, Mapping) or not node.get("id"):
+            continue
+        nodes.append({
+            "id": text(node.get("id"), 120),
+            "arxiv_id": text(node.get("arxiv_id"), 40),
+            "title": text(node.get("title"), 300) or "",
+            "year": count(node.get("year")),
+            "cited_by_count": count(node.get("cited_by_count")),
+            "selected": bool(node.get("selected")),
+            "role": text(node.get("role"), 20),
+            "support": count(node.get("support")) or 0,
+        })
+    edges = [
+        {"source": text(edge.get("source"), 120), "target": text(edge.get("target"), 120), "kind": "cites"}
+        for edge in (value.get("edges") or [])[:400]
+        if isinstance(edge, Mapping) and edge.get("source") and edge.get("target")
+    ]
+    raw_stats = value.get("stats") if isinstance(value.get("stats"), Mapping) else {}
+    by_method = raw_stats.get("by_method") if isinstance(raw_stats.get("by_method"), Mapping) else {}
+    stats = {
+        "refs_total": count(raw_stats.get("refs_total")) or 0,
+        "refs_resolved": count(raw_stats.get("refs_resolved")) or 0,
+        "by_method": {_safe_text(k, 30): count(v) or 0 for k, v in list(by_method.items())[:10]},
+        "openalex": raw_stats.get("openalex") if raw_stats.get("openalex") in {"ok", "no_key", "error"} else "error",
+    }
+    return {"nodes": nodes, "edges": edges, "stats": stats}
+
+
 def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> RunResult:
     papers: list[PaperDTO] = []
     for paper in state.get("selected_papers", []) or []:
@@ -1499,10 +1344,6 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
         if dto is not None:
             papers.append(dto)
     bibtex_entries = [paper.bibtex for paper in papers if paper.bibtex]
-    benchmark_value = state.get("benchmark_matrix")
-    comparison = _comparison_artifact(state)
-    if comparison is not None and comparison.markdown is None and _valid_benchmark(benchmark_value):
-        comparison = comparison.model_copy(update={"markdown": _safe_text(benchmark_value, 20_000)})
     report_value = state.get("final_report")
     report_valid = _valid_report(report_value) and str(state.get("status") or "").lower() not in {"error", "failed"}
     report_content = _sanitize_report_markdown(
@@ -1511,11 +1352,12 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
     ) if report_valid else None
     return RunResult(
         papers=papers,
-        benchmark=_safe_text(benchmark_value, 20000) if _valid_benchmark(benchmark_value) else None,
-        comparisonArtifact=comparison,
+        benchmark=None,  # deprecated
+        comparisonArtifact=None,  # deprecated
         report=report_content,
         reportId=_report_id_from_state(state) if report_valid else None,
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
+        citationGraph=_public_citation_graph(state.get("citation_graph")),
         answer=_safe_answer(answer or (report_content if report_valid else None), 100_000)
         or None,
     )
@@ -1568,8 +1410,6 @@ def _normalise_updates(payload: Any) -> list[tuple[str, dict[str, Any]]]:
         if inferred == "workflow":
             if "final_report" in state:
                 inferred = "final_report"
-            elif "comparison_artifact" in state or "comparisonArtifact" in state or "benchmark_matrix" in state:
-                inferred = "compare_benchmark"
     return [(inferred, state)]
 
 
@@ -1645,8 +1485,10 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
         return f"Enriched {len(state.get('selected_papers') or [])} paper(s)"
     if node == "write_notes":
         return f"Created PMRL notes for {len(state.get('selected_papers') or [])} paper(s)"
-    if node == "compare_benchmark":
-        return "Prepared benchmark comparison"
+    if node == "citation_graph":
+        graph = state.get("citation_graph")
+        nodes = graph.get("nodes") if isinstance(graph, Mapping) else None
+        return f"Built citation graph ({len(nodes) if isinstance(nodes, list) else 0} node(s))"
     if node == "final_report":
         reason = _summary_failure_reason(state)
         base = "Prepared final research report"
@@ -1692,11 +1534,14 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
         return {"paperCount": len(papers), "repositoryCount": repo_count}
     if node == "write_notes":
         return {"paperCount": len(state.get("selected_papers") or [])}
-    if node == "compare_benchmark":
-        artifact = _comparison_artifact(state)
+    if node == "citation_graph":
+        graph = state.get("citation_graph")
+        graph = graph if isinstance(graph, Mapping) else {}
+        stats = graph.get("stats") if isinstance(graph.get("stats"), Mapping) else {}
         return {
-            "available": _valid_benchmark(state.get("benchmark_matrix")) or bool(artifact and artifact.available),
-            "rowCount": len(artifact.rows) if artifact else 0,
+            "nodeCount": len(graph.get("nodes") or []),
+            "edgeCount": len(graph.get("edges") or []),
+            "openalex": _safe_text(stats.get("openalex"), 20),
         }
     if node == "final_report":
         status = str(state.get("status") or "").lower()
@@ -1790,37 +1635,13 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
         if fallback_ids:
             facts["noteFallbackPaperIds"] = fallback_ids
 
-    elif node == "compare_benchmark" and (
-        "benchmark_matrix" in update
-        or "comparison_artifact" in update
-        or "comparisonArtifact" in update
-    ):
-        status = str(update.get("status") or state.get("status") or "").lower()
-        benchmark_value = update.get("benchmark_matrix")
-        artifact_state = {
-            "comparison_artifact": update.get("comparison_artifact") or update.get("comparisonArtifact")
-        }
-        artifact = _comparison_artifact(artifact_state)
-        benchmark_available = (
-            (_valid_benchmark(benchmark_value) or bool(artifact and artifact.available))
-            and status not in {"error", "failed"}
-        )
-        facts["comparisonAvailable"] = benchmark_available
-        if benchmark_available:
-            compared_ids = _paper_ids(
-                update.get("selected_papers")
-                if "selected_papers" in update
-                else state.get("selected_papers")
-            )
-            if not compared_ids and artifact is not None:
-                compared_ids = [paper.paper_id for paper in artifact.papers if paper.paper_id]
-            if compared_ids:
-                facts["comparedPaperIds"] = compared_ids
-
     elif node == "final_report" and "final_report" in update:
         status = str(update.get("status") or state.get("status") or "").lower()
         report_available = _valid_report(update.get("final_report")) and status not in {"error", "failed"}
         facts["reportAvailable"] = report_available
+        # Deprecated constants kept for client compatibility.
+        facts["comparisonAvailable"] = False
+        facts["comparedPaperIds"] = []
         if report_available:
             # The report ID is sourced from the append-only save log and is
             # returned only after the file has been verified within REPORTS_DIR.
@@ -1866,7 +1687,7 @@ def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
             if count is not None:
                 clean[key] = count
 
-    for key in ("noteFallbackPaperIds", "comparedPaperIds"):
+    for key in ("noteFallbackPaperIds",):
         if key not in facts:
             continue
         identifiers: list[str] = []
@@ -1881,9 +1702,13 @@ def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
         if identifiers:
             clean[key] = identifiers
 
-    for key in ("comparisonAvailable", "reportAvailable"):
-        if isinstance(facts.get(key), bool):
-            clean[key] = facts[key]
+    if isinstance(facts.get("reportAvailable"), bool):
+        clean["reportAvailable"] = facts["reportAvailable"]
+    # Deprecated: the comparison step was removed; the values are constant.
+    if "comparisonAvailable" in facts:
+        clean["comparisonAvailable"] = False
+    if "comparedPaperIds" in facts:
+        clean["comparedPaperIds"] = []
 
     raw_reasons = facts.get("summaryCardReasons")
     if isinstance(raw_reasons, Mapping):
@@ -2104,7 +1929,7 @@ class RunRegistry:
             if thread is None:
                 return
             # Reuse the public result projection so an error-handler notice or
-            # benchmark/report placeholder cannot be published as a normal
+            # report placeholder cannot be published as a normal
             # assistant artifact in thread history.
             public_result = _result_from_state(record.state, answer=record.assistant_answer)
             answer = public_result.answer or ""
@@ -2172,7 +1997,7 @@ class RunRegistry:
             ][-8:]
             for run_index, record in enumerate(reversed(completed), 1):
                 papers = record.state.get("selected_papers") or []
-                if not papers and not record.state.get("benchmark_matrix"):
+                if not papers:
                     continue
                 reference = "Most recent completed research run" if run_index == 1 else "Prior completed research run"
                 lines.append(f"{reference} {record.run_id[:12]}:")
@@ -2201,10 +2026,6 @@ class RunRegistry:
                     bibtex = _context_text(raw.get("bibtex"), 1800)
                     if bibtex:
                         lines.append(f"   BibTeX: {bibtex}")
-                benchmark_value = record.state.get("benchmark_matrix")
-                benchmark = _context_text(benchmark_value, 3500) if _valid_benchmark(benchmark_value) else ""
-                if benchmark:
-                    lines.append(f"Benchmark: {benchmark}")
 
             return "\n".join(lines)[:12_000]
 
@@ -2392,9 +2213,8 @@ def _initial_state(
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
-        "comparison_artifact": None,
         "final_report": None,
+        "citation_graph": None,
         "node_timings": {},
         "trace_logs": [],
         "error_logs": [],

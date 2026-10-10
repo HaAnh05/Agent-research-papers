@@ -51,7 +51,7 @@ class ContextGraph:
             ),
         ]
         yield {"router": {"intent": "search"}}
-        yield {"write_notes": {"selected_papers": papers, "benchmark_matrix": "Benchmark A vs B", "status": "success"}}
+        yield {"write_notes": {"selected_papers": papers, "status": "success"}}
         yield {"final_report": {"selected_papers": papers, "final_report": "# Research answer\n\nDone.", "status": "success"}}
 
 

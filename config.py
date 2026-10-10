@@ -86,6 +86,34 @@ class AppConfig:
     PDF_MAX_PAGES: int = 8
     PDF_MAX_CHARS: int = 15000
 
+    # HTML-first paper reading (ar5iv -> arxiv.org/html -> PDF).
+    # arxiv.org/robots.txt sets ``Crawl-delay: 15``; it covers /html and /pdf,
+    # so both share one limiter.  ar5iv.labs.arxiv.org sets no crawl delay.
+    ARXIV_HOST_MIN_INTERVAL_SEC: float = float(os.getenv("ARXIV_HOST_MIN_INTERVAL_SEC", "15"))
+    AR5IV_MIN_INTERVAL_SEC: float = float(os.getenv("AR5IV_MIN_INTERVAL_SEC", "3"))
+    # Per-section character caps for sections taken from HTML (the PDF path
+    # keeps its own 4,000 / 2,000 caps).
+    HTML_EXPERIMENTS_MAX_CHARS: int = int(os.getenv("HTML_EXPERIMENTS_MAX_CHARS", "12000"))
+    HTML_METHODOLOGY_MAX_CHARS: int = int(os.getenv("HTML_METHODOLOGY_MAX_CHARS", "8000"))
+    HTML_SETUP_MAX_CHARS: int = int(os.getenv("HTML_SETUP_MAX_CHARS", "6000"))
+    HTML_ABSTRACT_MAX_CHARS: int = int(os.getenv("HTML_ABSTRACT_MAX_CHARS", "3000"))
+    HTML_LIMITATIONS_MAX_CHARS: int = int(os.getenv("HTML_LIMITATIONS_MAX_CHARS", "3000"))
+    # Upper bound for the paper text sent to the PMRL call (sections + setup +
+    # tables).  The HTML section caps above sum to 32,000 characters and the
+    # labelled tables come after the sections, so 40,000 keeps typical papers
+    # whole (~10k tokens) and trims only the trailing tables of very table-heavy ones.
+    PMRL_INPUT_MAX_CHARS: int = int(os.getenv("PMRL_INPUT_MAX_CHARS", "40000"))
+
+    # Citation graph (nodes/citation_graph.py).  The arXiv metadata index is
+    # opened read-only to resolve bibliography entries to arXiv ids; a missing
+    # file means explicit ids only.  OpenAlex needs a free API key; without one
+    # the node still builds outgoing edges and foundational papers.
+    CITATION_INDEX_PATH: Path = Path(os.getenv("LOCAL_INDEX_PATH") or (DATA_DIR / "arxiv" / "index.sqlite"))
+    OPENALEX_API_KEY: str = os.getenv("OPENALEX_API_KEY") or os.getenv("OPEN_ALEX_API_KEY", "")
+    OPENALEX_MIN_INTERVAL_SEC: float = float(os.getenv("OPENALEX_MIN_INTERVAL_SEC", "0.2"))
+    OPENALEX_CACHE_DIR: Path = CACHE_DIR / "openalex"
+    CITATION_TOP_N: int = int(os.getenv("CITATION_TOP_N", "5"))
+
 
     def __init__(self) -> None:
         # Create directories if they do not exist
@@ -93,6 +121,7 @@ class AppConfig:
         self.TEXT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.GITHUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.SUMMARY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        self.OPENALEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 

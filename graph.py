@@ -12,7 +12,7 @@ from nodes.refine_query import refine_query_node
 from nodes.read_paper import read_paper_node
 from nodes.web_enrich import web_enrich_node
 from nodes.write_notes import write_notes_node
-from nodes.compare_benchmark import compare_benchmark_node
+from nodes.citation_graph import citation_graph_node
 from nodes.final_report import final_report_node
 from nodes.error_handler import error_handler_node
 
@@ -50,14 +50,10 @@ def route_after_eval_search(state: ResearchState) -> str:
 
 
 def route_after_write_notes(state: ResearchState) -> str:
-    """CE3: nếu có nhiều bài thì so sánh, ngắn hơn thì báo cáo trực tiếp."""
+    """CE3: lỗi thì error_handler, ngược lại sang citation_graph rồi báo cáo cuối."""
     if state.get("status") == "error":
         return "error_handler"
-
-    selected_count = len(state.get("selected_papers", []))
-    if selected_count >= 2 or state.get("intent") == "direct_compare":
-        return "compare_benchmark"
-    return "final_report"
+    return "citation_graph"
 
 
 # --- GRAPH COMPILATION ---
@@ -74,7 +70,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     workflow.add_node("read_paper", read_paper_node)
     workflow.add_node("web_enrich", web_enrich_node)
     workflow.add_node("write_notes", write_notes_node)
-    workflow.add_node("compare_benchmark", compare_benchmark_node)
+    workflow.add_node("citation_graph", citation_graph_node)
     workflow.add_node("final_report", final_report_node)
     workflow.add_node("error_handler", error_handler_node)
 
@@ -112,18 +108,17 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     workflow.add_edge("read_paper", "web_enrich")
     workflow.add_edge("web_enrich", "write_notes")
 
-    # CE3: Multi-Paper Comparison vs Single Report
+    # CE3: citation graph (then final report) or error
     workflow.add_conditional_edges(
         "write_notes",
         route_after_write_notes,
         {
-            "compare_benchmark": "compare_benchmark",
-            "final_report": "final_report",
+            "citation_graph": "citation_graph",
             "error_handler": "error_handler",
         },
     )
 
-    workflow.add_edge("compare_benchmark", "final_report")
+    workflow.add_edge("citation_graph", "final_report")
     workflow.add_edge("final_report", END)
     workflow.add_edge("error_handler", END)
 

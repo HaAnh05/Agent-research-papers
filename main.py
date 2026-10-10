@@ -45,7 +45,6 @@ def main():
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
         "final_report": None,
         "conversation_context": "",
         "trace_logs": [],

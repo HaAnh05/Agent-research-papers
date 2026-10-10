@@ -5,14 +5,13 @@ import time
 import copy
 import threading
 import nodes.router as router_module
-import nodes.compare_benchmark as compare_module
 import nodes.web_enrich as web_enrich_module
 import nodes.write_notes as write_notes_module
 from nodes.router import router_node
 from nodes.eval_search import eval_search_node
 from nodes.error_handler import error_handler_node
 from config import config
-from state import ComparisonArtifact, ComparisonPaper, ComparisonRow, GitHubRepoInfo, PMRLNotes, PaperItem, ResearchState
+from state import GitHubRepoInfo, PMRLNotes, PaperItem, ResearchState
 from text_utils import detect_response_language
 
 
@@ -48,7 +47,6 @@ def test_router_node_single_link():
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
         "final_report": None,
         "trace_logs": [],
         "error_logs": [],
@@ -151,7 +149,6 @@ def test_router_node_multi_links():
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
         "final_report": None,
         "trace_logs": [],
         "error_logs": [],
@@ -181,7 +178,6 @@ def test_safe_router_compare_pattern_is_detected():
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
         "final_report": None,
         "trace_logs": [],
         "error_logs": [],
@@ -205,7 +201,6 @@ def test_safe_router_topic_query_keeps_generic_search():
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
         "final_report": None,
         "trace_logs": [],
         "error_logs": [],
@@ -229,7 +224,6 @@ def test_error_handler_node():
         "eval_passed": False,
         "eval_feedback": "",
         "selected_papers": [],
-        "benchmark_matrix": None,
         "final_report": None,
         "trace_logs": [],
         "error_logs": ["Network timeout occurred"],
@@ -315,65 +309,6 @@ def test_pmrl_cache_hit_skips_llm_call(monkeypatch, tmp_path):
     assert len(calls) == 1
     assert second_paper.notes is not None and second_paper.notes.problem == "cached problem"
     assert second_paper.notes_quality == "complete"
-
-
-def test_compare_artifact_rejects_unsupported_numeric_alignment(monkeypatch):
-    papers = [
-        PaperItem(
-            paper_id="p1",
-            title="Paper one",
-            notes=PMRLNotes(problem="p", method="m", result="On ImageNet, accuracy reached 88.5%.", limitation="l"),
-        ),
-        PaperItem(
-            paper_id="p2",
-            title="Paper two",
-            notes=PMRLNotes(problem="p", method="m", result="On ImageNet, accuracy reached 90.0%.", limitation="l"),
-        ),
-    ]
-    artifact = ComparisonArtifact(
-        papers=[ComparisonPaper(paper_id="p1", title="Paper one"), ComparisonPaper(paper_id="p2", title="Paper two")],
-        rows=[ComparisonRow(
-            metric="accuracy",
-            dataset="ImageNet",
-            unit="%",
-            values={"p1": "88.5%", "p2": "90.0%"},
-            source_quotes={"p1": "accuracy reached 88.5%", "p2": "accuracy reached 90.0%"},
-            comparable=True,
-            reason="",
-        )],
-        synthesis=["trade-off"],
-    )
-    monkeypatch.setattr(compare_module, "get_llm", lambda: object())
-    monkeypatch.setattr(compare_module, "invoke_structured_output", lambda *args, **kwargs: artifact)
-    result = compare_module.compare_benchmark_node({"selected_papers": papers})
-    row = result["comparison_artifact"]["rows"][0]
-    assert row["comparable"] is False
-    assert row["reason"].startswith("Not directly comparable")
-    assert "88.5%" not in result["benchmark_matrix"]
-
-
-def test_compare_artifact_keeps_same_metric_dataset_unit_with_pdf_quotes(monkeypatch):
-    papers = [
-        PaperItem(paper_id="p1", title="Paper one", sections={"experiments": "On ImageNet, accuracy reached 88.5%."}),
-        PaperItem(paper_id="p2", title="Paper two", sections={"experiments": "On ImageNet, accuracy reached 90.0%."}),
-    ]
-    artifact = ComparisonArtifact(
-        papers=[ComparisonPaper(paper_id="p1", title="Paper one"), ComparisonPaper(paper_id="p2", title="Paper two")],
-        rows=[ComparisonRow(
-            metric="accuracy",
-            dataset="ImageNet",
-            unit="%",
-            values={"p1": "88.5%", "p2": "90.0%"},
-            source_quotes={"p1": "On ImageNet, accuracy reached 88.5%.", "p2": "On ImageNet, accuracy reached 90.0%."},
-            comparable=True,
-        )],
-    )
-    monkeypatch.setattr(compare_module, "get_llm", lambda: object())
-    monkeypatch.setattr(compare_module, "invoke_structured_output", lambda *args, **kwargs: artifact)
-
-    result = compare_module.compare_benchmark_node({"selected_papers": papers})
-    assert result["comparison_artifact"]["rows"][0]["comparable"] is True
-    assert "88.5%" in result["benchmark_matrix"]
 
 
 def test_web_enrich_uses_separate_github_and_pmrl_pools_and_keeps_order(monkeypatch):

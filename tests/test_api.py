@@ -438,39 +438,20 @@ def test_paper_dto_preserves_valid_cards_from_partial_summary():
     assert cards["cardReasons"]["keyResults"] == "number_not_in_source:62.5%"
 
 
-def test_structured_comparison_artifact_is_safe_and_gates_metric_comparability():
+def test_deprecated_comparison_keys_are_always_null():
+    # Stale state from an older run must not leak into the deprecated keys.
     result = api._result_from_state(
         {
             "status": "success",
             "selected_papers": [],
             "benchmark_matrix": "| Paper | Result |",
-            "comparison_artifact": {
-                "papers": [
-                    {"paper_id": "p1", "title": "One", "findings": ["short finding"], "metrics": []},
-                    {"paper_id": "p2", "title": "Two", "findings": ["another finding"], "metrics": []},
-                ],
-                "rows": [
-                    {
-                        "metric": "ATE",
-                        "dataset": "Replica",
-                        "unit": "cm",
-                        "values": {"p1": "0.06", "p2": "0.12"},
-                        "source_quotes": {"p1": "reported 0.06", "p2": "reported 0.12"},
-                        "comparable": True,
-                    },
-                    {"metric": "PSNR", "values": {"p1": "42"}, "comparable": True},
-                ],
-                "synthesis": ["short synthesis"],
-            },
+            "comparison_artifact": {"papers": [{"paper_id": "p1"}], "rows": [{"metric": "ATE"}]},
         }
     )
     payload = result.model_dump(mode="json", by_alias=True)
-    artifact = payload["comparisonArtifact"]
-    assert artifact["available"] is True
-    assert artifact["rows"][0]["comparable"] is True
-    assert artifact["rows"][1]["comparable"] is False
-    assert artifact["rows"][1]["reason"] == "Not directly comparable"
-    assert payload["benchmark"] == "| Paper | Result |"
+    assert "benchmark" in payload and payload["benchmark"] is None
+    assert "comparisonArtifact" in payload and payload["comparisonArtifact"] is None
+    assert api.RunResult().model_dump(mode="json", by_alias=True)["comparisonArtifact"] is None
 
 
 def test_trace_duration_and_snapshot_timings_are_numeric():
@@ -626,20 +607,8 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
             ]
         },
     ) == {"noteFallbackPaperIds": ["arxiv_1706.03762"]}
-    assert api._step_facts(
-        "compare_benchmark",
-        {"selected_papers": [paper_one, paper_two]},
-        {"benchmark_matrix": "| Paper | Result |"},
-    ) == {
-        "comparisonAvailable": True,
-        "comparedPaperIds": ["arxiv_1706.03762", "arxiv_2005.14165"],
-    }
-    assert api._step_facts(
-        "compare_benchmark",
-        {"selected_papers": [paper_one, paper_two]},
-        {"benchmark_matrix": "*(Không thể tạo ma trận so sánh tự động: api_key=secret)*"},
-    ) == {"comparisonAvailable": False}
-    assert api._valid_benchmark("| Paper | Result |\n| A | error unavailable metric is documented |") is True
+    assert not hasattr(api, "_valid_benchmark")
+    assert "compare_benchmark" not in api.NODE_LABELS and "compare_benchmark" not in api.NODE_KINDS
     paper_with_reason = paper_one.model_copy(update={
         "notes": PMRLNotes(
             problem="p", method="m", result="r", limitation="l",
@@ -654,6 +623,9 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
         {"final_report": "# Run", "status": "success", "selected_papers": [paper_with_reason]},
     ) == {
         "reportAvailable": True,
+        # Deprecated constants kept for client compatibility.
+        "comparisonAvailable": False,
+        "comparedPaperIds": [],
         "reportId": "run.md",
         "summaryCardReasons": {
             "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
@@ -696,17 +668,16 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
     assert [event.facts for event in task_events] == [None, None]
 
 
-def test_result_dto_suppresses_failed_benchmark_and_report_placeholders():
+def test_result_dto_suppresses_failed_report_placeholders():
     state = {
         "status": "error",
         "selected_papers": [],
-        "benchmark_matrix": "*(Không thể tạo ma trận so sánh tự động: provider failed)*",
         "final_report": "# Error Generating Final Report\nprovider failed",
         "trace_logs": ["[final_report] saved: unsafe.md"],
         "error_logs": [],
     }
     result = api._result_from_state(state)
-    assert result.benchmark is None
+    assert result.benchmark is None and result.comparison_artifact is None
     assert result.report is None
     assert result.report_id is None
     assert result.answer is None

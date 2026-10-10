@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import operator
 from typing import Annotated, Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing_extensions import TypedDict
 
 
@@ -16,6 +16,56 @@ class SummaryCards(BaseModel):
     method: str = Field(default="", description="The core mechanism, in 30-80 words.")
     key_results: str = Field(default="", description="One to three source-backed findings, in 30-80 words.")
     why_it_matters: str = Field(default="", description="A concise implication distinct from measured results, in 30-80 words.")
+
+
+class _LenientModel(BaseModel):
+    """Base for LLM-produced records: ``null`` falls back to the default and
+    bare numbers become strings, so one sloppy field does not discard the record."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_llm_values(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        cleaned: Dict[str, Any] = {}
+        for key, value in data.items():
+            if value is None:
+                continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and key != "higher_is_better":
+                value = str(value)
+            cleaned[key] = value
+        return cleaned
+
+
+class Insight(_LenientModel):
+    """One finding a reader would not get from skimming the abstract."""
+
+    finding: str = Field(default="", description="What we learn from the paper, in one or two sentences. Not a restated number.")
+    why_it_matters: str = Field(default="", description="Why a researcher should care: the consequence for design, practice or follow-up work.")
+
+
+class EvalSetting(_LenientModel):
+    """One key benchmark/metric row: the paper's method against its strongest baseline."""
+
+    benchmark: str = Field(default="", description="Dataset, task or benchmark name as the paper writes it.")
+    metric: str = Field(default="", description="Metric name as the paper writes it.")
+    metric_meaning: str = Field(default="", description="One short sentence: what this metric measures.")
+    higher_is_better: Optional[bool] = Field(default=None, description="true if a higher value is better, false if lower is better, null if unclear.")
+    unit: str = Field(default="", description="Unit such as %, ms, score; empty if the paper gives none.")
+    method_value: str = Field(default="", description="The paper's own method value, copied exactly from the source.")
+    baseline_name: str = Field(default="", description="Name of the strongest baseline in the same row or column.")
+    baseline_value: str = Field(default="", description="That baseline's value, copied exactly from the source; empty if none.")
+    table_label: str = Field(default="", description='Source table label such as "Table 2"; empty if the value comes from prose.')
+    source_quote: str = Field(default="", description="A short exact quote or table row from the source that holds the values.")
+
+
+class Setup(_LenientModel):
+    """Experimental setup; every field stays an empty string when the paper does not state it."""
+
+    datasets: str = Field(default="", description="Datasets or benchmarks used for evaluation.")
+    training_config: str = Field(default="", description="Key training configuration: optimizer, learning rate, batch size, steps, horizon, and similar.")
+    hardware: str = Field(default="", description="Hardware exactly as the paper states it (GPU/TPU model and count). Empty string if not stated. Never guess.")
+    compute: str = Field(default="", description="Compute budget such as training time or GPU hours. Empty string if not stated.")
 
 
 class PMRLGeneration(BaseModel):
@@ -33,6 +83,13 @@ class PMRLGeneration(BaseModel):
         default="",
         description="Legacy compact conclusion plus 3 or 4 bullets, at most 150 words; empty when unavailable.",
     )
+    # Structured evidence generated in the same PMRL call.  ``eval_settings`` and
+    # ``setup.hardware`` are checked against the paper source in code
+    # (nodes.write_notes.ground_structured_notes) before they are used.
+    method_name: str = Field(default="", description="Short name the paper gives its own method (for example a model name); empty if none.")
+    insights: List[Insight] = Field(default_factory=list)
+    eval_settings: List[EvalSetting] = Field(default_factory=list)
+    setup: Setup = Field(default_factory=Setup)
 
 
 class PMRLNotes(BaseModel):
@@ -73,45 +130,13 @@ class PMRLNotes(BaseModel):
             "points, at most 150 words in total."
         ),
     )
-
-
-class ComparisonMetric(BaseModel):
-    """One metric claim with explicit comparability evidence."""
-
-    metric: str = ""
-    dataset: str = ""
-    unit: str = ""
-    value: str = ""
-    source_quote: str = ""
-
-
-class ComparisonPaper(BaseModel):
-    """Short per-paper findings used by the comparison artifact."""
-
-    paper_id: str = ""
-    title: str = ""
-    findings: List[str] = Field(default_factory=list)
-    metrics: List[ComparisonMetric] = Field(default_factory=list)
-
-
-class ComparisonRow(BaseModel):
-    """A comparison row validated against each paper's source text."""
-
-    metric: str = ""
-    dataset: str = ""
-    unit: str = ""
-    values: Dict[str, str] = Field(default_factory=dict)
-    source_quotes: Dict[str, str] = Field(default_factory=dict)
-    comparable: bool = False
-    reason: str = ""
-
-
-class ComparisonArtifact(BaseModel):
-    """Structured comparison returned by the single benchmark LLM call."""
-
-    papers: List[ComparisonPaper] = Field(default_factory=list)
-    rows: List[ComparisonRow] = Field(default_factory=list)
-    synthesis: List[str] = Field(default_factory=list)
+    # Structured evidence generated in the same PMRL call.  ``eval_settings`` and
+    # ``setup.hardware`` are checked against the paper source in code
+    # (nodes.write_notes.ground_structured_notes) before they are used.
+    method_name: str = Field(default="", description="Short name the paper gives its own method (for example a model name); empty if none.")
+    insights: List[Insight] = Field(default_factory=list)
+    eval_settings: List[EvalSetting] = Field(default_factory=list)
+    setup: Setup = Field(default_factory=Setup)
 
 
 class GitHubRepoInfo(BaseModel):
@@ -122,6 +147,36 @@ class GitHubRepoInfo(BaseModel):
     framework: str = "Python"
     is_official: bool = False
     description: str = ""
+
+
+class PaperTable(BaseModel):
+    """One table parsed from a paper's LaTeXML HTML (header row first)."""
+
+    caption: str = ""
+    label: str = ""                        # e.g. "Table 2"
+    rows: List[List[str]] = Field(default_factory=list)
+    section: str = ""                      # heading the table appears under
+
+
+class PaperReference(BaseModel):
+    """One bibliography entry parsed from a paper's LaTeXML HTML."""
+
+    index: int = 0                         # 1-based position in the bibliography
+    text: str = ""
+    title: str = ""                        # best effort; may be empty
+    arxiv_id: Optional[str] = None         # no version suffix
+    doi: Optional[str] = None
+    urls: List[str] = Field(default_factory=list)
+
+
+class RepoLink(BaseModel):
+    """A code or project-page link found in a paper's HTML."""
+
+    url: str
+    kind: Literal["github", "project_page", "other"] = "other"
+    context: str = ""                      # at most 200 chars of surrounding text
+    in_bibliography: bool = False
+    is_primary_candidate: bool = False
 
 
 class PaperItem(BaseModel):
@@ -146,6 +201,11 @@ class PaperItem(BaseModel):
     # Text Extraction
     extracted_text: Optional[str] = None    # Raw full text excerpts
     sections: Dict[str, str] = Field(default_factory=dict) # {"abstract": "...", "methodology": "...", "experiments": "...", "limitations": "..."}
+    # Structured HTML extraction (empty for PDF-only papers and for cached
+    # extractions that predate these fields).
+    tables: List[PaperTable] = Field(default_factory=list)
+    references: List[PaperReference] = Field(default_factory=list)
+    repo_links: List[RepoLink] = Field(default_factory=list)
     
     # Enrichment
     github_repos: List[GitHubRepoInfo] = Field(default_factory=list)
@@ -200,9 +260,11 @@ class ResearchState(TypedDict):
     # Selected Papers for Deep Reading
     selected_papers: List[PaperItem]
     
+    # Citation graph around the selected papers (nodes/citation_graph.py):
+    # {"nodes": [...], "edges": [...], "stats": {...}}; None before that node ran.
+    citation_graph: Optional[Dict[str, Any]]
+
     # Output Synthesis
-    benchmark_matrix: Optional[str]          # Markdown benchmark comparison table
-    comparison_artifact: Optional[Dict[str, Any]]  # Structured comparison for Results UI
     final_report: Optional[str]              # Comprehensive research report (Markdown)
 
     # Append-only measured timings.  Each node writes its own key, preserving

@@ -30,12 +30,11 @@ flowchart TD
     WebEnrich --> WriteNotes["write_notes (PMRL Generator - Pydantic Output)"]
 
     %% CE3 Routing
-    WriteNotes -->|CE3: single paper| FinalReport["final_report (Comprehensive Report Generator)"]
-    WriteNotes -->|CE3: >= 2 papers / direct_compare| CompareBenchmark["compare_benchmark (Benchmark Matrix)"]
+    WriteNotes -->|CE3: ok| CitationGraph["citation_graph (code only: references + OpenAlex)"]
     WriteNotes -->|CE3: error| ErrorHandler
+    CitationGraph --> FinalReport["final_report (Comprehensive Report Generator)"]
 
-    CompareBenchmark --> FinalReport
-    FinalReport --> End([End: Research Report + Benchmark Matrix])
+    FinalReport --> End([End: Research Report])
     ErrorHandler --> End
 
     style Router fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
@@ -45,7 +44,7 @@ flowchart TD
     style ReadPaper fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WebEnrich fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WriteNotes fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
-    style CompareBenchmark fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style CitationGraph fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style FinalReport fill:#ede7f6,stroke:#512da8,stroke-width:2px
     style ErrorHandler fill:#ffebee,stroke:#c62828,stroke-width:2px
 ```
@@ -58,10 +57,10 @@ flowchart TD
 |   2   | `search_papers`     | Gọi ArXiv API với rate-limit thread-safe, trả về danh sách`PaperItem`                    |
 |   3   | `eval_search`       | LLM chấm điểm relevance, chọn top-K bài tốt nhất hoặc yêu cầu refine                  |
 |   4   | `refine_query`      | LLM tối ưu lại từ khóa tìm kiếm dựa trên feedback → quay lại bước 2                |
-|   5   | `read_paper`        | Tải PDF, trích xuất text 2 cột (two-column block parsing), bóc tách sections              |
+|   5   | `read_paper`        | Đọc HTML trước (ar5iv → arxiv.org/html), PDF là phương án dự phòng; bóc tách sections, bảng, tài liệu tham khảo, link repo |
 |   6   | `web_enrich`        | Tìm repo GitHub 3 tầng + tạo BibTeX citation                                                 |
 |   7   | `write_notes`       | LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)                                 |
-|   8   | `compare_benchmark` | LLM lập bảng ma trận so sánh từ PMRLNotes (chỉ khi ≥ 2 bài)                             |
+|   8   | `citation_graph`    | Code, không LLM: dựng đồ thị trích dẫn quanh các bài đã chọn (JSON `citation_graph`)       |
 |   9   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
 |   —   | `error_handler`     | Xử lý graceful fallback khi bất kỳ node nào gặp lỗi                                      |
 
@@ -75,7 +74,7 @@ d:\LABAI\agentresearch\
 ├── config.py                   # AppConfig tập trung (paths, limits, model defaults)
 ├── state.py                    # Pydantic models & TypedDict ResearchState
 ├── graph.py                    # StateGraph definition, conditional edges & checkpointer
-├── app.py                      # Giao diện Streamlit (4 tabs)
+├── app.py                      # Giao diện Streamlit (3 tabs)
 ├── main.py                     # CLI entry point
 │
 ├── prompts/                    # Prompt templates tách biệt theo node
@@ -83,13 +82,16 @@ d:\LABAI\agentresearch\
 │   ├── eval_search_prompt.py
 │   ├── refine_query_prompt.py
 │   ├── pmrl_notes_prompt.py
-│   ├── benchmark_prompt.py
 │   └── final_report_prompt.py
 │
 ├── tools/                      # Công cụ chuyên sâu (không gọi LLM)
 │   ├── arxiv_search.py         # Thread-safe ArXiv API (Lock + Exponential Backoff)
 │   ├── local_index.py          # Index SQLite FTS5 offline trên metadata arXiv (bm25), build + search_local
 │   ├── pdf_parser.py           # Two-column PDF parser + Section extractor
+│   ├── pdf_parser.py           # Orchestrator đọc bài (HTML trước, PDF dự phòng) + PDF parser 2 cột
+│   ├── html_source.py          # Tải LaTeXML HTML: ar5iv → arxiv.org/html (qua rate limiter)
+│   ├── html_extractor.py       # Parse LaTeXML HTML → sections, tables, references, repo links (không mạng)
+│   ├── rate_limit.py           # Limiter theo host (arxiv.org 15s, ar5iv 3s), clock/sleep inject được
 │   ├── github_enricher.py      # Multi-tier GitHub search (3 fallback tiers)
 │   ├── bibtex_generator.py     # Sinh BibTeX citation chuẩn
 │   ├── cache_manager.py        # Canonical key + JSON/PDF cache
@@ -103,7 +105,6 @@ d:\LABAI\agentresearch\
 │   ├── read_paper.py
 │   ├── web_enrich.py
 │   ├── write_notes.py
-│   ├── compare_benchmark.py
 │   ├── final_report.py
 │   └── error_handler.py
 │
@@ -131,8 +132,12 @@ File này định nghĩa **toàn bộ cấu trúc dữ liệu** chảy qua mọi
 | Model                | Vai trò                                                                                                                        |
 | :------------------- | :------------------------------------------------------------------------------------------------------------------------------ |
 | `PMRLNotes`        | Ghi chú theo khung**P**roblem–**M**ethod–**R**esult–**L**imitation, mỗi trường là 1 đoạn văn |
+| `Insight` / `EvalSetting` / `Setup` | Trường có cấu trúc của PMRL (cùng 1 lệnh gọi LLM): `insights` (finding, why_it_matters), `eval_settings` (benchmark, metric, metric_meaning, higher_is_better, unit, method_value, baseline_name/value, table_label, source_quote), `setup` (datasets, training_config, hardware, compute) và `method_name`. Mọi trường có default rỗng; cache cũ thiếu các trường này vẫn load được |
 | `GitHubRepoInfo`   | Metadata repo GitHub: tên, URL, stars, framework, cờ official                                                                 |
 | `PaperItem`        | Đại diện 1 bài báo xuyên suốt vòng đời: từ kết quả search → tải PDF → trích xuất → PMRL → report            |
+| `PaperTable`       | 1 bảng từ HTML: `caption`, `label` ("Table 2"), `rows` (hàng header đầu tiên), `section` (heading chứa bảng)       |
+| `PaperReference`   | 1 mục bibliography: `index`, `text`, `title` (ước lượng), `arxiv_id`, `doi`, `urls`                                  |
+| `RepoLink`         | 1 link code/project page: `url`, `kind` (`github`/`project_page`/`other`), `context` (≤200 ký tự), `in_bibliography`, `is_primary_candidate` |
 | `EvalSearchOutput` | Kết quả đánh giá chất lượng tìm kiếm:`passed`, `score`, `feedback`, `selected_indices`                        |
 
 #### `ResearchState` (TypedDict)
@@ -171,7 +176,7 @@ Constructor `__init__` tự động tạo các thư mục cache nếu chưa tồ
 
 ### 3.3. Đồ Thị LangGraph (`graph.py`)
 
-File trung tâm gắn kết 10 node thành 1 `StateGraph` hoàn chỉnh.
+File trung tâm gắn kết 9 node thành 1 `StateGraph` hoàn chỉnh.
 
 #### 3 Conditional Edge Functions
 
@@ -189,14 +194,13 @@ def route_after_eval_search(state) -> str:
 
 def route_after_write_notes(state) -> str:
     # CE3: error → error_handler
-    #       ≥ 2 papers hoặc direct_compare → compare_benchmark
-    #       1 paper → final_report (bỏ qua so sánh)
+    #       còn lại → citation_graph (rồi citation_graph → final_report)
 ```
 
 #### `build_research_graph()`
 
 1. **Tạo `StateGraph(ResearchState)`** — khai báo kiểu state
-2. **Thêm 10 node** bằng `workflow.add_node(name, function)`
+2. **Thêm 9 node** bằng `workflow.add_node(name, function)`
 3. **Nối cạnh**: 4 cạnh cố định + 3 conditional edges (CE1, CE2, CE3) + 1 vòng lặp `refine_query → search_papers`
 4. **Compile** với `MemorySaver` checkpointer (lưu snapshot state theo `thread_id`)
 
@@ -264,26 +268,40 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 
 ### 3.8. Node: `read_paper` (`nodes/read_paper.py`)
 
-**Chức năng**: Tải PDF và trích xuất nội dung theo cấu trúc section — chạy **song song** bằng `ThreadPoolExecutor`.
+**Chức năng**: Đọc bài báo và trích xuất nội dung có cấu trúc — chạy **song song** bằng `ThreadPoolExecutor`. Từ PR 2, thứ tự đọc là **HTML trước, PDF sau**.
 
 **Pipeline xử lý mỗi bài báo** (trong `sync_extract_pdf_content`):
 
-1. **Check cache** → nếu đã parse trước đó thì dùng lại ngay
-2. **Xác định nguồn PDF**: cache local → local path → tải từ ArXiv
-3. **Trích xuất text 2 cột** (`extract_ordered_blocks_from_pdf`):
-   - Dùng PyMuPDF (`fitz`) lấy text blocks kèm tọa độ (x0, y0, x1, y1)
-   - Chia block theo `mid_x = page.width / 2`: cột trái vs cột phải
-   - Sắp xếp: cột trái (trên→dưới) rồi cột phải (trên→dưới) → đúng thứ tự đọc
-   - Fallback sang `pypdf` nếu PyMuPDF không cài
-4. **Bóc tách section** (`parse_structured_sections`):
-   - Regex match: `abstract`, `methodology`, `experiments`, `limitations`
-   - Giới hạn: abstract/limitations ≤ 2000 chars, methodology/experiments ≤ 4000 chars
-   - Fallback chunking nếu regex không match (chia text thô theo vị trí)
-5. **Lưu cache** JSON để lần sau không cần parse lại
+1. **Check cache** (`data/cache/text/<key>.json`). Cache chỉ dùng lại khi `extraction_version == EXTRACTION_CACHE_VERSION` (hiện là 2) và coverage `complete`. Cache cũ (thiếu key `extraction_version`) bị bỏ qua; file PDF đã tải vẫn dùng lại.
+2. **HTML trước** (chỉ với bài có `arxiv_id`, không phải `local_pdf`), theo thứ tự:
+   1. `https://ar5iv.labs.arxiv.org/html/<id>`
+   2. `https://arxiv.org/html/<id>`
+
+   Nguồn bị bỏ qua (rơi xuống nguồn kế tiếp) khi: HTTP khác 200, redirect ra ngoài `/html/<id>` (ví dụ `/abs/<id>`), content-type không phải HTML, trang không có markup LaTeXML (`ltx_*`), hoặc parse không ra section nào. Mỗi lần thử ghi vào `source_quality["htmlAttempts"]` (`{"source", "status"}`). Code **không bao giờ** gọi `/e-print` hay `/src` (robots.txt cấm).
+3. **PDF chỉ khi cần**: khi không có HTML, hoặc HTML thiếu `abstract`/`methodology`/`experiments`. Thứ tự nguồn PDF: cache → file local → tải từ ArXiv. HTML đủ 3 section thì **không tải PDF**.
+4. **Gộp**: section nào HTML thiếu thì lấy từ PDF (HTML luôn thắng khi cả hai có). `source_quality["source"]` ghi nguồn thắng: `ar5iv` | `arxiv_html` | `pdf` | `mixed` (`mixed` = HTML + PDF điền thêm section). `sourceFormat` giữ từ vựng cũ (`html`/`pdf`/`mixed`) cho API.
+5. **Lưu cache** JSON: `sections`, `source_quality`, `tables`, `references`, `repo_links`, `extraction_version`.
+
+**Sections từ HTML** (`tools/html_extractor.py`): giữ key cũ `abstract`, `methodology`, `experiments`, `limitations` và thêm `setup`.
+
+- Heading cấp 1 được phân loại theo từ khóa; heading số không có từ khóa (ví dụ "3 Key Design Decisions") là `methodology` trước phần experiments và `experiments` sau đó. Introduction, Related Work, Conclusion bị bỏ.
+- Heading con (subsection/paragraph) chỉ ghi đè section cha khi là `setup` (Implementation Details, Training Details, Hyperparameters, Hardware, Compute, Experimental Setup/Details, Configuration) hoặc `limitations`. Nhờ vậy "A.4 Hyperparameters" trong appendix vào `setup`.
+- Appendix được đọc: heading appendix có "details" hoặc từ khóa setup vào `setup`; Ablation/Results vào `experiments`.
+- Câu nhắc phần cứng (GPU, TPU, A100, ...) trong `methodology`/`experiments`/`limitations` được **sao chép** lên đầu `setup` (tối đa 8 câu, 2000 ký tự).
+- Math dùng `alttext` của LaTeXML (TeX → text đọc được). Bảng được ghi gọn (≤1500 ký tự/bảng) vào text của section, đồng thời có dạng cấu trúc ở `PaperItem.tables`.
+- Cap ký tự lấy từ `config.HTML_*_MAX_CHARS`.
+
+**Trường có cấu trúc** (rỗng với bài chỉ có PDF; JSON cache cũ không có các trường này vẫn load được):
+
+- `tables`: mỗi `ltx_tabular` thành 1 `PaperTable`. `colspan`/`rowspan` lặp lại text ô trên mọi ô bị span. Bảng không có chữ hoặc chỉ 1 ô bị bỏ.
+- `references`: mỗi `ltx_bibitem` thành 1 `PaperReference`; `arxiv_id` (kiểu mới và cũ, bỏ hậu tố `vN`) và `doi` lấy từ text và href.
+- `repo_links`: link GitHub (chuẩn hóa về `https://github.com/<owner>/<repo>`), `*.github.io`, host code khác, và link project page có cue. `is_primary_candidate = true` khi link nằm ngoài bibliography và (nằm ở phần đầu bài: tiêu đề, tác giả, abstract, footnote đầu, hoặc context có cue mạnh như "project page", "our code", "code is available", "we release"). Link trong experiments/setup cần cue mạnh; context có "baseline", "based on", "we use", "following" thì không được tính. `source_quality["codeUrls"]` chỉ chứa repo GitHub là primary candidate.
+
+**Pacing** (`tools/rate_limit.py`): mỗi host có **một** limiter dùng chung giữa các thread. `arxiv.org` (HTML và PDF, kể cả mỗi bước redirect) cách nhau ≥ 15s giữa 2 lần bắt đầu request và chỉ 1 kết nối tại một thời điểm; `ar5iv.labs.arxiv.org` ≥ 3s. Giữ lock suốt thời gian request nên tải body cũng tuần tự. Test dùng `rate_limit.configure(clock=..., sleep=...)` để không sleep thật (`tests/conftest.py` bật clock giả cho mọi test).
 
 **Concurrency**:
 
-- Pool PDF có `min(n_papers, READ_PAPER_MAX_WORKERS)` worker; mọi PDF chạy song song.
+- Pool đọc bài có `min(n_papers, READ_PAPER_MAX_WORKERS)` worker. Request tới `arxiv.org` vẫn tuần tự qua limiter 15s; ar5iv cách nhau 3s. Bài ar5iv đủ section không tải PDF, nên 3 bài thường mất vài giây thay vì vài chục giây.
 - Node gọi `fetch_arxiv_metadata_batch` **1 lần** khi bắt đầu (1 request `id_list=a,b,c`, timeout `ARXIV_METADATA_TIMEOUT_SEC`, 1 lần thử, vẫn qua rate limiter, cache hit không gọi HTTP).
 - Sau khi PDF xong, node chờ metadata tối đa `ARXIV_METADATA_GRACE_SEC`. Nếu chưa có, node đi theo đường "metadata lỗi" cũ và ghi `arxiv.status = "timeout"` trong `node_timings`.
 - Node không join request nền (`shutdown(wait=False)`); request đến muộn vẫn ghi cache cho lần chạy sau.
@@ -320,53 +338,54 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 **Cơ chế**:
 
-1. Ghép nội dung 4 section (abstract, methodology, experiments, limitations) thành prompt context
-2. Gọi LLM với `with_structured_output(PMRLNotes)` → đảm bảo output đúng schema Pydantic
-3. Giới hạn context ≤ 14,000 ký tự để tránh vượt token window
+1. Ghép text: abstract, methodology, `setup`, experiments, limitations, rồi các bảng có cấu trúc (`PaperTable`, dạng gọn: dòng nhãn + caption, hàng header, các hàng). Cắt ở `PMRL_INPUT_MAX_CHARS`
+2. Gọi LLM với `with_structured_output(PMRLCoreGeneration)`: 4 trường PMRL + `method_name`, `insights`, `eval_settings`, `setup`
+3. **Grounding bằng code** (`ground_structured_notes`, chạy sau mỗi lần LLM và cả khi cache hit; cache lưu output thô):
+   - Giữ 1 dòng `eval_settings` chỉ khi mọi số trong `method_value` (và `baseline_value` nếu có số) xuất hiện trong text nguồn hoặc ô bảng. Dòng không đạt bị loại.
+   - `table_label` chỉ giữ khi bảng mang nhãn đó chứa đủ các số của dòng; `source_quote` chỉ giữ khi quote có trong nguồn.
+   - `setup.hardware` và `setup.compute` bị xóa nếu text không có trong nguồn (kiểm tra token: mọi token chứa chữ số và ≥50% từ còn lại). `method_name` bị xóa nếu không có trong tiêu đề/nguồn.
+   - `insights` không bị loại. Số lượng ghi ở `processing_metadata["evalSettings"]` (`proposed`, `kept`, `dropped`, `hardwareDropped`, `computeDropped`).
+4. Khóa cache PMRL chứa `PMRL_NOTES_VERSION` (hiện `n2`)
 
 **Fallback PMRL**: Nếu LLM lỗi → tạo PMRLNotes mặc định từ summary/text thô.
 
-**Ý nghĩa kiến trúc**: Sau bước này, toàn bộ nội dung bài báo (hàng chục ngàn ký tự `extracted_text`) đã được **nén** thành ~500 từ PMRLNotes có cấu trúc. Các node phía sau (`compare_benchmark`, `final_report`) chỉ đọc `notes` — giảm ~70% token prompt.
+**Ý nghĩa kiến trúc**: Sau bước này, toàn bộ nội dung bài báo (hàng chục ngàn ký tự `extracted_text`) đã được **nén** thành ~500 từ PMRLNotes có cấu trúc. Node phía sau (`final_report`) chỉ đọc `notes` — giảm ~70% token prompt.
 
 ---
 
-### 3.11. Node: `compare_benchmark` (`nodes/compare_benchmark.py`)
-
-**Chức năng**: Lập **Ma Trận So Sánh Benchmark** giữa các bài báo (chỉ chạy khi ≥ 2 bài).
-
-**Tối ưu token**: Chỉ đọc từ `PMRLNotes` + `github_repos` — không nạp lại `extracted_text`:
-
-```python
-summary_block = (
-    f"### Paper {idx}: {p.title}\n"
-    f"- Method: {notes.method}\n"      # Từ PMRLNotes, ~150 từ
-    f"- Results: {notes.result}\n"     # Từ PMRLNotes, ~150 từ
-    f"- Limitations: {notes.limitation}\n"
-    f"- GitHub: {github_url}"
-)
-```
-
-LLM sinh Markdown table với các chiều so sánh: Architecture, Compute, Datasets, Metrics, Pros, Cons, Open Source.
-
----
-
-### 3.12. Node: `final_report` (`nodes/final_report.py`)
+### 3.11. Node: `final_report` (`nodes/final_report.py`)
 
 **Chức năng**: Tổng hợp mọi thông tin thành **báo cáo nghiên cứu chuyên sâu** dạng Markdown.
 
-**Cấu trúc báo cáo**: Executive Summary → Paper Breakdowns (PMRL) → Benchmark Matrix → Takeaways → Bibliography.
+**Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Bối cảnh nghiên cứu` (code, từ `citation_graph`) → `## 4. Kết luận` → `## 5. Tài liệu tham khảo`. Không còn mục so sánh/benchmark; ý định `direct_compare` chỉ còn dùng ở router để chọn nhiều bài.
 
 **Đặc điểm**:
 
-- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 3. So sánh`, `## 4. Kết luận` (`REPORT_OVERVIEW_PROMPT`), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
-- `REPORT_PARALLEL_SECTIONS=false` hoặc không có bài: giữ đường cũ — gộp PMRL notes + GitHub info + BibTeX + benchmark matrix vào 1 prompt duy nhất (`FINAL_REPORT_PROMPT`)
-- Khóa cache báo cáo chứa chế độ; hai chế độ không dùng chung entry
+- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 4. Kết luận` (`REPORT_OVERVIEW_*`; `_parse_overview` vẫn nhận số 3 cũ, bản 1 bài và nhiều bài), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài, mục 3 (Bối cảnh nghiên cứu) và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
+- `REPORT_PARALLEL_SECTIONS=false` hoặc không có bài: giữ đường cũ — gộp PMRL notes + GitHub info + BibTeX vào 1 prompt duy nhất (`FINAL_REPORT_PROMPT`)
+- **Khối "Kết quả chính" (PR 3)**: LLM nhận notes kèm insights, dòng eval_settings và setup, viết các sub-bullet `Insight` (đánh số), `Đại lượng đo`, `Thiết lập`, `Nhận xét` (tiếng Anh: Insight, Metrics, Setup, Remarks). **Code** dựng bảng kết quả từ `eval_settings` đã grounding (cột: Benchmark, Metric kèm đơn vị và ↑/↓, tên phương pháp, Baseline tốt nhất; `—` khi thiếu; dòng `*Nguồn: Table N trong paper*` khi nhãn bảng đã xác minh) và chèn trước sub-bullet `Nhận xét` (hoặc cuối khối Kết quả chính nếu thiếu); bảng thụt 2 dấu cách để nằm trong mục danh sách. Nếu `setup.hardware` rỗng mà `Thiết lập` không có câu về hardware, code thêm `Hardware: paper không nêu` (tiếng Anh: `Hardware: not stated in the paper`). Không có dòng đã grounding thì không có bảng. Lệnh section lỗi → `_deterministic_paper_section` dựng cùng cấu trúc từ notes. Overview nhận insights từng bài để "Tóm tắt" nêu insight xuyên suốt các bài.
+- Khóa cache báo cáo chứa chế độ; hai chế độ không dùng chung entry. Phiên bản: `PARALLEL_REPORT_VERSION = "p9"`, `SUMMARY_PIPELINE_VERSION = "v5"`; khóa cũng chứa input section và context overview nên đổi notes là đổi khóa
+- Mục 3 do `_context_section()` dựng từ `state["citation_graph"]` (thiếu graph → một dòng "chưa có dữ liệu"); nội dung mục 3 nằm trong khóa cache báo cáo. Đường cũ (1 prompt) chèn mục 3 bằng `_insert_context_section()` trước `## 4.`
 - Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`
 - Dùng `extract_text_from_response()` để xử lý an toàn response từ mọi LLM provider
 
 ---
 
-### 3.13. Node: `error_handler` (`nodes/error_handler.py`)
+### 3.11b. Node: `citation_graph` (`nodes/citation_graph.py`)
+
+**Chức năng**: Dựng đồ thị trích dẫn quanh các bài đã chọn bằng code (không LLM, không gọi mạng trừ OpenAlex khi có key). Chạy sau `write_notes`, trước `final_report`; không bao giờ làm run lỗi (lỗi → đồ thị rỗng + log).
+
+- **Cạnh đi ra**: mỗi `PaperReference` của bài đã chọn được đổi thành arXiv id qua `tools/ref_resolver.py` (thứ tự: id có sẵn → DOI `10.48550/arXiv.X` → DOI trong index → tiêu đề chuẩn hóa khớp đúng 1 dòng trong index; tiêu đề < 4 từ hoặc khớp ≥ 2 dòng thì bỏ qua).
+- **Cạnh đi vào**: OpenAlex (`tools/openalex.py`): 1 lệnh lấy work theo DOI arXiv, 1 lệnh lấy 50 bài trích dẫn nhiều nhất cho mỗi bài đã chọn, và số trích dẫn của các ứng viên nền tảng. Không có `OPENALEX_API_KEY` → trạng thái `no_key`, vẫn có bài nền tảng từ co-citation.
+- **Bài nền tảng** = tài liệu tham khảo được ≥ 2 bài đã chọn trích dẫn (sắp theo số bài, rồi `cited_by_count`, rồi năm); chỉ 1 bài đã chọn → các tham khảo đã giải được có nhiều trích dẫn nhất (không có OpenAlex: theo thứ tự danh mục). **Bài kế thừa** = bài trích dẫn ≥ 2 bài đã chọn; nếu < 3 thì thêm các bài trích dẫn 1 bài có nhiều trích dẫn nhất. Mỗi nhóm tối đa `CITATION_TOP_N` (5); bài đã chọn không bao giờ là ứng viên.
+- **State/API**: `citation_graph` = `{nodes:[{id, arxiv_id, title, year, cited_by_count, selected, role, support}], edges:[{source, target, kind:"cites"}], stats:{refs_total, refs_resolved, refs_ambiguous, by_method, openalex: "ok"|"no_key"|"error"}}`. API thêm trường `citationGraph` vào `result` (giữ nguyên tên khóa JSON như trên). `node_timings.citation_graph` ghi `durationMs`, số request và cache hit OpenAlex.
+- **Index cục bộ** (`data/arxiv/index.sqlite`, nhánh `feat/local-index`): chỉ mở `mode=ro`, không tạo index mới. Tra tiêu đề bằng FTS5 (`title : "cụm từ"`) rồi so khớp chuẩn hóa trong Python. Tra DOI: cột `doi` không có index nên lần tra DOI đầu tiên của tiến trình quét 1 lần `WHERE doi != ''` (~160k dòng, ~0,5 s khi file đã nằm trong cache OS) vào dict trong RAM; không ghi file. Thiếu file index → chỉ dùng id có sẵn và DOI arXiv.
+- **Cấu hình**: `OPENALEX_API_KEY` (env/.env), `OPENALEX_MIN_INTERVAL_SEC` (0,2), `CITATION_TOP_N` (5), `CITATION_INDEX_PATH` (mặc định `data/arxiv/index.sqlite`, hoặc `LOCAL_INDEX_PATH`). Cache OpenAlex: `data/cache/openalex/<sha256(url không có key)>.json` (không lưu key).
+- Script thử offline (index thật, không OpenAlex): `.venv/bin/python -I bench/citation_graph_probe.py [thư mục]`.
+
+---
+
+### 3.12. Node: `error_handler` (`nodes/error_handler.py`)
 
 **Chức năng**: Bắt mọi trạng thái lỗi (`status="error"`) và tạo báo cáo fallback thay vì crash.
 
@@ -374,7 +393,7 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 
 ---
 
-### 3.14. Tools Layer
+### 3.13. Tools Layer
 
 #### `tools/arxiv_search.py` — Thread-safe ArXiv API
 
@@ -399,9 +418,25 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 
 #### `tools/pdf_parser.py` — Two-column Parser
 
+- **`sync_extract_pdf_content()`**: Orchestrator: cache check → HTML (ar5iv → arxiv.org/html) → PDF nếu cần → gộp → save cache
+- **`_download_pdf()`**: mỗi request (kể cả redirect) lấy 1 slot từ limiter `arxiv.org`
 - **`extract_ordered_blocks_from_pdf()`**: Dùng PyMuPDF `page.get_text("blocks")` → chia cột trái/phải theo `mid_x` → sắp xếp theo reading order
 - **`parse_structured_sections()`**: Regex bóc tách 4 section chính, fallback cắt text thô nếu regex không match
-- **`sync_extract_pdf_content()`**: Orchestrator: cache check → download → parse → save cache
+
+#### `tools/html_source.py` — Tải HTML
+
+- **`fetch_html_extraction()`**: thử ar5iv rồi arxiv.org/html, trả `(HTMLExtraction, source)`; ghi `htmlAttempts`
+- **`fetch_html_page()`**: GET không tự redirect; chỉ theo redirect tới `/html/<id>` trên host cho phép (`ar5iv.labs.arxiv.org`, `arxiv.org`), tối đa 3 hop, giới hạn 20 MB, mỗi hop qua limiter
+
+#### `tools/html_extractor.py` — Parse LaTeXML (không mạng, chỉ stdlib `html.parser`)
+
+- **`extract_html()`** → `HTMLExtraction` (`sections`, `tables`, `references`, `repo_links`, `code_urls`); **`looks_like_latexml()`** phát hiện trang không có nội dung LaTeXML
+- Script thử offline: `.venv/bin/python -I bench/html_extract_probe.py [thư mục]` (mặc định `data/arxiv/html_probe`)
+
+#### `tools/rate_limit.py` — Limiter theo host
+
+- **`host_slot(host)`**: context manager; no-op với host ngoài `arxiv.org`/`www.arxiv.org`/`ar5iv.labs.arxiv.org`
+- **`configure(clock=, sleep=)`**: reset trạng thái và inject clock giả (dùng trong test)
 
 #### `tools/cache_manager.py` — Hệ Thống Cache
 
@@ -409,7 +444,7 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 | :--------------------------- | :----------------------------------------------------------------------------------- |
 | `canonicalize_paper_key()` | Sinh key chuẩn:`arxiv_1706.03762` / `local_filename_a1b2c3` / `id_query_hash` |
 | `get_cached_pdf_path()`    | Kiểm tra PDF đã tải chưa                                                        |
-| `get_cached_text_data()`   | Đọc JSON cache (sections + extracted_text)                                         |
+| `get_cached_text_data()`   | Đọc JSON cache (sections, extracted_text, source_quality, tables, references, repo_links, `extraction_version`) |
 | `save_cached_text_data()`  | Lưu kết quả parse vào JSON cache                                                 |
 
 #### `tools/llm_provider.py` — LLM Factory
@@ -421,7 +456,7 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 
 ---
 
-### 3.15. Prompts Layer (`prompts/`)
+### 3.14. Prompts Layer (`prompts/`)
 
 Mỗi call LLM gửi **2 message**: `X_SYSTEM` (tĩnh: vai trò, luật, định dạng, ngân sách từ) và `X_USER` (biến: dữ liệu trong thẻ như `<paper_source>`, `<pmrl_notes>` + nhiệm vụ cụ thể). System prompt nói 1 lần rằng nội dung trong thẻ là dữ liệu, không phải chỉ dẫn. Luật viết báo cáo dùng chung (ngôn ngữ, LaTeX `$$`, không `<br>`, không nhãn nội bộ, cảnh báo trích xuất, không bịa link) nằm 1 lần trong `prompts/common.py`.
 
@@ -434,7 +469,6 @@ Mỗi call LLM gửi **2 message**: `X_SYSTEM` (tĩnh: vai trò, luật, định
 | `pmrl_notes_prompt.py`   | `PMRL_NOTES_SYSTEM` / `_USER`                      | `write_notes` (schema `PMRLCoreGeneration`, không có `brief_summary`)    |
 | `results_summary_prompt.py` | `RESULTS_SUMMARY_SYSTEM` / `_USER`              | 5 summary card                                                            |
 | `final_report_prompt.py` | `PAPER_SECTION_*`, `REPORT_OVERVIEW_*`, `REPORT_OVERVIEW_SINGLE_*`, `FINAL_REPORT_PROMPT` (cũ) | `final_report` song song / đường cũ 1 chuỗi |
-| `benchmark_prompt.py`    | `BENCHMARK_MATRIX_PROMPT`                            | `compare_benchmark` (1 chuỗi, không đổi)                                |
 
 Builder thuần (không đọc cache), dùng chung bởi production và `bench/prompt_bench.py`: `write_notes.build_pmrl_messages`, `final_report.build_cards_messages`, `build_section_messages`, `build_overview_messages` — đều trả `(system, user)`.
 
@@ -445,12 +479,11 @@ Builder thuần (không đọc cache), dùng chung bởi production và `bench/p
 | `eval_search_prompt.py`  | `EVAL_SEARCH_PROMPT`      | `eval_search` — chấm điểm & chọn bài                  |
 | `refine_query_prompt.py` | `REFINE_QUERY_PROMPT`     | `refine_query` — tối ưu từ khóa                        |
 | `pmrl_notes_prompt.py`   | `PMRL_NOTES_PROMPT`       | `write_notes` — tổng hợp PMRL                            |
-| `benchmark_prompt.py`    | `BENCHMARK_MATRIX_PROMPT` | `compare_benchmark` — lập bảng so sánh                  |
 | `final_report_prompt.py` | `FINAL_REPORT_PROMPT` (+ `PAPER_SECTION_PROMPT`, `REPORT_OVERVIEW_PROMPT`) | `final_report` — báo cáo 1 lệnh (cũ) hoặc theo từng phần song song |
 
 ---
 
-### 3.16. Entry Points
+### 3.15. Entry Points
 
 #### `main.py` — CLI
 
@@ -469,12 +502,11 @@ Chạy `graph.stream()` đồng bộ, in trace log từng bước, xuất final 
 
 #### `app.py` — Streamlit Web UI
 
-Giao diện 4 tabs:
+Giao diện 3 tabs:
 
 | Tab                       | Nội dung                                         |
 | :------------------------ | :------------------------------------------------ |
 | 📄 Báo Cáo Tổng Hợp   | Markdown report + nút Download                   |
-| 📊 Ma Trận So Sánh      | Benchmark table (khi ≥ 2 bài)                   |
 | 📝 Ghi Chú PMRL & GitHub | Card từng bài: PMRL notes, GitHub repos, BibTeX |
 | ⏱️ Nhật Ký Thực Thi  | Trace logs real-time từng node                   |
 
@@ -482,12 +514,18 @@ Sidebar cho phép chọn LLM provider/model, override API keys, xem sơ đồ lu
 
 ---
 
-### 3.17. Tests (`tests/`)
+### 3.16. Tests (`tests/`)
 
 | File                   | Số tests | Phạm vi                                                                       |
 | :--------------------- | :-------: | :----------------------------------------------------------------------------- |
 | `test_tools.py`      |     3     | `canonicalize_paper_key`, `generate_bibtex`, `parse_structured_sections` |
 | `test_nodes.py`      |     3     | `router_node` (1 link, multi links), `error_handler_node`                  |
 | `test_graph_flow.py` |     2     | Graph compilation, routing logic (CE1/CE2/CE3)                                 |
+| `test_html_extraction.py` |  69  | Parse HTML giả (section, appendix setup, bảng colspan, bibitem, repo link primary/baseline), thứ tự fallback với HTTP mock, limiter với clock giả, cache version |
 
-Chạy: `python -m pytest tests/ -v` (8/8 PASSED).
+| `test_results_format.py` |  4  | Grounding loại số/hardware bịa, cache PMRL cũ vẫn load, bảng kết quả chèn trước `Nhận xét`, dòng hardware "không nêu" |
+| `test_bench_verify.py` |  +2  | `results_format` (Insight/Đại lượng đo/Thiết lập) và `results_table_numbers` (số trong bảng có trong nguồn) |
+
+Chạy: `.venv/bin/python -m pytest tests/ -q`.
+
+Xem trước định dạng báo cáo, hoàn toàn offline (LLM giả, số thật từ bảng đã parse): `.venv/bin/python -I bench/render_report_preview.py` → `data/arxiv/preview_report.md` (đọc `data/arxiv/html_probe/ar5iv_*.html`).

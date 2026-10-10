@@ -29,7 +29,7 @@ unavailable when missing; the v0 run is never affected):
 * ``nodes.final_report.build_cards_messages(paper, language_mode)``
 * ``nodes.final_report.build_section_messages(paper, index, user_query, language_mode)``
 * ``nodes.final_report.build_overview_messages(papers, user_query, title,
-  language_mode, benchmark_section)``
+  language_mode)``
 
 Structured stages (pmrl, cards) go through
 ``tools.llm_provider.invoke_structured_output(user, schema, system=system, ...)``;
@@ -88,8 +88,6 @@ def _new_schema(stage: str) -> Any:
 KNOWN_VARIANTS = ("v0", "new")
 # Saved runs the fixed inputs come from (name -> directory under bench/runs/).
 DEFAULT_RUNS = {"single": "20261010_180106_single_v2", "multi": "20261010_180642_parallel_v2"}
-# Same literal as nodes/final_report.py final_report_node (benchmark_section).
-BENCHMARK_HEADER = "=== BENCHMARK COMPARISON MATRIX & TRADE-OFFS ==="
 # stage -> (module, builder name) for variant "new".
 BUILDERS = {
     "pmrl": ("nodes.write_notes", "build_pmrl_messages"),
@@ -112,7 +110,6 @@ class RunInput:
     user_query: str
     language_mode: str
     title: str
-    benchmark_section: str
     papers: list[PaperItem]
     sources: dict[str, str]  # paper_id -> source text (verify.load_sources layout)
 
@@ -159,14 +156,12 @@ def load_run_input(directory: Path, name: str) -> RunInput:
         source = json.loads(source_path.read_text(encoding="utf-8")) if source_path.exists() else None
         papers.append(restore_paper(raw, source))
     user_query = state.get("user_query") or "Research Analysis"
-    matrix = state.get("benchmark_matrix")
-    # Mirrors final_report_node: language_mode, title and benchmark_section.
+    # Mirrors final_report_node: language_mode and title.
     return RunInput(
         name=name,
         user_query=user_query,
         language_mode=detect_response_language(user_query),
         title=report_title(user_query, papers),
-        benchmark_section=f"{BENCHMARK_HEADER}\n{matrix}" if matrix else "",
         papers=papers,
         sources=verify.load_sources(source_dir),
     )
@@ -182,8 +177,8 @@ def load_inputs(inputs_dir: Path) -> dict[str, RunInput]:
 def import_inputs(run_dirs: dict[str, Path], inputs_dir: Path) -> list[Path]:
     """Copy the files a case needs from saved runs into the tracked inputs dir.
 
-    ``state.json`` is trimmed to query, intent, selected papers and benchmark
-    matrix (the report text, timings and logs are not inputs).  Local file
+    ``state.json`` is trimmed to query, intent and selected papers
+    (the report text, timings and logs are not inputs).  Local file
     paths are blanked.
     """
 
@@ -208,8 +203,6 @@ def import_inputs(run_dirs: dict[str, Path], inputs_dir: Path) -> list[Path]:
             "intent": state.get("intent"),
             "selected_papers": papers,
         }
-        if state.get("benchmark_matrix"):
-            trimmed["benchmark_matrix"] = state["benchmark_matrix"]
         path = target / "state.json"
         path.write_text(json.dumps(trimmed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         written.append(path)
@@ -269,7 +262,7 @@ _CAPTURE_RESPONSES = {
         "tldr": "t", "problem": "p", "method": "m", "key_results": "k", "why_it_matters": "w",
     }),
     "section": "### Title\n- **Problem**: text\n- **Methodology**: text\n",
-    "overview": "## 1. Summary\ntext\n\n## 3. Compare\ntext\n\n## 4. Conclusion\ntext\n",
+    "overview": "## 1. Summary\ntext\n\n## 3. Conclusion\ntext\n",
 }
 
 
@@ -307,7 +300,7 @@ def _capture_one(case: Case, run: RunInput) -> str:
         fr._write_paper_section(llm, paper, case.index, run.user_query, run.language_mode)
     else:
         fr._write_overview(
-            llm, run.user_query, run.title, run.language_mode, copy.deepcopy(run.papers), run.benchmark_section
+            llm, run.user_query, run.title, run.language_mode, copy.deepcopy(run.papers)
         )
     if len(llm.prompts) != 1 or not isinstance(llm.prompts[0], str) or not llm.prompts[0]:
         raise RuntimeError(f"expected exactly one non-empty string prompt for {case.stage}/{case.id}")
@@ -463,8 +456,8 @@ class FakeLLM:
         if stage == "section":
             return f"### Paper\n- **Problem**: {_words(seed, 80)}\n\n$$\nx = y\n$$\n\n- **Results**: {_words(seed + 1, 80)}\n"
         return (
-            f"## 1. Summary\n{_words(seed, 80)}\n\n## 3. Compare\n{_words(seed + 1, 80)}\n\n"
-            f"## 4. Conclusion\n{_words(seed + 2, 60)}\n"
+            f"## 1. Summary\n{_words(seed, 80)}\n\n"
+            f"## 3. Conclusion\n{_words(seed + 1, 60)}\n"
         )
 
 
@@ -518,7 +511,7 @@ def new_unavailable_reason(stage: str) -> str:
 def _builder_args(case: Case, run: RunInput) -> tuple[Any, ...]:
     papers = copy.deepcopy(run.papers)
     if case.stage == "overview":
-        return (papers, run.user_query, run.title, run.language_mode, run.benchmark_section)
+        return (papers, run.user_query, run.title, run.language_mode)
     paper = papers[case.index - 1]
     if case.stage == "section":
         return (paper, case.index, run.user_query, run.language_mode)
@@ -621,7 +614,7 @@ def quality_overview(text: str, sources: dict[str, str], n_papers: int) -> dict[
     from nodes.final_report import _parse_overview
 
     result = quality_text(text, sources)
-    required = ("summary", "conclusion") if n_papers == 1 else ("summary", "compare", "conclusion")
+    required = ("summary", "conclusion")
     parsed = _parse_overview(text)
     missing = [key for key in required if not parsed.get(key)]
     result.update({"headings_ok": not missing, "missing_headings": missing})

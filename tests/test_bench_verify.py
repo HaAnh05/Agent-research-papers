@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import threading
 from pathlib import Path
 
@@ -24,6 +26,9 @@ Tong quan 46,9% cai thien.
 ### Paper A (arXiv 1111.11111)
 
 - Ket qua 46,9%.
+  - **Insight**: Dieu ta hoc duoc.
+  - **Đại lượng đo**: Ti le thanh cong.
+  - **Thiết lập**: Hardware: paper không nêu.
 
 $$
 x = y
@@ -38,12 +43,15 @@ $$
 ### Paper B (arXiv 2222.22222)
 
 - Ket qua.
+  - **Insight**: Dieu ta hoc duoc.
+  - **Metrics**: Success rate.
+  - **Setup**: Hardware: not stated in the paper.
 
-## 3. So sanh
+## 3. Boi canh nghien cuu
 
-| A | B |
-|---|---|
-| 1 | 2 |
+**Bai nen tang**
+
+- Khong co.
 
 ## 4. Ket luan
 
@@ -112,8 +120,13 @@ def test_report_structure_failures(mutate) -> None:
 
 
 def test_report_structure_requires_ordered_sections() -> None:
-    swapped = GOOD_REPORT.replace("## 3. So sanh", "## 4. X").replace("## 4. Ket luan", "## 3. Y")
+    swapped = GOOD_REPORT.replace("## 4. Ket luan", "## 5. X").replace("## 5. Tai lieu", "## 4. Y")
     assert v.check_report_structure(swapped, 2).status == "FAIL"
+
+
+def test_context_section_check() -> None:
+    assert v.check_context_section(GOOD_REPORT).status == "PASS"
+    assert v.check_context_section(GOOD_REPORT.replace("**Bai nen tang**\n\n- Khong co.\n", "")).status == "FAIL"
 
 
 def test_arxiv_link_missing_fails() -> None:
@@ -137,6 +150,26 @@ def test_internal_lines_detected(line: str) -> None:
 def test_internal_lines_ignore_prose_and_code() -> None:
     prose = "Gom nhieu pipeline toi uu quy dao.\n```\nPMRL quality: x\n```\n"
     assert v.check_no_internal_lines(GOOD_REPORT + prose).status == "PASS"
+
+
+def test_results_format_requires_insight_metrics_setup() -> None:
+    assert v.check_results_format(GOOD_REPORT).status == "PASS"
+    broken = GOOD_REPORT.replace("  - **Metrics**: Success rate.\n", "")
+    check = v.check_results_format(broken)
+    assert check.status == "FAIL" and "Paper B" in check.detail and "Metrics" in check.detail
+
+
+def test_table_numbers_must_occur_in_the_paper_source() -> None:
+    table = (
+        "  | Benchmark | Metric | Diffuser | Best baseline |\n  |---|---|---|---|\n"
+        "  | Maze2D U-Maze | Score ↑ | {value} | 33,2 (MPPI-2) |\n"
+    )
+    run = make_run(sources={"arxiv_1111.11111": "Score 46.9 +- 3.1 and 33.2.", "arxiv_2222.22222": "x"})
+    good = GOOD_REPORT.replace("- Ket qua 46,9%.\n", "- Ket qua 46,9%.\n" + table.format(value="46,9 ± 3,1"), 1)
+    assert v.check_table_numbers(good, run).status == "PASS"
+    bad = GOOD_REPORT.replace("- Ket qua 46,9%.\n", "- Ket qua 46,9%.\n" + table.format(value="91,7"), 1)
+    check = v.check_table_numbers(bad, run)
+    assert check.status == "FAIL" and "91,7" in check.detail
 
 
 # --- QUALITY ---
@@ -205,11 +238,8 @@ def test_display_equation_limit() -> None:
     assert v.check_equations(many, 2, th).status == "WARN"
 
 
-def test_comparison_table_required_only_if_baseline_has_one() -> None:
-    no_table = make_run(report=GOOD_REPORT.replace("| A | B |\n|---|---|\n| 1 | 2 |", "text"))
-    assert v.check_comparison_table(make_run(), no_table).status == "WARN"
-    assert v.check_comparison_table(no_table, make_run()).status == "PASS"
-    assert v.check_comparison_table(make_run(), make_run()).status == "PASS"
+def test_comparison_table_check_is_removed() -> None:
+    assert not hasattr(v, "check_comparison_table")
 
 
 # --- LATENCY / orchestration ---
@@ -234,16 +264,31 @@ def test_quality_warning_does_not_fail_unless_strict() -> None:
     assert v.exit_code(v.verify(make_run(), worse, strict=True)) == 1
 
 
+def _five_section_copy(tmp_path: Path) -> Path:
+    """Copy the frozen baseline, replacing its legacy comparison section (old ``## 3.``) with a context stub."""
+
+    target = tmp_path / "baseline5"
+    shutil.copytree(BASELINE_DIR, target)
+    text = (target / "report.md").read_text(encoding="utf-8")
+    text = re.sub(r"(?ms)^## 3\..*?(?=^## 4\.)", "## 3. Bối cảnh nghiên cứu\n\nChưa có dữ liệu trích dẫn.\n\n", text)
+    (target / "report.md").write_text(text, encoding="utf-8")
+    return target
+
+
 def test_real_baseline_verifies_against_itself(tmp_path: Path) -> None:
-    run = v.load_run(BASELINE_DIR)
+    # The frozen baseline report has a legacy comparison as section 3; verify a
+    # copy whose section 3 is replaced by a research-context stub.
+    baseline = _five_section_copy(tmp_path)
+    run = v.load_run(baseline)
     assert len(run.paper_ids) == 3 and run.sources and run.card_statuses
     checks = v.verify(run, run)
-    failed = [c for c in checks if c.group in ("HARD", "QUALITY") and c.status != "PASS"]
+    # The frozen baseline predates the results format (Insight/Metrics/Setup), so skip those checks.
+    failed = [c for c in checks if c.group in ("HARD", "QUALITY") and c.status != "PASS" and not c.name.startswith("results_")]
     assert not failed, failed
     out = tmp_path / "verify.json"
-    code = v.main(["--baseline", str(BASELINE_DIR), "--candidate", str(BASELINE_DIR), "--out", str(out)])
-    assert code == 0
-    assert json.loads(out.read_text())["exit_code"] == 0
+    code = v.main(["--baseline", str(baseline), "--candidate", str(baseline), "--out", str(out)])
+    assert code == 1  # results_format FAILs on the legacy report; everything else passes
+    assert [c["name"] for c in json.loads(out.read_text())["checks"] if c["status"] == "FAIL" and c["group"] != "LATENCY"] == ["results_format"]
 
 
 # --- run_scenario plumbing (stub graph, no network, no LLM) ---
