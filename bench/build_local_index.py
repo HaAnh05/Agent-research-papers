@@ -100,7 +100,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--parquet", default=str(ROOT / "data/arxiv/metadata.parquet"))
     parser.add_argument("--out", default=str(ROOT / "data/arxiv/index.sqlite"))
-    parser.add_argument("--categories-prefix", default=None, help='keep only categories with this prefix, e.g. "cs."')
+    parser.add_argument("--categories-prefix", default="cs.", help='keep papers with any category starting with this prefix (default "cs." keeps ~1M papers, ~2.4 GB); pass "" for all 3.1M (~6.2 GB)')
     parser.add_argument("--batch-rows", type=int, default=50_000)
     parser.add_argument("--optimize", action="store_true", help="run FTS5 'optimize' after the build (slower build)")
     parser.add_argument("--bench-only", action="store_true", help="skip the build; time the existing index")
