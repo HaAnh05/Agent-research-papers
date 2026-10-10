@@ -140,6 +140,26 @@ class RefResolver:
             return None
         return {"title": " ".join(str(row[0]).split()), "year": str(row[1] or "")[:4]}
 
+    def lookup_record(self, arxiv_id: str) -> Optional[Dict[str, str]]:
+        """Return ``{"title", "year", "abstract"}`` for an id in the index, else ``None``."""
+
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT title, first_version_date, abstract FROM papers WHERE paper_id = ?", (arxiv_id,)
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if not row:
+            return None
+        return {
+            "title": " ".join(str(row[0]).split()),
+            "year": str(row[1] or "")[:4],
+            "abstract": " ".join(str(row[2] or "").split()),
+        }
+
     # -- internals ------------------------------------------------------------
 
     def _resolve(self, ref: PaperReference) -> Optional[Resolution]:

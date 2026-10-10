@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.openalex.org"
 _WORK_FIELDS = "id,title,publication_year,cited_by_count,ids,doi,locations"
+_SIM_FIELDS = "id,doi,ids,title,publication_year,cited_by_count,referenced_works,authorships"
 _ARXIV_URL_RE = re.compile(
     r"arxiv\.org/(?:abs|pdf)/((?:\d{4}\.\d{4,5}|[a-z][a-z.\-]*/\d{7}))(?:v\d+)?(?:\.pdf)?",
     re.IGNORECASE,
@@ -121,6 +122,37 @@ class OpenAlexClient:
             return None
         results = data.get("results")
         return [item for item in results if isinstance(item, dict)] if isinstance(results, list) else None
+
+    # -- batched queries for the similarity graph ---------------------------------
+
+    def _results(self, params: Dict[str, str]) -> Optional[List[Dict[str, Any]]]:
+        data = self._get("/works", params)
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            return None
+        return [item for item in data["results"] if isinstance(item, dict)]
+
+    def works_by_arxiv_ids(
+        self, arxiv_ids: List[str], select: str = _SIM_FIELDS
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Works for up to 50 arXiv ids in one request (DOI ``10.48550/arxiv.<id>``)."""
+
+        dois = "|".join(f"10.48550/arxiv.{i}" for i in arxiv_ids[:50])
+        return self._results({"filter": f"doi:{dois}", "per_page": "50", "select": select})
+
+    def works_by_ids(self, work_ids: List[str], select: str = _SIM_FIELDS) -> Optional[List[Dict[str, Any]]]:
+        """Works for up to 50 OpenAlex ids in one request."""
+
+        ids = "|".join(short_id(i) for i in work_ids[:50])
+        return self._results({"filter": f"openalex_id:{ids}", "per_page": "50", "select": select})
+
+    def citer_ids(self, work_id: str, per_page: int = 100) -> Optional[List[str]]:
+        """Short ids of the most cited works citing ``work_id``."""
+
+        items = self._results({
+            "filter": f"cites:{short_id(work_id)}", "sort": "cited_by_count:desc",
+            "per_page": str(per_page), "select": "id",
+        })
+        return None if items is None else [short_id(i.get("id")) for i in items if i.get("id")]
 
     # -- internals ------------------------------------------------------------
 

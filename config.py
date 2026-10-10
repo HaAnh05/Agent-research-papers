@@ -103,6 +103,12 @@ class AppConfig:
     OPENALEX_MIN_INTERVAL_SEC: float = float(os.getenv("OPENALEX_MIN_INTERVAL_SEC", "0.2"))
     OPENALEX_CACHE_DIR: Path = CACHE_DIR / "openalex"
     CITATION_TOP_N: int = int(os.getenv("CITATION_TOP_N", "5"))
+    # Similarity graph (nodes/similarity_graph.py): Connected-Papers-style graph.
+    CITATION_SIMILARITY_ENABLED: bool = os.getenv("CITATION_SIMILARITY_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    CITATION_SIMILARITY_NODES: int = int(os.getenv("CITATION_SIMILARITY_NODES", "40"))
+    CITATION_SIMILARITY_POOL: int = int(os.getenv("CITATION_SIMILARITY_POOL", "300"))
+    CITATION_SIMILARITY_EDGES_PER_NODE: int = int(os.getenv("CITATION_SIMILARITY_EDGES_PER_NODE", "4"))
+    CITATION_SIMILARITY_BUDGET_SEC: float = float(os.getenv("CITATION_SIMILARITY_BUDGET_SEC", "60"))
 
 
     def __init__(self) -> None:
