@@ -383,6 +383,17 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 - **Cấu hình**: `OPENALEX_API_KEY` (env/.env), `OPENALEX_MIN_INTERVAL_SEC` (0,2), `CITATION_TOP_N` (5), `CITATION_INDEX_PATH` (mặc định `data/arxiv/index.sqlite`, hoặc `LOCAL_INDEX_PATH`). Cache OpenAlex: `data/cache/openalex/<sha256(url không có key)>.json` (không lưu key).
 - Script thử offline (index thật, không OpenAlex): `.venv/bin/python -I bench/citation_graph_probe.py [thư mục]`.
 
+#### Đồ thị tương đồng (`nodes/similarity_graph.py`, kiểu Connected Papers)
+
+- Lưu ở `citation_graph["similarity"]`, API trả thêm `citationGraph.similarity` (chỉ khi có; khóa giữ snake_case): `{nodes:[{id, arxiv_id, title, year, cited_by_count, first_author, abstract, similarity, role:"origin"|"similar", url}], edges:[{source, target, weight}], prior_works:[… + support], derivative_works:[… + support], stats:{seeds, pool, requests, cache_hits, duration_ms, status:"ok"|"no_key"|"error"|"partial"}}`. UI sau này: cỡ nút = `cited_by_count`, màu = `year`, cạnh = `weight`, nút `origin` nổi bật.
+- **Seed** = tham khảo HTML đã giải ra arXiv id (ánh xạ sang W id bằng 1 lệnh lọc DOI cho ≤ 50 id) + `referenced_works` của bài đã chọn nếu có (OpenAlex hay để trống `referenced_works` với preprint). **Pool** = bài trích dẫn từng seed và bài đã chọn (100 bài nhiều trích dẫn nhất mỗi lần), giữ `CITATION_SIMILARITY_POOL` (300) bài trích dẫn nhiều seed nhất, lấy chi tiết theo lô 50.
+- **Nhận diện bài**: arXiv id lấy từ bản đồ seed W→arXiv (DOI lookup), rồi DOI OpenAlex, rồi khớp chính xác tiêu đề đã chuẩn hóa với index cục bộ (bỏ qua mơ hồ / < 4 từ). Nếu bài có trong index → `title`, `year`, `abstract` lấy từ index (`title_source: "index"`), vì tiêu đề OpenAlex của vài preprint bị sai; không có trong index nhưng là seed → tiêu đề trong danh mục HTML (`"reference"`); còn lại `"openalex"` (origin thiếu dữ liệu: `"paper"`).
+- **Điểm** = cosine bibliographic coupling `|refs ∩ seeds| / √(|refs|·|seeds|)` + `CITATION_SIMILARITY_DIRECT_BONUS` (0,10) nếu bài trích dẫn trực tiếp bài đã chọn (thay co-citation thật, vì không tốn thêm request) + `CITATION_SIMILARITY_INDEX_BONUS` (0,08) nếu bài có trong index cục bộ (cs.*); bài chia sẻ < `CITATION_SIMILARITY_MIN_SHARED` (1) seed bị loại trừ khi trích dẫn trực tiếp. Giữ `CITATION_SIMILARITY_NODES` (40) bài cao nhất; `similarity` của nút = cosine thuần.
+- **Cạnh** = cosine tập tham khảo giữa các nút (origin dùng seed của chính nó); mỗi nút giữ `CITATION_SIMILARITY_EDGES_PER_NODE` (4) cạnh mạnh nhất ≥ 0,05; vô hướng, mỗi cặp một lần. **Prior works** = tài liệu được các nút trích dẫn nhiều nhất (top 10); **derivative works** = bài trong pool trích dẫn nhiều nút nhất (top 10, tính từ dữ liệu đã lấy).
+- **Lọc prior/derivative**: bỏ bài không xác minh được (không có arXiv id sau khi khớp DOI/tiêu đề, `referenced_works` rỗng và `title_source == "openalex"`); số bài bỏ ghi ở `stats.unverified_dropped`; danh sách được bù cho đủ 10.
+- **Ngân sách**: `CITATION_SIMILARITY_BUDGET_SEC` (60 s, đồng hồ thật; tính cả các lần tra tiêu đề trong index cục bộ) — hết giờ thì dừng gọi request và tra index và trả đồ thị `partial` từ dữ liệu đang có. Request lỗi cũng cho `partial` (hoặc `error` nếu chưa có gì). Tắt hẳn: `CITATION_SIMILARITY_ENABLED=false`. Node không bao giờ raise.
+- Probe thật (cần mạng + key): `.venv/bin/python -I bench/similarity_graph_probe.py <arxiv_id> [--out file.json]`. Test offline: `tests/test_similarity_graph.py`.
+
 ---
 
 ### 3.12. Node: `error_handler` (`nodes/error_handler.py`)

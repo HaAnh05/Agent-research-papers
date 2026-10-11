@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import config
 from state import PaperItem, ResearchState
+from nodes.similarity_graph import build_similarity_graph
 from tools.openalex import OpenAlexClient, arxiv_id_of_work, short_id
 from tools.ref_resolver import METHODS, RefResolver, clean_arxiv_id
 
@@ -267,6 +268,13 @@ def build_citation_graph(
     }
 
 
+def _empty_similarity(status: str) -> Dict[str, Any]:
+    return {
+        "nodes": [], "edges": [], "prior_works": [], "derivative_works": [],
+        "stats": {"seeds": 0, "pool": 0, "requests": 0, "cache_hits": 0, "unverified_dropped": 0, "duration_ms": 0, "status": status},
+    }
+
+
 def citation_graph_node(state: ResearchState) -> Dict[str, Any]:
     """LangGraph node.  Never raises: a failure yields an empty graph and a log line."""
 
@@ -284,13 +292,23 @@ def citation_graph_node(state: ResearchState) -> Dict[str, Any]:
             "stats": {"refs_total": 0, "refs_resolved": 0, "refs_ambiguous": 0,
                       "by_method": {m: 0 for m in METHODS}, "openalex": "error" if client.has_key else "no_key"},
         }
-    finally:
-        resolver.close()
     stats = graph["stats"]
     logs.append(
         f"[citation_graph] refs {stats['refs_resolved']}/{stats['refs_total']} resolved, "
         f"{len(graph['nodes'])} nodes, {len(graph['edges'])} edges, openalex={stats['openalex']}"
     )
+    if config.CITATION_SIMILARITY_ENABLED and papers:
+        try:
+            graph["similarity"] = build_similarity_graph(papers, client, resolver)
+        except Exception as exc:  # noqa: BLE001 - optional enrichment must not fail the run
+            logs.append(f"[citation_graph] Bỏ qua đồ thị liên quan do lỗi: {type(exc).__name__}")
+            graph["similarity"] = _empty_similarity("error")
+        sim = graph["similarity"]["stats"]
+        logs.append(
+            f"[citation_graph] similarity {len(graph['similarity']['nodes'])} nodes, "
+            f"{len(graph['similarity']['edges'])} edges, seeds={sim['seeds']}, pool={sim['pool']}, status={sim['status']}"
+        )
+    resolver.close()
     timing = {
         "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
         "llmMs": 0,

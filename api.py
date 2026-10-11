@@ -1295,6 +1295,68 @@ def _report_id_from_state(state: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
+    """Bounded, JSON-safe copy of ``citation_graph["similarity"]`` or ``None``."""
+
+    if not isinstance(value, Mapping) or not isinstance(value.get("nodes"), list):
+        return None
+
+    def num(item: Any, digits: int = 4) -> float | None:
+        return round(float(item), digits) if isinstance(item, (int, float)) and not isinstance(item, bool) else None
+
+    def count(item: Any) -> int | None:
+        return item if isinstance(item, int) and not isinstance(item, bool) and item >= 0 else None
+
+    def text(item: Any, limit: int) -> str | None:
+        return _safe_text(item, limit) if item not in (None, "") else None
+
+    def work(item: Any, limit_abstract: int = 1500) -> dict[str, Any] | None:
+        if not isinstance(item, Mapping) or not item.get("id"):
+            return None
+        out = {
+            "id": text(item.get("id"), 120),
+            "arxiv_id": text(item.get("arxiv_id"), 40),
+            "title": text(item.get("title"), 300) or "",
+            "year": count(item.get("year")),
+            "cited_by_count": count(item.get("cited_by_count")),
+            "title_source": text(item.get("title_source"), 12),
+            "first_author": text(item.get("first_author"), 120) or "",
+            "abstract": text(item.get("abstract"), limit_abstract) or "",
+            "similarity": num(item.get("similarity")),
+            "role": text(item.get("role"), 20),
+            "url": text(item.get("url"), 300) or "",
+        }
+        if "support" in item:
+            out["support"] = count(item.get("support")) or 0
+        return out
+
+    def works(items: Any, limit: int) -> list[dict[str, Any]]:
+        return [w for w in (work(i) for i in (items or [])[:limit]) if w]
+
+    edges = [
+        {"source": text(e.get("source"), 120), "target": text(e.get("target"), 120), "weight": num(e.get("weight")) or 0.0}
+        for e in (value.get("edges") or [])[:600]
+        if isinstance(e, Mapping) and e.get("source") and e.get("target")
+    ]
+    raw = value.get("stats") if isinstance(value.get("stats"), Mapping) else {}
+    status = raw.get("status")
+    stats = {
+        "seeds": count(raw.get("seeds")) or 0,
+        "pool": count(raw.get("pool")) or 0,
+        "requests": count(raw.get("requests")) or 0,
+        "cache_hits": count(raw.get("cache_hits")) or 0,
+        "duration_ms": count(raw.get("duration_ms")) or 0,
+        "unverified_dropped": count(raw.get("unverified_dropped")) or 0,
+        "status": status if status in {"ok", "no_key", "error", "partial"} else "error",
+    }
+    return {
+        "nodes": works(value["nodes"], 100), "edges": edges,
+        "prior_works": works(value.get("prior_works"), 20),
+        "derivative_works": works(value.get("derivative_works"), 20),
+        "stats": stats,
+    }
+
+
 def _public_citation_graph(value: Any) -> dict[str, Any] | None:
     """Return a bounded, JSON-safe copy of the citation graph, or ``None``."""
 
@@ -1334,7 +1396,11 @@ def _public_citation_graph(value: Any) -> dict[str, Any] | None:
         "by_method": {_safe_text(k, 30): count(v) or 0 for k, v in list(by_method.items())[:10]},
         "openalex": raw_stats.get("openalex") if raw_stats.get("openalex") in {"ok", "no_key", "error"} else "error",
     }
-    return {"nodes": nodes, "edges": edges, "stats": stats}
+    public: dict[str, Any] = {"nodes": nodes, "edges": edges, "stats": stats}
+    similarity = _public_similarity_graph(value.get("similarity"))
+    if similarity is not None:
+        public["similarity"] = similarity
+    return public
 
 
 def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> RunResult:

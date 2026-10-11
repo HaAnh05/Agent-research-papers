@@ -140,6 +140,32 @@ class RefResolver:
             return None
         return {"title": " ".join(str(row[0]).split()), "year": str(row[1] or "")[:4]}
 
+    def resolve_title(self, title: str) -> Optional[str]:
+        """arXiv id whose normalized title equals ``title`` in the index; ``None`` if absent,
+        ambiguous or shorter than ``MIN_TITLE_WORDS`` words (the ``index_title`` rule)."""
+
+        return self._title_lookup(title)
+
+    def lookup_record(self, arxiv_id: str) -> Optional[Dict[str, str]]:
+        """Return ``{"title", "year", "abstract"}`` for an id in the index, else ``None``."""
+
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT title, first_version_date, abstract FROM papers WHERE paper_id = ?", (arxiv_id,)
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        if not row:
+            return None
+        return {
+            "title": " ".join(str(row[0]).split()),
+            "year": str(row[1] or "")[:4],
+            "abstract": " ".join(str(row[2] or "").split()),
+        }
+
     # -- internals ------------------------------------------------------------
 
     def _resolve(self, ref: PaperReference) -> Optional[Resolution]:
