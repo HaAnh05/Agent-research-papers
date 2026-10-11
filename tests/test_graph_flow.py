@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from graph import build_research_graph, route_after_router, route_after_eval_search, route_after_write_notes
+from graph import build_research_graph, route_after_router, route_after_eval_search, route_after_read_paper
 from state import ResearchState, PaperItem
 from config import config
 from text_utils import compact_message
@@ -29,6 +29,7 @@ def test_graph_compilation():
         "citation_graph",
         "final_report",
         "error_handler",
+        "answer_followup",
     }
     assert "search_papers" in graph.nodes
     assert "eval_search" in graph.nodes
@@ -48,6 +49,8 @@ def test_routing_logic():
     assert route_after_router({"intent": "direct_read", "selected_papers": [], "status": "running"}) == "search_papers"
     assert route_after_router({"intent": "search", "status": "running"}) == "search_papers"
     assert route_after_router({"status": "error"}) == "error_handler"
+    assert route_after_router({"intent": "followup", "followup_context": {"reportId": "r.md"}, "status": "running"}) == "answer_followup"
+    assert route_after_router({"intent": "followup", "status": "running"}) == "search_papers"
 
     # Test route_after_eval_search
     assert route_after_eval_search({"eval_passed": True, "status": "running"}) == "read_paper"
@@ -60,9 +63,9 @@ def test_routing_logic():
         "status": "running",
     }) == "error_handler"
 
-    # Test route_after_write_notes
+    # Test route_after_read_paper: fan out to the three parallel branches
     dummy_paper = PaperItem(paper_id="p1", title="Test Paper 1")
-    assert route_after_write_notes({"selected_papers": [dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "direct_read", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"
+    assert set(route_after_read_paper({"selected_papers": [dummy_paper], "status": "running"})) == {
+        "write_notes", "citation_graph", "web_enrich",
+    }
+    assert route_after_read_paper({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"

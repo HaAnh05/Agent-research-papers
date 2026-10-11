@@ -15,6 +15,7 @@ from nodes.write_notes import write_notes_node
 from nodes.citation_graph import citation_graph_node
 from nodes.final_report import final_report_node
 from nodes.error_handler import error_handler_node
+from nodes.answer_followup import answer_followup_node
 
 
 # --- CONDITIONAL ROUTING LOGIC ---
@@ -23,6 +24,8 @@ def route_after_router(state: ResearchState) -> str:
     """CE1: route supplied papers directly; all text-only requests search."""
     if state.get("status") == "error":
         return "error_handler"
+    if state.get("intent") == "followup" and state.get("followup_context"):
+        return "answer_followup"
     if state.get("intent") == "direct_read" and state.get("selected_papers"):
         return "read_paper"
     return "search_papers"
@@ -49,11 +52,15 @@ def route_after_eval_search(state: ResearchState) -> str:
     return "error_handler"
 
 
-def route_after_write_notes(state: ResearchState) -> str:
-    """CE3: lỗi thì error_handler, ngược lại sang citation_graph rồi báo cáo cuối."""
+# Branches that run in parallel after ``read_paper`` and join at ``final_report``.
+PARALLEL_BRANCHES = ["write_notes", "citation_graph", "web_enrich"]
+
+
+def route_after_read_paper(state: ResearchState):
+    """CE3: on error go to error_handler, otherwise fan out to the parallel branches."""
     if state.get("status") == "error":
         return "error_handler"
-    return "citation_graph"
+    return list(PARALLEL_BRANCHES)
 
 
 # --- GRAPH COMPILATION ---
@@ -73,6 +80,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     workflow.add_node("citation_graph", citation_graph_node)
     workflow.add_node("final_report", final_report_node)
     workflow.add_node("error_handler", error_handler_node)
+    workflow.add_node("answer_followup", answer_followup_node)
 
     # 2. Build Edges & Conditional Edges
     workflow.add_edge(START, "router")
@@ -84,6 +92,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
         {
             "read_paper": "read_paper",
             "search_papers": "search_papers",
+            "answer_followup": "answer_followup",
             "error_handler": "error_handler",
         },
     )
@@ -104,23 +113,23 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     # Loop back from refine to search
     workflow.add_edge("refine_query", "search_papers")
 
-    # Core Pipeline
-    workflow.add_edge("read_paper", "web_enrich")
-    workflow.add_edge("web_enrich", "write_notes")
-
-    # CE3: citation graph (then final report) or error
+    # CE3: after read_paper, fan out to write_notes (PMRL LLM), citation_graph
+    # and web_enrich; final_report waits for all three.  Each branch writes its
+    # own state keys (see ResearchState.paper_notes / paper_enrichment).
     workflow.add_conditional_edges(
-        "write_notes",
-        route_after_write_notes,
+        "read_paper",
+        route_after_read_paper,
         {
+            "write_notes": "write_notes",
             "citation_graph": "citation_graph",
+            "web_enrich": "web_enrich",
             "error_handler": "error_handler",
         },
     )
-
-    workflow.add_edge("citation_graph", "final_report")
+    workflow.add_edge(PARALLEL_BRANCHES, "final_report")
     workflow.add_edge("final_report", END)
     workflow.add_edge("error_handler", END)
+    workflow.add_edge("answer_followup", END)
 
     # 3. Compile with Checkpointer
     saver = checkpointer or MemorySaver()

@@ -17,7 +17,7 @@ from tools.llm_provider import get_llm, invoke_structured_output
 
 # Bump when the PMRL schema or its grounding rules change: old cache entries
 # then miss instead of loading notes without the structured fields.
-PMRL_NOTES_VERSION = "n2"
+PMRL_NOTES_VERSION = "n3"
 
 _TABLE_MAX_ROWS = 40
 _TABLE_MAX_CHARS = 2500
@@ -203,6 +203,7 @@ class PMRLCoreGeneration(BaseModel):
     result: str = Field(description="Key empirical results with datasets, metrics and numbers.")
     limitation: str = Field(description="Limitations, trade-offs, assumptions and future work.")
     method_name: str = Field(default="", description="Short name the paper gives its own method; empty if none.")
+    intuition: str = Field(default="", description="The core idea in plain words and why it should work; empty if the paper gives no basis.")
     insights: List[Insight] = Field(default_factory=list, description="Findings a reader cannot get from the abstract alone.")
     eval_settings: List[EvalSetting] = Field(default_factory=list, description="Key benchmark/metric rows: own method vs strongest baseline.")
     setup: Setup = Field(default_factory=Setup, description="Datasets, key training config, hardware and compute as stated in the paper.")
@@ -235,7 +236,10 @@ def _structured_fields(source: Any) -> Dict[str, Any]:
     """
 
     get = source.get if isinstance(source, dict) else lambda name, default=None: getattr(source, name, default)
-    fields: Dict[str, Any] = {"method_name": str(get("method_name", "") or "")}
+    fields: Dict[str, Any] = {
+        "method_name": str(get("method_name", "") or ""),
+        "intuition": str(get("intuition", "") or ""),
+    }
     for name, model in (("insights", Insight), ("eval_settings", EvalSetting)):
         try:
             fields[name] = [model.model_validate(item) for item in (get(name, None) or [])]
@@ -329,6 +333,7 @@ def analyze_paper_notes(
             "result": notes.result,
             "limitation": notes.limitation,
             "method_name": notes.method_name,
+            "intuition": notes.intuition,
             "insights": [item.model_dump() for item in notes.insights],
             "eval_settings": [item.model_dump() for item in notes.eval_settings],
             "setup": notes.setup.model_dump(),
@@ -385,33 +390,16 @@ def _run_notes_in_parallel(
 
 
 def write_notes_node(state: ResearchState) -> Dict[str, Any]:
-    """Create or finalize detailed PMRL notes."""
+    """Create detailed PMRL notes (one LLM call per paper, run in parallel).
+
+    This node runs next to ``citation_graph`` and ``web_enrich`` after
+    ``read_paper``.  It does not return ``selected_papers``: the notes go to
+    ``paper_notes`` (keyed by paper id) and ``final_report`` joins them.
+    """
 
     papers = list(state.get("selected_papers", []) or [])
     started = time.perf_counter()
     logs = [f"[write_notes] Tạo PMRL cho {len(papers)} bài"]
-
-    # web_enrich performs independent GitHub + PMRL work in its bounded pool;
-    # retain this node in the graph and consume those prepared notes.
-    precomputed = [
-        paper
-        for paper in papers
-        if paper.notes is not None and paper.processing_metadata.get("pmrl_precomputed")
-    ]
-    if len(precomputed) == len(papers):
-        analyzed = [copy.deepcopy(paper) for paper in papers]
-        for paper in analyzed:
-            if paper.notes_quality == "invalid":
-                logs.append(f"[write_notes] {paper.paper_id}: PMRL fallback")
-            else:
-                logs.append(f"[write_notes] {paper.paper_id}: PMRL ready")
-        timing = {
-            "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
-            "llmMs": 0,
-            "reused": True,
-            "papers": {paper.paper_id: paper.processing_metadata.get("pmrl", {}) for paper in analyzed},
-        }
-        return {"selected_papers": analyzed, "trace_logs": logs, "node_timings": {"write_notes": timing}}
 
     llm: Any | None = None
     try:
@@ -427,8 +415,18 @@ def write_notes_node(state: ResearchState) -> Dict[str, Any]:
         "llmMs": total_llm_ms,
         "papers": paper_timings,
     }
+    paper_notes: Dict[str, Dict[str, Any]] = {}
+    for paper in analyzed:
+        metadata = paper.processing_metadata or {}
+        paper_notes[paper.paper_id] = {
+            "notes": paper.notes,
+            "notes_quality": paper.notes_quality,
+            "processing_metadata": {
+                key: metadata[key] for key in ("pmrl", "evalSettings") if key in metadata
+            },
+        }
     return {
-        "selected_papers": analyzed,
+        "paper_notes": paper_notes,
         "trace_logs": logs,
         "error_logs": errors,
         "node_timings": {"write_notes": timing},

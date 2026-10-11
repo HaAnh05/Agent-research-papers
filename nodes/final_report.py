@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import re
 import time
 import uuid
+from decimal import Decimal, InvalidOperation
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List
@@ -17,15 +19,15 @@ from prompts.final_report_prompt import (
     REPORT_OVERVIEW_SYSTEM,
     REPORT_OVERVIEW_USER,
 )
-from state import PaperItem, ResearchState
+from state import OverviewMulti, OverviewSingle, PaperItem, ResearchState
 from text_utils import detect_response_language
 from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_cache, summary_cache_path
-from tools.llm_provider import extract_text_from_response, get_llm, invoke_text
+from tools.llm_provider import extract_text_from_response, get_llm, invoke_structured_output, invoke_text
 
 
 # Bump when the report prompts or assembly change, so cached reports from an
 # older layout are not reused.
-REPORT_VERSION = "p11"
+REPORT_VERSION = "p12"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -35,6 +37,38 @@ _INTERNAL_REPORT_LINE_RE = re.compile(
     r"delivered in .* per language mode|agent (?:status|self-review))\b",
     re.IGNORECASE,
 )
+
+
+def merge_branch_results(
+    papers: List[PaperItem],
+    paper_notes: Any,
+    paper_enrichment: Any,
+) -> List[PaperItem]:
+    """Join the parallel branches' per-paper results into copies of ``papers``.
+
+    ``write_notes`` and ``web_enrich`` run in parallel with ``citation_graph``
+    and write to separate state keys instead of ``selected_papers``, so no two
+    branches overwrite each other.  A paper with no entry keeps its fields.
+    """
+
+    notes_map = paper_notes if isinstance(paper_notes, dict) else {}
+    enrich_map = paper_enrichment if isinstance(paper_enrichment, dict) else {}
+    merged: List[PaperItem] = []
+    for paper in papers:
+        result = copy.deepcopy(paper)
+        result.processing_metadata = dict(result.processing_metadata or {})
+        notes_entry = notes_map.get(paper.paper_id)
+        if isinstance(notes_entry, dict):
+            result.notes = notes_entry.get("notes", result.notes)
+            result.notes_quality = notes_entry.get("notes_quality", result.notes_quality)
+            result.processing_metadata.update(notes_entry.get("processing_metadata") or {})
+        enrich_entry = enrich_map.get(paper.paper_id)
+        if isinstance(enrich_entry, dict):
+            result.github_repos = list(enrich_entry.get("github_repos") or [])
+            result.bibtex = enrich_entry.get("bibtex", result.bibtex)
+            result.processing_metadata.update(enrich_entry.get("processing_metadata") or {})
+        merged.append(result)
+    return merged
 
 
 def _is_internal_report_line(line: str) -> bool:
@@ -207,15 +241,23 @@ def _report_cache_key(
     return key, summary_cache_path(key)
 
 
-def _restore_report_cache(cached: Any) -> str | None:
-    """Return the report text of a cache entry, or ``None`` when it is unusable."""
+def _restore_report_cache(cached: Any) -> tuple[str, OverviewSingle | OverviewMulti | None] | None:
+    """Return ``(report_text, overview)`` of a cache entry, or ``None`` when it is unusable."""
 
     if not isinstance(cached, dict):
         return None
     report_text = cached.get("report_text")
     if not isinstance(report_text, str) or not report_text.strip():
         return None
-    return report_text
+    overview: OverviewSingle | OverviewMulti | None = None
+    raw = cached.get("overview")
+    if isinstance(raw, dict):
+        schema = OverviewMulti if "insights" in raw else OverviewSingle
+        try:
+            overview = schema.model_validate(raw)
+        except Exception:
+            overview = None
+    return report_text, overview
 
 
 # --- Parallel report synthesis ----------------------------------------------
@@ -240,6 +282,7 @@ _SECTION_LABELS: Dict[str, Dict[str, str]] = {
     "Vietnamese": {
         "problem": "Vấn đề",
         "method": "Phương pháp",
+        "intuition": "Ý tưởng cốt lõi",
         "result": "Kết quả chính",
         "limitation": "Hạn chế",
         "code": "Mã nguồn",
@@ -250,6 +293,7 @@ _SECTION_LABELS: Dict[str, Dict[str, str]] = {
     "English": {
         "problem": "Problem",
         "method": "Methodology",
+        "intuition": "Core idea",
         "result": "Key results",
         "limitation": "Limitations",
         "code": "Source code",
@@ -661,6 +705,7 @@ def _deterministic_paper_section(paper: PaperItem, language_mode: str) -> str:
         f"### {paper.title}",
         f"- **{labels['problem']}**: {notes.problem if notes else 'N/A'}",
         f"- **{labels['method']}**: {notes.method if notes else 'N/A'}",
+        *([f"  - **{labels['intuition']}**: {notes.intuition.strip()}"] if notes and notes.intuition.strip() else []),
         f"- **{labels['result']}**: {notes.result if notes else 'N/A'}",
         *_results_sub_lines(paper, language_mode),
         f"- **{labels['limitation']}**: {notes.limitation if notes else 'N/A'}",
@@ -677,6 +722,8 @@ def _structured_notes_text(paper: PaperItem) -> str:
     lines: List[str] = []
     if notes.method_name.strip():
         lines.append(f"Method name: {notes.method_name.strip()}")
+    if notes.intuition.strip():
+        lines.append(f"Intuition: {notes.intuition.strip()}")
     lines.append("Insights:")
     insights = [item for item in notes.insights if item.finding.strip()]
     lines += [
@@ -745,6 +792,7 @@ def build_section_messages(
         user_query=user_query,
         language_mode=language_mode,
         paper_breakdown=_paper_section_input(paper, index),
+        terms=_terms_text([paper]),
         label_problem=labels["problem"],
         label_method=labels["method"],
         label_result=labels["result"],
@@ -841,18 +889,71 @@ def _insights_context(paper: PaperItem) -> str:
     ) or "none"
 
 
+_TERM_TOKEN_RE = re.compile(r"\b(?:[A-Z][a-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z]{2,}[A-Za-z0-9]*)(?:-[A-Za-z0-9]+)*\b")
+_TERM_STOPWORDS = {"ARXIV", "PDF", "HTML", "NOT", "STATED", "THE", "AND", "FOR", "OF", "IN", "WITH"}
+
+
+def _terms_text(papers: List[PaperItem]) -> str:
+    """The fixed terms for the writing-style rule: names found in the notes.
+
+    Method name, metric names, benchmark names and component names (CamelCase or
+    ALL-CAPS tokens that recur in the notes).  Code builds it; the model must
+    use these terms exactly.
+    """
+
+    methods: List[str] = []
+    metrics: List[str] = []
+    benchmarks: List[str] = []
+    components: Dict[str, int] = {}
+    for paper in papers:
+        notes = paper.notes
+        if notes is None:
+            continue
+        if notes.method_name.strip() and notes.method_name.strip() not in methods:
+            methods.append(notes.method_name.strip())
+        for row in notes.eval_settings:
+            if row.metric.strip() and row.metric.strip() not in metrics:
+                metrics.append(row.metric.strip())
+            if row.benchmark.strip() and row.benchmark.strip() not in benchmarks:
+                benchmarks.append(row.benchmark.strip())
+        text = " ".join([notes.problem, notes.method, notes.result, notes.limitation, notes.intuition])
+        for token in _TERM_TOKEN_RE.findall(text):
+            if token.upper() not in _TERM_STOPWORDS:
+                components[token] = components.get(token, 0) + 1
+    known = {item.casefold() for item in methods + metrics + benchmarks}
+    component_names = [
+        name for name, count in sorted(components.items(), key=lambda pair: (-pair[1], pair[0]))
+        if count >= 2 and name.casefold() not in known
+    ][:12]
+    lines = []
+    for label, values in (
+        ("Method", methods), ("Metrics", metrics), ("Benchmarks and datasets", benchmarks), ("Components", component_names),
+    ):
+        if values:
+            lines.append(f"- {label}: " + "; ".join(values[:12]))
+    return "\n".join(lines) or "- (none found in the notes)"
+
+
 def _papers_context(papers: List[PaperItem]) -> str:
     """Compact per-paper context for the overview call (no full breakdown)."""
 
     blocks: List[str] = []
     for index, paper in enumerate(papers, 1):
         notes = paper.notes
+        setup = notes.setup if notes else None
+        setup_line = (
+            f"datasets {_clip(setup.datasets, 200) or 'not stated'}; training {_clip(setup.training_config, 200) or 'not stated'}; "
+            f"hardware {_clip(setup.hardware, 120) or 'NOT STATED IN THE PAPER'}"
+            if setup else "not available"
+        )
         blocks.append(
-            f"[{index}] {paper.title} (arXiv: {paper.arxiv_id or 'N/A'})\n"
+            f"[{index}] paperId: {paper.paper_id} | {paper.title} (arXiv: {paper.arxiv_id or 'N/A'})\n"
             f"- Problem excerpt: {_clip(notes.problem if notes else '', 500) or 'N/A'}\n"
             f"- Method excerpt: {_clip(notes.method if notes else '', 600) or 'N/A'}\n"
+            f"- Core idea: {_clip(notes.intuition if notes else '', 300) or 'N/A'}\n"
             f"- Key result excerpt: {_clip(notes.result if notes else '', 1200) or 'N/A'}\n"
             f"- Insights: {_insights_context(paper)}\n"
+            f"- Setup: {setup_line}\n"
             f"- Limitation excerpt: {_clip(notes.limitation if notes else '', 700) or 'N/A'}"
             + ("" if _source_quality_complete(paper) else "\n- Source extraction: incomplete; absent evidence is unverified")
         )
@@ -865,55 +966,20 @@ def build_overview_messages(
     title: str,
     language_mode: str,
 ) -> tuple[str, str]:
-    """Return the pure ``(system, user)`` pair for the overview call.
+    """Return the pure ``(system, user)`` pair for the overview call (JSON output)."""
 
-    Both variants write the summary + conclusion sections; the single-paper
-    variant keeps them shorter.
-    """
-
-    headings = _report_headings(language_mode)
-    if len(papers) == 1:
-        return REPORT_OVERVIEW_SINGLE_SYSTEM, REPORT_OVERVIEW_SINGLE_USER.format(
-            user_query=user_query,
-            report_title=title,
-            language_mode=language_mode,
-            papers_context=_papers_context(papers),
-            heading_summary=headings["summary"],
-            heading_conclusion=headings["conclusion"],
-        )
-    return REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER.format(
+    system, template = (
+        (REPORT_OVERVIEW_SINGLE_SYSTEM, REPORT_OVERVIEW_SINGLE_USER)
+        if len(papers) == 1
+        else (REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER)
+    )
+    return system, template.format(
         user_query=user_query,
         report_title=title,
         language_mode=language_mode,
         papers_context=_papers_context(papers),
-        heading_summary=headings["summary"],
-        heading_conclusion=headings["conclusion"],
+        terms=_terms_text(papers),
     )
-
-
-# The prompt asks for "4. <conclusion>" (section 3 is the code-built research
-# context); "3" stays accepted for outputs that follow the older numbering.
-_OVERVIEW_KEYS = {"1": "summary", "3": "conclusion", "4": "conclusion"}
-
-
-def _parse_overview(text: str) -> Dict[str, str]:
-    """Split the overview output into its bodies by the numbered ``##`` headings."""
-
-    sections: Dict[str, List[str]] = {}
-    current: str | None = None
-    for line in str(text or "").replace("\r\n", "\n").split("\n"):
-        heading = re.match(r"^\s{0,3}(#{1,6})\s*(?:(\d+)\s*[.)]?)?", line)
-        if heading and heading.group(1) == "##":
-            current = _OVERVIEW_KEYS.get(heading.group(2) or "")
-            if current is not None:
-                sections.setdefault(current, [])
-            continue
-        if heading and heading.group(1) == "#":
-            current = None
-            continue
-        if current is not None:
-            sections[current].append(line)
-    return {key: "\n".join(lines).strip() for key, lines in sections.items() if "\n".join(lines).strip()}
 
 
 def _write_overview(
@@ -922,18 +988,66 @@ def _write_overview(
     title: str,
     language_mode: str,
     papers: List[PaperItem],
-) -> tuple[Dict[str, str], Dict[str, int]]:
-    """One LLM call writing the summary and conclusion sections."""
+) -> tuple[OverviewSingle | OverviewMulti, Dict[str, int]]:
+    """One structured LLM call returning the overview JSON (single or multi schema)."""
 
     started = time.perf_counter()
     system_text, user_text = build_overview_messages(papers, user_query, title, language_mode)
+    schema = OverviewSingle if len(papers) == 1 else OverviewMulti
     llm_started = time.perf_counter()
-    response = invoke_text(llm, system_text, user_text)
+    overview = invoke_structured_output(
+        user_text, schema, llm=llm, provider=config.DEFAULT_PROVIDER, system=system_text,
+    )
     llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
-    raw = extract_text_from_response(response.content)
-    if not raw.strip():
+    if not overview.tldr.strip():
         raise ValueError("Empty overview response")
-    return _parse_overview(raw), {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}
+    return overview, {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}
+
+
+_OVERVIEW_TEXT: Dict[str, Dict[str, str]] = {
+    "Vietnamese": {"caveats": "Cần lưu ý", "takeaway": "Khuyến nghị", "why": "Ý nghĩa"},
+    "English": {"caveats": "Caveats", "takeaway": "Takeaway", "why": "Why it matters"},
+}
+
+
+def _bullet(text: str) -> str:
+    return "- " + " ".join(str(text).split())
+
+
+def render_overview_sections(
+    overview: OverviewSingle | OverviewMulti | None,
+    papers: List[PaperItem],
+    language_mode: str,
+) -> Dict[str, str]:
+    """Markdown bodies of the "Tóm tắt" and "Kết luận" sections, built from the overview JSON.
+
+    An empty part is omitted so the assembler falls back to deterministic text.
+    """
+
+    if overview is None:
+        return {}
+    texts = _OVERVIEW_TEXT.get(language_mode, _OVERVIEW_TEXT["English"])
+    summary: List[str] = []
+    conclusion: List[str] = []
+    if overview.tldr.strip():
+        summary.append(_bullet(overview.tldr))
+    if isinstance(overview, OverviewSingle):
+        summary += [_bullet(item) for item in overview.keyResults if item.strip()]
+        if overview.caveats:
+            conclusion.append(f"- **{texts['caveats']}**:")
+            conclusion += ["  " + _bullet(item) for item in overview.caveats if item.strip()]
+    else:
+        for item in overview.insights:
+            if item.finding.strip():
+                why = f" {' '.join(item.why.split())}" if item.why.strip() else ""
+                summary.append(f"- **{' '.join(item.finding.split())}**{why}")
+    if overview.takeaway.strip():
+        conclusion.append(_bullet(overview.takeaway))
+    return {
+        key: "\n".join(lines)
+        for key, lines in (("summary", summary), ("conclusion", conclusion))
+        if lines
+    }
 
 
 def _fallback_overview_part(
@@ -1001,6 +1115,251 @@ def _assemble_parallel_report(
     return _sanitize_report_text("\n\n".join(parts), title)
 
 
+# --- Chat answer (answerSummary), built by code ------------------------------
+
+_NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
+def _parse_number(value: str) -> Decimal | None:
+    text = str(value or "").replace("\u2212", "-")
+    text = re.sub(r"(?<=\d),(?=\d{3}(?!\d))", "", text)   # thousands separator
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text)            # decimal comma
+    match = _NUMBER_RE.search(text)
+    if not match:
+        return None
+    try:
+        return Decimal(match.group(0))
+    except InvalidOperation:
+        return None
+
+
+def _single_number(value: str) -> Decimal | None:
+    """The number of a plain value ("46.9", "12%", "46.9 ± 3.1"); ``None`` for compound values such as "1.00/0.87"."""
+
+    text = re.sub(r"\s*(?:±|\+/-|\+-)\s*[\d.,]+\s*%?", "", str(value or ""))
+    if len(re.findall(r"\d+(?:[.,]\d+)?", text)) != 1:
+        return None
+    return _parse_number(text)
+
+
+def _delta_text(method: str, baseline: str) -> str:
+    """Signed difference ``method - baseline`` when both are plain numbers, else empty."""
+
+    left, right = _single_number(method), _single_number(baseline)
+    if left is None or right is None:
+        return ""
+    places = max(-left.as_tuple().exponent, -right.as_tuple().exponent, 0)  # type: ignore[operator]
+    diff = left - right
+    return f"{diff:+.{places}f}"
+
+
+def _results_rows(paper: PaperItem) -> tuple[List[Dict[str, Any]], List[str]]:
+    """Data rows of the grounded results table (same rows as ``_results_table_lines``)."""
+
+    rows: List[Dict[str, Any]] = []
+    labels: List[str] = []
+    for row in (paper.notes.eval_settings if paper.notes else []):
+        metric = row.metric.strip()
+        unit = row.unit.strip()
+        if unit and unit.casefold() not in metric.casefold() and unit.casefold() not in row.method_value.casefold():
+            metric += f" ({unit})"
+        baseline_value = row.baseline_value.strip()
+        baseline = f"{baseline_value} {row.baseline_name.strip()}".strip() if baseline_value else ""
+        rows.append({
+            "setting": " ".join(row.benchmark.split()),
+            "metric": metric,
+            "method": row.method_value.strip(),
+            "baseline": baseline,
+            "delta": _delta_text(row.method_value, baseline_value) if baseline_value else "",
+            "higherIsBetter": row.higher_is_better,
+        })
+        label = " ".join(row.table_label.split())
+        if label and label not in labels:
+            labels.append(label)
+    return rows, labels
+
+
+def _foundation_titles(graph: Any, limit: int = 6) -> List[str]:
+    """Titles of the prior works: the similarity graph's list, else foundational citation nodes."""
+
+    if not isinstance(graph, dict):
+        return []
+    similarity = graph.get("similarity")
+    items: List[Any] = []
+    if isinstance(similarity, dict) and isinstance(similarity.get("prior_works"), list):
+        items = list(similarity["prior_works"])
+    if not items and isinstance(graph.get("nodes"), list):
+        items = sorted(
+            (node for node in graph["nodes"] if isinstance(node, dict) and node.get("role") == "foundational"),
+            key=lambda node: (-(node.get("support") or 0), -(node.get("cited_by_count") or 0)),
+        )
+    titles: List[str] = []
+    for item in items:
+        title = " ".join(str((item or {}).get("title") or "").split())[:140] if isinstance(item, dict) else ""
+        if title and title not in titles:
+            titles.append(title)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
+def _published_label(value: str) -> str:
+    match = re.match(r"^(\d{4})-(\d{2})", str(value or ""))
+    return f"{match.group(2)}/{match.group(1)}" if match else str(value or "")
+
+
+def _estimate_duration_sec(node_timings: Any) -> int:
+    """Wall-clock estimate: sequential nodes plus the slowest parallel branch."""
+
+    timings = node_timings if isinstance(node_timings, dict) else {}
+
+    def ms(name: str) -> int:
+        entry = timings.get(name)
+        value = entry.get("durationMs") if isinstance(entry, dict) else 0
+        return int(value) if isinstance(value, (int, float)) and value > 0 else 0
+
+    sequential = sum(ms(name) for name in ("router", "search_papers", "eval_search", "refine_query", "read_paper", "final_report"))
+    parallel = max([ms(name) for name in ("write_notes", "citation_graph", "web_enrich")] or [0])
+    return int(round((sequential + parallel) / 1000))
+
+
+def build_answer_summary(
+    papers: List[PaperItem],
+    overview: OverviewSingle | OverviewMulti | None,
+    language_mode: str,
+    *,
+    citation_graph: Any = None,
+    node_timings: Any = None,
+    report_id: str | None = None,
+    final_ms: int = 0,
+) -> Dict[str, Any]:
+    """The structured chat answer.  Prose comes from the overview JSON; numbers from grounded notes."""
+
+    graph_nodes = 0
+    if isinstance(citation_graph, dict):
+        similarity = citation_graph.get("similarity")
+        shown = similarity if isinstance(similarity, dict) and similarity.get("nodes") else citation_graph
+        graph_nodes = len(shown.get("nodes") or [])
+    timings = dict(node_timings) if isinstance(node_timings, dict) else {}
+    timings.setdefault("final_report", {"durationMs": final_ms})
+    actions = {
+        "reportId": report_id,
+        "bibtexCount": sum(1 for paper in papers if paper.bibtex),
+        "graphNodes": graph_nodes,
+    }
+    foundations = _foundation_titles(citation_graph)
+    blocks: List[Dict[str, Any]] = []
+    summary: Dict[str, Any] = {"kind": "multi" if len(papers) > 1 else "single"}
+
+    if len(papers) == 1:
+        paper = papers[0]
+        notes = paper.notes
+        over = overview if isinstance(overview, OverviewSingle) else None
+        summary["paper"] = {
+            "paperId": paper.paper_id,
+            "arxivId": paper.arxiv_id or "",
+            "title": paper.title,
+            "published": _published_label(paper.published),
+        }
+        lead = (over.tldr.strip() if over else "") or next(
+            (item.finding.strip() for item in (notes.insights if notes else []) if item.finding.strip()), ""
+        ) or _clip(notes.result if notes else "", 240)
+        if over and over.problem.strip():
+            blocks.append({"type": "problem", "text": over.problem.strip()})
+        intuition = (over.intuition.strip() if over else "") or (notes.intuition.strip() if notes else "")
+        if intuition:
+            blocks.append({"type": "intuition", "text": intuition})
+        # No insights block for one paper: PMRL insights are English, and the
+        # overview JSON (report language) holds keyResults and intuition instead.
+        if over and any(item.strip() for item in over.keyResults):
+            blocks.append({"type": "keyResults", "items": [" ".join(item.split()) for item in over.keyResults if item.strip()]})
+        metrics = (
+            [{"name": m.name.strip(), "meaning": m.meaning.strip(), "higherIsBetter": m.higherIsBetter} for m in over.metrics if m.name.strip()]
+            if over else []
+        )
+        if not metrics and notes:
+            seen: set[str] = set()
+            for row in notes.eval_settings:
+                key = row.metric.strip().casefold()
+                if key and key not in seen:
+                    seen.add(key)
+                    metrics.append({"name": row.metric.strip(), "meaning": row.metric_meaning.strip(), "higherIsBetter": row.higher_is_better})
+        if metrics:
+            blocks.append({"type": "metrics", "items": metrics})
+        hardware = notes.setup.hardware.strip() if notes else ""
+        setup_items = [" ".join(item.split()) for item in (over.setup if over else []) if item.strip()]
+        if not setup_items and notes:
+            setup_items = [
+                f"{label}: {value.strip()}"
+                for label, value in (
+                    ("Datasets", notes.setup.datasets), ("Training", notes.setup.training_config),
+                    ("Hardware", notes.setup.hardware), ("Compute", notes.setup.compute),
+                ) if value.strip()
+            ]
+        blocks.append({
+            "type": "setup", "items": setup_items, "hardware": hardware,
+            # UI shows "<name>: paper không nêu" for each missing item.
+            "missing": [] if hardware else ["Hardware"],
+        })
+        rows, labels = _results_rows(paper)
+        if rows:
+            blocks.append({
+                "type": "results", "grounded": True, "source": labels, "rows": rows,
+                "methodName": _method_column_name(paper, language_mode),
+            })
+        caveats = [" ".join(item.split()) for item in (over.caveats if over else []) if item.strip()]
+        if caveats:
+            blocks.append({"type": "caveats", "items": caveats})
+        if foundations:
+            blocks.append({"type": "foundations", "items": foundations})
+        if over and over.takeaway.strip():
+            blocks.append({"type": "takeaway", "text": over.takeaway.strip()})
+    else:
+        over_multi = overview if isinstance(overview, OverviewMulti) else None
+        summary["papers"] = [
+            {"paperId": p.paper_id, "arxivId": p.arxiv_id or "", "title": p.title, "published": _published_label(p.published)}
+            for p in papers
+        ]
+        lead = (over_multi.tldr.strip() if over_multi else "") or " ".join(
+            f"{p.title}." for p in papers[:3]
+        )
+        findings = [
+            {"finding": " ".join(item.finding.split()), "why": " ".join(item.why.split())}
+            for item in (over_multi.insights if over_multi else []) if item.finding.strip()
+        ]
+        if findings:
+            blocks.append({"type": "insights", "items": findings})
+        by_id = {entry.paperId.strip(): entry for entry in (over_multi.papers if over_multi else [])}
+        cards = []
+        for index, paper in enumerate(papers):
+            entry = by_id.get(paper.paper_id)
+            if entry is None and over_multi and index < len(over_multi.papers) and not over_multi.papers[index].paperId.strip():
+                entry = over_multi.papers[index]
+            notes = paper.notes
+            first_insight = next((i.finding.strip() for i in (notes.insights if notes else []) if i.finding.strip()), "")
+            cards.append({
+                "paperId": paper.paper_id,
+                "title": paper.title,
+                "year": (paper.published or "")[:4],
+                "intuition": (entry.intuition.strip() if entry else "") or (notes.intuition.strip() if notes else ""),
+                "keyResult": (entry.keyResult.strip() if entry else "") or first_insight or _clip(notes.result if notes else "", 200),
+            })
+        blocks.append({"type": "paperCards", "items": cards})
+        if foundations:
+            blocks.append({"type": "foundations", "items": foundations})
+        if over_multi and over_multi.takeaway.strip():
+            blocks.append({"type": "takeaway", "text": over_multi.takeaway.strip()})
+
+    summary.update({
+        "lead": lead,
+        "tldr": lead,
+        "blocks": blocks,
+        "actions": actions,
+        "durationSec": _estimate_duration_sec(timings),
+    })
+    return summary
+
+
 def _run_parallel_report(
     papers: List[PaperItem],
     *,
@@ -1043,20 +1402,24 @@ def _run_parallel_report(
             paper_blocks.append(block)
             section_timings[paper.paper_id] = section_timing
 
-        overview: Dict[str, str] = {}
+        overview_data: OverviewSingle | OverviewMulti | None = None
         overview_timing: Dict[str, int] = {"durationMs": 0, "llmMs": 0}
         if overview_future is not None:
             try:
-                overview, overview_timing = overview_future.result()
+                overview_data, overview_timing = overview_future.result()
             except Exception as exc:
                 degraded = True
                 logs.append(f"[final_report] Overview degraded ({type(exc).__name__})")
             else:
-                missing = [key for key in ("summary", "conclusion") if not overview.get(key)]
+                missing = [
+                    key for key in ("summary", "conclusion")
+                    if not render_overview_sections(overview_data, papers, language_mode).get(key)
+                ]
                 if missing:
                     degraded = True
                     logs.append(f"[final_report] Overview degraded (missing sections: {', '.join(missing)})")
 
+    overview = render_overview_sections(overview_data, papers, language_mode)
     report_text = _assemble_parallel_report(
         title, language_mode, papers, paper_blocks, overview, context
     )
@@ -1065,6 +1428,7 @@ def _run_parallel_report(
     )
     return {
         "report_text": report_text,
+        "overview": overview_data,
         "degraded": degraded,
         "llm_ms": llm_ms,
         "extra_timing": {
@@ -1079,7 +1443,11 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
 
     started = time.perf_counter()
     user_query = state.get("user_query") or "Research Analysis"
-    papers = list(state.get("selected_papers", []) or [])
+    papers = merge_branch_results(
+        list(state.get("selected_papers", []) or []),
+        state.get("paper_notes"),
+        state.get("paper_enrichment"),
+    )
     language_mode = detect_response_language(user_query)
     title = report_title(user_query, papers)
     logs = [f"[final_report] Tổng hợp báo cáo cho '{user_query}'"]
@@ -1112,8 +1480,9 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                 context=context,
             )
             assert cache_path is not None
-            cached_report = _restore_report_cache(load_json_cache(cache_path))
-            if cached_report is not None:
+            restored = _restore_report_cache(load_json_cache(cache_path))
+            if restored is not None:
+                cached_report, cached_overview = restored
                 report_path = write_report_file(cached_report)
                 logs.append("[final_report] Report cache hit — reused report")
                 logs.append(f"[final_report] Báo cáo lưu: {report_path.name}")
@@ -1125,6 +1494,13 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                 }
                 return {
                     "final_report": cached_report,
+                    "report_id": report_path.name,
+                    "answer_summary": build_answer_summary(
+                        papers, cached_overview, language_mode,
+                        citation_graph=state.get("citation_graph"), node_timings=state.get("node_timings"),
+                        report_id=report_path.name, final_ms=timing["durationMs"],
+                    ) if papers else None,
+                    "selected_papers": papers,
                     "status": "degraded" if incomplete_sources else "success",
                     "trace_logs": logs,
                     "node_timings": {"final_report": timing},
@@ -1148,7 +1524,11 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
         # A degraded report is retryable and must not become a cache hit.
         if papers and not report_degraded:
             assert cache_path is not None
-            save_json_cache(cache_path, {"report_text": report_text})
+            overview_data = outcome["overview"]
+            save_json_cache(cache_path, {
+                "report_text": report_text,
+                "overview": overview_data.model_dump(mode="json") if overview_data is not None else None,
+            })
 
         report_path = write_report_file(report_text)
 
@@ -1161,6 +1541,13 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
         }
         return {
             "final_report": report_text,
+            "report_id": report_path.name,
+            "answer_summary": build_answer_summary(
+                papers, outcome["overview"], language_mode,
+                citation_graph=state.get("citation_graph"), node_timings=state.get("node_timings"),
+                report_id=report_path.name, final_ms=timing["durationMs"],
+            ) if papers else None,
+            "selected_papers": papers,
             "status": "degraded" if incomplete_sources or report_degraded else "success",
             "trace_logs": logs,
             "node_timings": {"final_report": timing},

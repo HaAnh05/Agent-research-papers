@@ -43,6 +43,10 @@ HARD (always fail the run):
 | `arxiv_links` | `https://arxiv.org/abs/<id>` present for each arXiv paper |
 | `no_internal_lines` | no internal labels (PMRL status, language mode, `report_*.md`, `summary_quality`, `pipeline:` labels) |
 
+`answer_summary_structure` (HARD when the candidate state has `answer_summary`; INFO otherwise) checks `kind`, `lead`, `paper`/`papers`, `actions`, block types and result-row keys.
+
+STYLE (INFO only, never fails): `style_metrics` reports mean words per sentence, % of sentences over 25 words, bullets vs paragraphs, count of "được"/"bị", and paragraphs with more than 3 sentences. Code fences, tables, headings, URLs, the tail bullets (code, links, citation) and section 5 are skipped.
+
 QUALITY (WARN by default, FAIL under `--strict`):
 
 | Check | Meaning |

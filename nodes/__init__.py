@@ -7,6 +7,7 @@ from nodes.web_enrich import web_enrich_node
 from nodes.write_notes import write_notes_node
 from nodes.final_report import final_report_node
 from nodes.error_handler import error_handler_node
+from nodes.answer_followup import answer_followup_node
 
 __all__ = [
     "router_node",
@@ -18,4 +19,5 @@ __all__ = [
     "write_notes_node",
     "final_report_node",
     "error_handler_node",
+    "answer_followup_node",
 ]
