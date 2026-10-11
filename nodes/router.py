@@ -14,8 +14,8 @@ from tools.llm_provider import get_llm, invoke_structured_output
 
 
 class RouterDecision(BaseModel):
-    intent: Literal["direct_read", "search"] = Field(
-        description="One of: 'direct_read', 'search'"
+    intent: Literal["direct_read", "search", "followup"] = Field(
+        description="One of: 'direct_read', 'search', 'followup'"
     )
     search_query: str = Field(default="", description="Cleaned core search query if searching")
 
@@ -31,11 +31,45 @@ def _safe_paper_label(item: str, index: int | None = None) -> str:
     return "Paper" if index is None else f"Paper {index}"
 
 
+_ARXIV_URL_ID_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/(\d{4}\.\d{4,5})(?:v\d+)?", re.IGNORECASE)
+_ARXIV_BARE_ID_RE = re.compile(r"(?<![\w./])\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}(?:v\d+)?(?![\w.])")
+
+
+def _arxiv_ids_in_text(text: str) -> list[str]:
+    """arXiv ids named in a message (URL or bare ``YYMM.NNNNN``), in order, without duplicates."""
+
+    found: list[str] = []
+    for match in sorted(
+        [(m.start(), m.group(1)) for m in _ARXIV_URL_ID_RE.finditer(text or "")]
+        + [(m.start(), m.group(0)) for m in _ARXIV_BARE_ID_RE.finditer(text or "")]
+    ):
+        arxiv_id = re.sub(r"v\d+$", "", match[1])
+        if arxiv_id not in found:
+            found.append(arxiv_id)
+    return found[:5]
+
+
+def _thread_report_text(context: Any) -> str:
+    """One compact line per paper of the thread's finished report, or ``none``."""
+
+    if not isinstance(context, dict) or not context.get("reportId"):
+        return "none"
+    lines = ["available"]
+    for index, paper in enumerate((context.get("papers") or [])[:8], 1):
+        if isinstance(paper, dict):
+            lines.append(f"{index}. {paper.get('title') or 'Untitled'} (arXiv {paper.get('arxivId') or 'N/A'})")
+    return "\n".join(lines)
+
+
 def router_node(state: ResearchState) -> Dict[str, Any]:
     """Xác định intent: đọc trực tiếp (1 hoặc nhiều paper) hoặc tìm kiếm bài báo."""
     started = time.perf_counter()
     user_query = state.get("user_query", "").strip()
-    raw_inputs = state.get("raw_inputs", [])
+    raw_inputs = list(state.get("raw_inputs", []) or [])
+    # Rule shortcut (no LLM): an arXiv id or link in the message is a request to
+    # read that paper, even when the thread already has a report.
+    if not raw_inputs:
+        raw_inputs = _arxiv_ids_in_text(user_query)
     conversation_context = (state.get("conversation_context") or "").strip()
 
     # Keep operational logs free of query contents and local/server paths.
@@ -115,6 +149,7 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
             user_query=user_query,
             raw_inputs=(f"{len(raw_inputs)} validated paper input(s)" if raw_inputs else "none"),
             conversation_context=conversation_context[:6000] or "(empty)",
+            thread_report=_thread_report_text(state.get("followup_context")),
         )
         decision: RouterDecision = invoke_structured_output(
             prompt_text,
@@ -131,6 +166,10 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
         # the PDF reader to consume.
         if chosen_intent == "direct_read" and not raw_inputs:
             logs.append(f"[router] Bỏ direct intent không có paper input -> search")
+            chosen_intent = "search"
+        # A follow-up needs a finished report in the thread.
+        if chosen_intent == "followup" and _thread_report_text(state.get("followup_context")) == "none":
+            logs.append("[router] Bỏ followup vì thread chưa có báo cáo -> search")
             chosen_intent = "search"
         search_q = decision.search_query.strip() or user_query
         

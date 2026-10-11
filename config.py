@@ -21,6 +21,8 @@ class AppConfig:
     GITHUB_CACHE_DIR: Path = CACHE_DIR / "github"
     SUMMARY_CACHE_DIR: Path = CACHE_DIR / "summaries"
     REPORTS_DIR: Path = PROJECT_ROOT / "reports"
+    # Chat threads persisted as JSON (git-ignored); created on first write.
+    THREADS_DIR: Path = Path(os.getenv("THREADS_DIR") or (DATA_DIR / "threads"))
 
     # LLM Settings
     DEFAULT_PROVIDER: str = os.getenv("DEFAULT_PROVIDER", "gemini").lower()

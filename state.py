@@ -226,9 +226,17 @@ class ResearchState(TypedDict):
     raw_inputs: List[str]                    # URLs, ArXiv IDs, or local PDF paths
     
     # Router & Execution Flow
-    intent: Literal["direct_read", "search"]
+    intent: Literal["direct_read", "search", "followup"]
     status: Literal["running", "success", "degraded", "error"]
     error_message: Optional[str]
+
+    # Structured context of the thread's latest finished report, supplied by the
+    # API (see api._followup_context_from_state).  Present only when the thread
+    # has a report; the ``followup`` intent needs it.  ``answer_followup`` writes
+    # ``followup_answer`` and ``followup_sources``.
+    followup_context: Optional[Dict[str, Any]]
+    followup_answer: Optional[str]
+    followup_sources: List[str]
 
     # Compact context supplied by the API to help optimize follow-up searches.
     # It remains separate from internal paper text/cache fields.

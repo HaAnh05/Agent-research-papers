@@ -12,6 +12,7 @@ flowchart TD
 
     %% CE1 Routing
     Router -->|CE1: direct_read| ReadPaper["read_paper (ThreadPool + Two-column Parser)"]
+    Router -->|CE1: followup — thread đã có báo cáo| AnswerFollowup["answer_followup (1 lệnh LLM streaming, không có stage)"]
     Router -->|CE1: search| SearchPapers["search_papers (ArXiv API + Thread-Safe Lock)"]
     Router -->|CE1: error| ErrorHandler["error_handler (Graceful Fallback)"]
 
@@ -35,6 +36,7 @@ flowchart TD
     WebEnrich --> FinalReport
 
     FinalReport --> End([End: Research Report])
+    AnswerFollowup --> End
     ErrorHandler --> End
 
     style Router fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
@@ -210,7 +212,8 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 ```text
 START -> router --direct_read--> read_paper --+--> write_notes ----+
           |                          ^        +--> citation_graph -+--> final_report -> END
-          +--search--> search_papers |        +--> web_enrich -----+
+          +--followup--> answer_followup -> END   +--> web_enrich -----+
+          +--search--> search_papers |
                          |           |        (lỗi read_paper -> error_handler -> END)
                          v           |
                      eval_search --pass/max_retry
@@ -253,7 +256,7 @@ Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có d�
 
 ### 3.4. Node: `router` (`nodes/router.py`)
 
-**Chức năng**: Phân loại intent của người dùng thành 1 trong 3 nhánh.
+**Chức năng**: Phân loại intent của người dùng thành 1 trong 3 nhánh: `direct_read`, `search`, `followup`.
 
 **Chiến lược 2 lớp**:
 
@@ -261,11 +264,13 @@ Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có d�
 
    - Nếu `raw_inputs` có ≥ 1 phần tử → `direct_read` (nhiều phần tử = nhiều bài)
    - Tự động phát hiện ArXiv ID (`\d{4}\.\d{4,5}`) và local PDF path
+   - **Id/URL arXiv trong câu hỏi** (`arxiv.org/abs|pdf|html/<id>` hoặc id trần dạng `YYMM.NNNNN`, tháng 01-12) cũng thành `raw_inputs` → `direct_read`, kể cả khi thread đã có báo cáo. Form field `arxivId` của `POST /api/threads/{id}/messages` đi cùng đường này ("Phân tích bài này" từ đồ thị liên quan; không cần endpoint mới)
 2. **LLM Classifier (Fallback)** — Cho câu hỏi tự nhiên:
 
    - Gọi LLM với `with_structured_output(RouterDecision)` (trường `intent`, `search_query`; không có `reasoning`) → đảm bảo JSON output
    - Prompt yêu cầu trích xuất **từ khóa tiếng Anh học thuật** nếu câu hỏi bằng tiếng Việt
    - Ví dụ: `"Tôi muốn tìm bài báo unlearning"` → `search_query = "machine unlearning in AI"`
+   - `followup` chỉ khi `<thread_report>` khác `none` (thread có báo cáo đã xong; `state["followup_context"]` do API cấp) và câu hỏi nói về báo cáo hoặc một bài trong đó: giải thích, so sánh các bài trong báo cáo, hỏi về bảng/số ("Table 17 …"), "vì sao …". Tên bài mới không có id → `search`; chủ đề mới → `search`. Router đưa `followup` mà thread chưa có báo cáo → hạ về `search`. `route_after_router` chỉ chọn `answer_followup` khi có cả intent và `followup_context`.
 
 **Error handling**: Nếu LLM lỗi (mạng, quota) → fallback tự động về `intent="search"` với `search_query` nguyên bản.
 
@@ -448,6 +453,16 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 ---
 
+### 3.11c. Node: `answer_followup` (`nodes/answer_followup.py`)
+
+**Chức năng**: Trả lời câu hỏi tiếp theo từ báo cáo và ghi chú đã có của thread. Một lệnh LLM (`stream()`; role tách system/user; `STE_RULES`; trả lời bằng ngôn ngữ của báo cáo; trích nguồn dạng `[Báo cáo §2]`, `[Table 17]`, `[Notes: <paperId>]`; nếu tài liệu không có câu trả lời thì nói rõ một câu và gợi ý chạy phân tích đầy đủ). Sau node là `END`; không có stage. Trace: một step "Trả lời từ báo cáo đã có" với facts `{sources: [...]}`. API chỉ stream token của node này (`assistant.delta`); token của các node báo cáo vẫn bị bỏ.
+
+**Context** (`followup_context`, API dựng từ run xong gần nhất có báo cáo, lưu riêng, không nằm trong DTO): `reportId`, `reportText` (≤150k ký tự), mỗi bài: `paperId`, `arxivId`, `title`, notes có cấu trúc (problem, method, result, limitation, intuition, insights, eval_settings, setup), bảng (≤40 bảng, ≤40 hàng, ô ≤80 ký tự), và `related` (≤60 nút bản đồ liên quan: title, abstract, year, firstAuthor, arxivId).
+
+**Chọn phần đưa vào prompt** (ngân sách tối đa ≈35k ký tự, dưới 9k token): mục 1, 3, 4 của báo cáo (≤2,5k mỗi mục); tối đa 2 bài liên quan nhất (khớp tiêu đề/tên phương pháp, "bài 2"/"paper 2", arXiv id; không khớp thì 2 bài đầu): khối `###` (≤5k) và notes (≤3,5k); bảng được nêu trong câu hỏi ("Table N", "Bảng N", ≤4 bảng, ≤2k mỗi bảng; nếu không nêu bảng thì chỉ đưa caption); tối đa 3 bài từ bản đồ liên quan khi câu hỏi nêu tên (≥2 từ trùng tiêu đề) hoặc id (≤0,9k abstract). Danh sách nguồn đã dùng nằm trong `<sources>` và thành `followup_sources`.
+
+---
+
 ### 3.12. Node: `error_handler` (`nodes/error_handler.py`)
 
 **Chức năng**: Bắt mọi trạng thái lỗi (`status="error"`) và tạo báo cáo fallback thay vì crash.
@@ -579,3 +594,29 @@ Chạy `graph.stream()` đồng bộ, in trace log từng bước, xuất final 
 Chạy: `.venv/bin/python -m pytest tests/ -q`.
 
 Xem trước định dạng báo cáo, hoàn toàn offline (LLM giả, số thật từ bảng đã parse): `.venv/bin/python -I bench/render_report_preview.py` → `data/arxiv/preview_report.md` (đọc `data/arxiv/html_probe/ar5iv_*.html`).
+
+---
+
+### 3.17. Thread: ngữ cảnh và lưu trữ (`api.py`)
+
+- **Gửi tin nhắn**: `POST /api/threads/{id}/messages` (form `message`, tùy chọn `arxivId`/`paperInputs`/PDF). State ban đầu có `conversation_context` (văn bản ≤12k ký tự: artifact, report id, paper id, notes, intuition, 3 insight đầu, hardware) và `followup_context` (cấu trúc, xem 3.11c; `None` nếu thread chưa có báo cáo). Luật 1 run đang chạy cho cả hệ thống giữ nguyên (HTTP 409).
+- **Số đo thời gian**: `answerSummary.durationSec` bị ghi đè bằng thời gian chạy thực đo (`finished_at - started_at`) khi run xong; graph chỉ ước lượng.
+- **Lưu trên đĩa**: `config.THREADS_DIR` (mặc định `data/threads/`, git-ignored, đổi bằng biến môi trường `THREADS_DIR`). Mỗi thread một file `<threadId>.json`, ghi nguyên tử (file tạm rồi `replace`) khi tạo thread và khi mỗi run kết thúc. Nạp lúc server khởi động (lifespan của FastAPI). Registry không có `persist_dir` (test, thư viện) chỉ giữ trong RAM.
+
+```json
+{
+  "version": 1,
+  "threadId": "...", "title": "...", "createdAt": "ISO", "updatedAt": "ISO",
+  "runIds": ["..."],
+  "messages": [ThreadMessage ...], "artifacts": [ArtifactDTO ...],
+  "runs": [{
+    "runId": "...", "status": "success|degraded|error", "provider": "...", "model": "...",
+    "input": RunInput, "answer": "lead hoặc câu trả lời follow-up", "error": null,
+    "startedAt": "ISO", "updatedAt": "ISO", "finishedAt": "ISO",
+    "result": RunResult (papers DTO, reportId, answerSummary, citationGraph, report),
+    "followupContext": { ... riêng tư, xem 3.11c ... }
+  }]
+}
+```
+
+Run chưa kết thúc không được lưu. Run nạp lại có `traceEvents` rỗng (không lưu trace); `GET /api/runs/{id}` và `GET /api/threads/{id}` trả `result` đã lưu, và follow-up vẫn chạy được từ `followupContext` cộng file báo cáo trong `reports/`.
