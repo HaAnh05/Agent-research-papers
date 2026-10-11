@@ -1,4 +1,4 @@
-import type { StepView } from '../types'
+import type { LlmCall, StepView } from '../types'
 
 const nf = new Intl.NumberFormat('vi-VN')
 export const fmtNum = (n: number) => nf.format(n)
@@ -88,6 +88,10 @@ export function factsLine(step: StepView): string {
       }
       if (n(f.bibtexCount)) parts.push(`${f.bibtexCount} BibTeX`)
       break
+    case 'summarize':
+      if (n(f.keyResultCount)) parts.push(`${f.keyResultCount} kết quả chính`)
+      if (n(f.resultRowCount)) parts.push(`${f.resultRowCount} hàng kết quả khớp nguồn`)
+      break
     case 'final_report':
       if (n(f.sectionCount)) parts.push(`report.md ${f.sectionCount} mục`)
       break
@@ -95,4 +99,38 @@ export function factsLine(step: StepView): string {
       break
   }
   return parts.join(' · ')
+}
+
+/** 3100 -> "3.1k", 12400 -> "12k", 640 -> "640" */
+export function compactCount(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 10000) return `${(Math.round(n / 100) / 10).toString()}k`
+  return `${Math.round(n / 1000)}k`
+}
+
+/**
+ * One line about the LLM calls of a step, with commas: "LLM 1:12, 4.2k in, 3.1k out, 9.4k reasoning".
+ * Several calls run in parallel, so the time is the longest call. A token total is shown only when
+ * every call reported it; a missing value is left out, never guessed. Returns '' when there is no call.
+ */
+export function llmLine(step: StepView): string {
+  const raw = step.facts.llmCalls
+  const calls = (Array.isArray(raw) ? raw : []).filter((c): c is LlmCall => !!c && typeof c === 'object')
+  if (!calls.length) return ''
+  const parts: string[] = []
+  const times = calls.map((c) => c.ms).filter((v): v is number => typeof v === 'number')
+  const longest = times.length ? clock(Math.max(...times)) : ''
+  if (calls.length > 1) parts.push(`${calls.length} lệnh LLM`, ...(longest ? [`dài nhất ${longest}`] : []))
+  else parts.push(longest ? `LLM ${longest}` : 'LLM')
+  const total = (key: 'inputTokens' | 'outputTokens' | 'reasoningTokens'): number | undefined => {
+    const values = calls.map((c) => c[key])
+    return values.every((v) => typeof v === 'number') ? (values as number[]).reduce((a, b) => a + b, 0) : undefined
+  }
+  const input = total('inputTokens')
+  const output = total('outputTokens')
+  const reasoning = total('reasoningTokens')
+  if (input != null) parts.push(`${compactCount(input)} in`)
+  if (output != null) parts.push(`${compactCount(output)} out`)
+  if (reasoning != null) parts.push(`${compactCount(reasoning)} reasoning`)
+  return parts.join(', ')
 }

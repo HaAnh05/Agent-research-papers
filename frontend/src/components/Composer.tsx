@@ -10,6 +10,7 @@ export function Composer({
   onFile,
   onSubmit,
   busy,
+  placeholder = 'Hỏi về một bài báo hoặc chủ đề…',
 }: {
   formRef: RefObject<HTMLFormElement>
   textareaRef: RefObject<HTMLTextAreaElement>
@@ -19,6 +20,7 @@ export function Composer({
   onFile: (file: File | null) => void
   onSubmit: () => void
   busy: boolean
+  placeholder?: string
 }) {
   const picker = useRef<HTMLInputElement>(null)
 
@@ -47,7 +49,7 @@ export function Composer({
         ref={textareaRef}
         rows={1}
         value={value}
-        placeholder="Hỏi về một bài báo hoặc chủ đề…"
+        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

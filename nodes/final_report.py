@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import datetime
+import json
 import re
 import time
 import uuid
@@ -22,12 +23,12 @@ from prompts.final_report_prompt import (
 from state import OverviewMulti, OverviewSingle, PaperItem, ResearchState
 from text_utils import detect_response_language
 from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_cache, summary_cache_path
-from tools.llm_provider import extract_text_from_response, get_llm, invoke_structured_output, invoke_text
+from tools.llm_provider import extract_text_from_response, get_llm, invoke_structured_output, invoke_text, track_llm_call
 
 
 # Bump when the report prompts or assembly change, so cached reports from an
 # older layout are not reused.
-REPORT_VERSION = "p12"
+REPORT_VERSION = "p13"
 
 
 _ARXIV_ID_RE = re.compile(r"^(?:\d{4}\.\d{4,5}(?:v\d+)?|[a-z][\w.-]*(?:\.[A-Z]{2})?/\d{7}(?:v\d+)?)$", re.IGNORECASE)
@@ -217,8 +218,13 @@ def _report_cache_key(
     papers: List[PaperItem],
     *,
     context: str = "",
+    overview_json: str = "",
 ) -> tuple[str, Any]:
-    """Resolve the report cache entry for the exact synthesis input (fail-open)."""
+    """Resolve the report cache entry for the exact synthesis input (fail-open).
+
+    ``overview_json`` is the overview made by the ``summarize`` node: the report
+    text embeds it, so it is part of the key.
+    """
 
     key = (
         "report_"
@@ -231,6 +237,7 @@ def _report_cache_key(
             breakdown,
             # The research-context section is part of the finished report text.
             context,
+            overview_json,
             REPORT_VERSION,
             PAPER_SECTION_SYSTEM, PAPER_SECTION_USER, REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER,
             REPORT_OVERVIEW_SINGLE_SYSTEM, REPORT_OVERVIEW_SINGLE_USER,
@@ -249,15 +256,44 @@ def _restore_report_cache(cached: Any) -> tuple[str, OverviewSingle | OverviewMu
     report_text = cached.get("report_text")
     if not isinstance(report_text, str) or not report_text.strip():
         return None
-    overview: OverviewSingle | OverviewMulti | None = None
-    raw = cached.get("overview")
-    if isinstance(raw, dict):
-        schema = OverviewMulti if "insights" in raw else OverviewSingle
-        try:
-            overview = schema.model_validate(raw)
-        except Exception:
-            overview = None
-    return report_text, overview
+    return report_text, overview_from_json(cached.get("overview"))
+
+
+def overview_from_json(raw: Any) -> OverviewSingle | OverviewMulti | None:
+    """Rebuild the overview model from its JSON dump (``None`` when empty or invalid)."""
+
+    if not isinstance(raw, dict) or not raw:
+        return None
+    schema = OverviewMulti if "insights" in raw else OverviewSingle
+    try:
+        return schema.model_validate(raw)
+    except Exception:
+        return None
+
+
+def overview_cache_key(
+    user_query: str,
+    title: str,
+    language_mode: str,
+    papers: List[PaperItem],
+) -> tuple[str, Any]:
+    """Cache entry of the overview call alone (made by ``summarize``, before the graph is ready)."""
+
+    key = (
+        "overview_"
+        + prompt_fingerprint(
+            config.DEFAULT_PROVIDER,
+            config.DEFAULT_MODEL,
+            user_query,
+            title,
+            language_mode,
+            REPORT_VERSION,
+            REPORT_OVERVIEW_SYSTEM, REPORT_OVERVIEW_USER,
+            REPORT_OVERVIEW_SINGLE_SYSTEM, REPORT_OVERVIEW_SINGLE_USER,
+            _papers_context(papers), _terms_text(papers),
+        )
+    )
+    return key, summary_cache_path(key)
 
 
 # --- Parallel report synthesis ----------------------------------------------
@@ -866,19 +902,28 @@ def _write_paper_section(
     index: int,
     user_query: str,
     language_mode: str,
-) -> tuple[str, Dict[str, int]]:
-    """One LLM call writing one paper block from that paper's breakdown only."""
+) -> tuple[str, Dict[str, Any]]:
+    """One LLM call writing one paper block from that paper's breakdown only.
+
+    The timing dict carries ``llmCalls`` (duration and token counts of the call).
+    """
 
     started = time.perf_counter()
     system_text, user_text = build_section_messages(paper, index, user_query, language_mode)
     llm_started = time.perf_counter()
-    response = invoke_text(llm, system_text, user_text)
+    llm_calls: List[Dict[str, Any]] = []
+    with track_llm_call("section", llm_calls, paperId=paper.paper_id):
+        response = invoke_text(llm, system_text, user_text)
     llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
     raw = extract_text_from_response(response.content)
     if not raw.strip():
         raise ValueError("Empty paper section response")
     block = _normalize_paper_section(raw, paper, language_mode)
-    return block, {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}
+    return block, {
+        "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+        "llmMs": llm_ms,
+        "llmCalls": llm_calls,
+    }
 
 
 def _insights_context(paper: PaperItem) -> str:
@@ -988,20 +1033,29 @@ def _write_overview(
     title: str,
     language_mode: str,
     papers: List[PaperItem],
-) -> tuple[OverviewSingle | OverviewMulti, Dict[str, int]]:
-    """One structured LLM call returning the overview JSON (single or multi schema)."""
+) -> tuple[OverviewSingle | OverviewMulti, Dict[str, Any]]:
+    """One structured LLM call returning the overview JSON (single or multi schema).
+
+    The timing dict carries ``llmCalls`` (duration and token counts of the call).
+    """
 
     started = time.perf_counter()
     system_text, user_text = build_overview_messages(papers, user_query, title, language_mode)
     schema = OverviewSingle if len(papers) == 1 else OverviewMulti
     llm_started = time.perf_counter()
-    overview = invoke_structured_output(
-        user_text, schema, llm=llm, provider=config.DEFAULT_PROVIDER, system=system_text,
-    )
+    llm_calls: List[Dict[str, Any]] = []
+    with track_llm_call("overview", llm_calls):
+        overview = invoke_structured_output(
+            user_text, schema, llm=llm, provider=config.DEFAULT_PROVIDER, system=system_text,
+        )
     llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
     if not overview.tldr.strip():
         raise ValueError("Empty overview response")
-    return overview, {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}
+    return overview, {
+        "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
+        "llmMs": llm_ms,
+        "llmCalls": llm_calls,
+    }
 
 
 _OVERVIEW_TEXT: Dict[str, Dict[str, str]] = {
@@ -1203,6 +1257,50 @@ def _foundation_titles(graph: Any, limit: int = 6) -> List[str]:
     return titles
 
 
+def _graph_node_count(citation_graph: Any) -> int:
+    if not isinstance(citation_graph, dict):
+        return 0
+    similarity = citation_graph.get("similarity")
+    shown = similarity if isinstance(similarity, dict) and similarity.get("nodes") else citation_graph
+    return len(shown.get("nodes") or [])
+
+
+def patch_answer_summary(
+    summary: Dict[str, Any],
+    papers: List[PaperItem],
+    citation_graph: Any,
+    *,
+    report_id: str | None = None,
+    node_timings: Any = None,
+) -> Dict[str, Any]:
+    """Return ``summary`` with the data that arrives after the quick summary.
+
+    Code only, idempotent.  Sets the prior works (``foundations`` block), the
+    related-papers count, the BibTeX count and, once the report exists, its id.
+    The prose of the summary is untouched.  ``summarize`` builds the summary
+    before ``citation_graph`` and ``web_enrich`` finish; ``final_report`` and the
+    API call this when their data is ready.
+    """
+
+    patched = copy.deepcopy(summary)
+    blocks = [block for block in (patched.get("blocks") or []) if not (isinstance(block, dict) and block.get("type") == "foundations")]
+    foundations = _foundation_titles(citation_graph)
+    if foundations:
+        # Same position as build_answer_summary: before the takeaway.
+        index = next((i for i, block in enumerate(blocks) if isinstance(block, dict) and block.get("type") == "takeaway"), len(blocks))
+        blocks.insert(index, {"type": "foundations", "items": foundations})
+    patched["blocks"] = blocks
+    actions = dict(patched.get("actions") or {})
+    actions["graphNodes"] = _graph_node_count(citation_graph)
+    actions["bibtexCount"] = sum(1 for paper in papers if paper.bibtex)
+    if report_id:
+        actions["reportId"] = report_id
+    patched["actions"] = actions
+    if isinstance(node_timings, dict):
+        patched["durationSec"] = _estimate_duration_sec(node_timings)
+    return patched
+
+
 def _published_label(value: str) -> str:
     match = re.match(r"^(\d{4})-(\d{2})", str(value or ""))
     return f"{match.group(2)}/{match.group(1)}" if match else str(value or "")
@@ -1219,7 +1317,8 @@ def _estimate_duration_sec(node_timings: Any) -> int:
         return int(value) if isinstance(value, (int, float)) and value > 0 else 0
 
     sequential = sum(ms(name) for name in ("router", "search_papers", "eval_search", "refine_query", "read_paper", "final_report"))
-    parallel = max([ms(name) for name in ("write_notes", "citation_graph", "web_enrich")] or [0])
+    # Notes and the quick summary form one chain; the graph and enrichment run beside it.
+    parallel = max(ms("write_notes") + ms("summarize"), ms("citation_graph"), ms("web_enrich"))
     return int(round((sequential + parallel) / 1000))
 
 
@@ -1235,11 +1334,7 @@ def build_answer_summary(
 ) -> Dict[str, Any]:
     """The structured chat answer.  Prose comes from the overview JSON; numbers from grounded notes."""
 
-    graph_nodes = 0
-    if isinstance(citation_graph, dict):
-        similarity = citation_graph.get("similarity")
-        shown = similarity if isinstance(similarity, dict) and similarity.get("nodes") else citation_graph
-        graph_nodes = len(shown.get("nodes") or [])
+    graph_nodes = _graph_node_count(citation_graph)
     timings = dict(node_timings) if isinstance(node_timings, dict) else {}
     timings.setdefault("final_report", {"durationMs": final_ms})
     actions = {
@@ -1369,14 +1464,19 @@ def _run_parallel_report(
     language_mode: str,
     logs: List[str],
     context: str = "",
+    overview_given: bool = False,
+    overview_data: OverviewSingle | OverviewMulti | None = None,
 ) -> Dict[str, Any]:
-    """Run every paper-section call and the overview call in ONE pool.
+    """Run every paper-section call in ONE pool, plus the overview call when it is not given.
 
-    A failed section or overview call degrades to deterministic text built
-    from the PMRL notes.  With no papers, no LLM call runs.
+    ``overview_given`` is true when the ``summarize`` node already made the
+    overview (``overview_data`` is then that overview, or ``None`` when its call
+    failed): no overview call runs here.  A failed section or overview degrades
+    to deterministic text built from the PMRL notes.  With no papers, no LLM
+    call runs.
     """
 
-    pool_size = max(1, min(len(papers) + 1, int(config.LLM_MAX_CONCURRENCY) * 2))
+    pool_size = max(1, min(len(papers) + (0 if overview_given else 1), int(config.LLM_MAX_CONCURRENCY) * 2))
     with ThreadPoolExecutor(max_workers=pool_size) as executor:
         section_futures = [
             executor.submit(_write_paper_section, llm, paper, index, user_query, language_mode)
@@ -1384,13 +1484,14 @@ def _run_parallel_report(
         ]
         overview_future = (
             executor.submit(_write_overview, llm, user_query, title, language_mode, papers)
-            if papers
+            if papers and not overview_given
             else None
         )
 
         degraded = False
         paper_blocks: List[str] = []
         section_timings: Dict[str, Dict[str, int]] = {}
+        llm_calls: List[Dict[str, Any]] = []
         for paper, future in zip(papers, section_futures):
             try:
                 block, section_timing = future.result()
@@ -1399,17 +1500,24 @@ def _run_parallel_report(
                 block = _deterministic_paper_section(paper, language_mode)
                 section_timing = {"durationMs": 0, "llmMs": 0}
                 logs.append(f"[final_report] Paper section degraded: {paper.paper_id} ({type(exc).__name__})")
+            llm_calls += section_timing.pop("llmCalls", [])
             paper_blocks.append(block)
             section_timings[paper.paper_id] = section_timing
 
-        overview_data: OverviewSingle | OverviewMulti | None = None
-        overview_timing: Dict[str, int] = {"durationMs": 0, "llmMs": 0}
+        overview_timing: Dict[str, Any] = {"durationMs": 0, "llmMs": 0}
         if overview_future is not None:
             try:
                 overview_data, overview_timing = overview_future.result()
             except Exception as exc:
                 degraded = True
                 logs.append(f"[final_report] Overview degraded ({type(exc).__name__})")
+            else:
+                llm_calls += overview_timing.pop("llmCalls", [])
+        if papers and (overview_future is not None or overview_given):
+            if overview_data is None:
+                degraded = True
+                if overview_given:
+                    logs.append("[final_report] Overview degraded (summarize had no overview)")
             else:
                 missing = [
                     key for key in ("summary", "conclusion")
@@ -1431,6 +1539,7 @@ def _run_parallel_report(
         "overview": overview_data,
         "degraded": degraded,
         "llm_ms": llm_ms,
+        "llm_calls": llm_calls,
         "extra_timing": {
             "sectionPapers": section_timings,
             "overviewMs": overview_timing.get("durationMs", 0),
@@ -1439,7 +1548,15 @@ def _run_parallel_report(
 
 
 def final_report_node(state: ResearchState) -> Dict[str, Any]:
-    """Synthesize and persist the report while preserving canonical links."""
+    """Write the paper sections, assemble ``report.md`` and finish the chat answer.
+
+    ``summarize`` already made the overview and the early ``answer_summary``
+    (``state["overview"]``; ``{}`` when its call failed).  This node reuses that
+    overview, so it makes one LLM call per paper only, and patches the summary
+    with the data that came later (prior works, graph size, BibTeX count, report
+    id).  A state without ``overview`` (a direct call, no ``summarize``) makes the
+    overview call here, as before.
+    """
 
     started = time.perf_counter()
     user_query = state.get("user_query") or "Research Analysis"
@@ -1457,6 +1574,27 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
 
     context = _context_section(state.get("citation_graph"), language_mode)
     breakdown = "\n\n".join(_paper_breakdown(paper, index) for index, paper in enumerate(papers, 1))
+    raw_overview = state.get("overview")
+    overview_given = isinstance(raw_overview, dict)
+    given_overview = overview_from_json(raw_overview) if overview_given else None
+
+    def finish_summary(overview: OverviewSingle | OverviewMulti | None, report_id: str, final_ms: int) -> Dict[str, Any] | None:
+        """The early summary patched with the late data; built from the overview when missing."""
+
+        if not papers:
+            return None
+        timings = dict(state.get("node_timings") or {})
+        timings["final_report"] = {"durationMs": final_ms}
+        early = state.get("answer_summary")
+        if not isinstance(early, dict) or not early:
+            early = build_answer_summary(
+                papers, overview, language_mode,
+                citation_graph=state.get("citation_graph"), node_timings=timings,
+                report_id=report_id, final_ms=final_ms,
+            )
+        return patch_answer_summary(
+            early, papers, state.get("citation_graph"), report_id=report_id, node_timings=timings,
+        )
 
     def write_report_file(report_text: str) -> Path:
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -1478,6 +1616,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
             _, cache_path = _report_cache_key(
                 user_query, title, language_mode, breakdown, papers,
                 context=context,
+                overview_json=json.dumps(raw_overview, sort_keys=True, ensure_ascii=False) if overview_given else "",
             )
             assert cache_path is not None
             restored = _restore_report_cache(load_json_cache(cache_path))
@@ -1491,23 +1630,22 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                     "llmMs": 0,
                     "paperCount": len(papers),
                     "cache": True,
+                    "llmCalls": [],
                 }
                 return {
                     "final_report": cached_report,
                     "report_id": report_path.name,
-                    "answer_summary": build_answer_summary(
-                        papers, cached_overview, language_mode,
-                        citation_graph=state.get("citation_graph"), node_timings=state.get("node_timings"),
-                        report_id=report_path.name, final_ms=timing["durationMs"],
-                    ) if papers else None,
+                    "answer_summary": finish_summary(
+                        given_overview if overview_given else cached_overview, report_path.name, timing["durationMs"],
+                    ),
                     "selected_papers": papers,
                     "status": "degraded" if incomplete_sources else "success",
                     "trace_logs": logs,
                     "node_timings": {"final_report": timing},
                 }
 
-        # One pool runs every paper section and the overview at once; the
-        # critical path is the slowest single call.
+        # One pool runs every paper section (and the overview, when ``summarize``
+        # did not make it) at once; the critical path is the slowest single call.
         outcome = _run_parallel_report(
             papers,
             llm=get_llm(),
@@ -1516,6 +1654,8 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
             language_mode=language_mode,
             logs=logs,
             context=context,
+            overview_given=overview_given,
+            overview_data=given_overview,
         )
         report_text = outcome["report_text"]
         report_degraded = outcome["degraded"]
@@ -1537,16 +1677,13 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
             "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
             "llmMs": llm_ms,
             "paperCount": len(papers),
+            "llmCalls": outcome["llm_calls"],
             **outcome["extra_timing"],
         }
         return {
             "final_report": report_text,
             "report_id": report_path.name,
-            "answer_summary": build_answer_summary(
-                papers, outcome["overview"], language_mode,
-                citation_graph=state.get("citation_graph"), node_timings=state.get("node_timings"),
-                report_id=report_path.name, final_ms=timing["durationMs"],
-            ) if papers else None,
+            "answer_summary": finish_summary(outcome["overview"], report_path.name, timing["durationMs"]),
             "selected_papers": papers,
             "status": "degraded" if incomplete_sources or report_degraded else "success",
             "trace_logs": logs,

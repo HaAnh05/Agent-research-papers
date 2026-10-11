@@ -3,15 +3,113 @@ from __future__ import annotations
 import os
 import json
 import re
-from typing import Any, Optional, Type, TypeVar
+import threading
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator, Optional, Type, TypeVar
 from pydantic import BaseModel
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.tracers.context import register_configure_hook
 
 from config import config, resolved_provider
 
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+# --- Per-call metrics (duration and token usage) ------------------------------
+
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _message_usage(message: Any) -> dict[str, int]:
+    """Token counts the provider reported for one AI message; absent values are omitted.
+
+    ``usage_metadata`` is the LangChain standard (ChatOpenAI fills it from
+    ``prompt_tokens`` / ``completion_tokens`` and
+    ``completion_tokens_details.reasoning_tokens``; Gemini and Anthropic fill it
+    too).  ``response_metadata["token_usage"]`` is the raw OpenAI-compatible
+    payload and serves as a fallback.
+    """
+
+    usage: dict[str, int] = {}
+    meta = getattr(message, "usage_metadata", None)
+    if isinstance(meta, dict):
+        for key, field in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens")):
+            number = _count(meta.get(key))
+            if number is not None:
+                usage[field] = number
+        details = meta.get("output_token_details")
+        reasoning = _count(details.get("reasoning")) if isinstance(details, dict) else None
+        if reasoning is not None:
+            usage["reasoningTokens"] = reasoning
+    raw = (getattr(message, "response_metadata", None) or {}).get("token_usage")
+    if isinstance(raw, dict):
+        for key, field in (("prompt_tokens", "inputTokens"), ("completion_tokens", "outputTokens")):
+            number = _count(raw.get(key))
+            if number is not None:
+                usage.setdefault(field, number)
+        details = raw.get("completion_tokens_details")
+        reasoning = _count(details.get("reasoning_tokens")) if isinstance(details, dict) else None
+        if reasoning is not None:
+            usage.setdefault("reasoningTokens", reasoning)
+    return usage
+
+
+class _UsageCollector(BaseCallbackHandler):
+    """Sums the token usage of every chat-model call made while it is active."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self.totals: dict[str, int] = {}
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        try:
+            generation = response.generations[0][0]
+            message = generation.message
+        except (AttributeError, IndexError):
+            return
+        if not isinstance(message, AIMessage):
+            return
+        usage = _message_usage(message)
+        with self._lock:
+            for key, number in usage.items():
+                self.totals[key] = self.totals.get(key, 0) + number
+
+
+_USAGE_COLLECTOR: ContextVar[_UsageCollector | None] = ContextVar("llm_usage_collector", default=None)
+# Registered once: LangChain then attaches the active collector to every model call in this context.
+register_configure_hook(_USAGE_COLLECTOR, inheritable=True)
+
+
+@contextmanager
+def track_llm_call(kind: str, sink: list[dict[str, Any]] | None = None, **extra: Any) -> Iterator[dict[str, Any]]:
+    """Measure one LLM call: ``{kind, ms, inputTokens?, outputTokens?, reasoningTokens?}``.
+
+    Wrap exactly one call (``invoke_structured_output``, ``invoke_text`` or a
+    ``stream`` loop).  ``ms`` is wall time and always set; the token fields appear
+    only when the provider returned them (a fake model or a stream without usage
+    data gives ``ms`` alone).  The record is appended to ``sink`` when the block
+    ends, also when the call raised.  ``extra`` adds identifying fields (``paperId``).
+    """
+
+    record: dict[str, Any] = {"kind": kind, **{key: value for key, value in extra.items() if value}}
+    collector = _UsageCollector()
+    token = _USAGE_COLLECTOR.set(collector)
+    started = time.perf_counter()
+    try:
+        yield record
+    finally:
+        _USAGE_COLLECTOR.reset(token)
+        record["ms"] = max(0, int((time.perf_counter() - started) * 1000))
+        record.update(collector.totals)
+        if sink is not None:
+            sink.append(record)
 
 
 def extract_text_from_response(content: Any) -> str:

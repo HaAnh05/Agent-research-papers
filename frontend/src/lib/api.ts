@@ -79,6 +79,7 @@ const SSE_TYPES = [
   'step.completed',
   'assistant.delta',
   'assistant.completed',
+  'answer.summary',
   'run.completed',
   'run.failed',
 ]

@@ -376,9 +376,14 @@ export function AnswerView({ run, graphNodes, actions }: { run: RunView; graphNo
   }
   const ctx: Ctx = { summary: summary ?? {}, paperName, graphNodes: summary?.actions?.graphNodes ?? graphNodes, repos }
   const singleRepo = summary?.kind !== 'multi' ? repos[paper?.paperId ?? ''] ?? repos[paper?.arxivId ?? ''] ?? Object.values(repos)[0] : undefined
-  const secs = runSeconds(run)
+  // While the run goes on, only the quick summary exists: no total time yet.
+  const running = run.status === 'running'
+  const secs = running ? undefined : runSeconds(run)
   const blocks = asArray<SummaryBlock>(summary?.blocks)
-  const showActions = !!reportId || !!bibtex || graphNodes > 0
+  const reportReady = run.reportReady && !!reportId
+  // The report button is grey and inert until report.md exists; it is hidden when the run ended without one.
+  const reportPending = !reportReady && running
+  const showActions = reportReady || reportPending || !!bibtex || graphNodes > 0
 
   return (
     <div className={`answer${shown ? ' in' : ''}`} data-testid="answer">
@@ -407,8 +412,13 @@ export function AnswerView({ run, graphNodes, actions }: { run: RunView; graphNo
       ) : null}
       {showActions && (
         <div className="actions">
-          {reportId && (
+          {reportReady && reportId && (
             <button type="button" className="btn primary" onClick={() => actions.onDownload(reportId)}>
+              <Download /> Tải report.md
+            </button>
+          )}
+          {reportPending && (
+            <button type="button" className="btn pending" aria-disabled="true" title="Báo cáo đầy đủ đang được viết…" onClick={(e) => e.preventDefault()}>
               <Download /> Tải report.md
             </button>
           )}

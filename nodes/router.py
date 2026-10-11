@@ -10,7 +10,7 @@ from prompts.router_prompt import ROUTER_SYSTEM, ROUTER_USER
 from state import ResearchState, PaperItem
 from tools.cache_manager import canonicalize_paper_key
 from tools.arxiv_search import get_cached_arxiv_metadata
-from tools.llm_provider import get_llm, invoke_structured_output
+from tools.llm_provider import get_llm, invoke_structured_output, track_llm_call
 
 
 class RouterDecision(BaseModel):
@@ -142,6 +142,7 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
         }
 
     # 2. Với query tự nhiên, dùng LLM để phân loại ý định.
+    llm_calls: list = []
     try:
         llm = get_llm()
         llm_started = time.perf_counter()
@@ -151,13 +152,14 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
             conversation_context=conversation_context[:6000] or "(empty)",
             thread_report=_thread_report_text(state.get("followup_context")),
         )
-        decision: RouterDecision = invoke_structured_output(
-            prompt_text,
-            RouterDecision,
-            llm=llm,
-            provider=config.DEFAULT_PROVIDER,
-            system=ROUTER_SYSTEM,
-        )
+        with track_llm_call("router", llm_calls):
+            decision: RouterDecision = invoke_structured_output(
+                prompt_text,
+                RouterDecision,
+                llm=llm,
+                provider=config.DEFAULT_PROVIDER,
+                system=ROUTER_SYSTEM,
+            )
         llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
         
         chosen_intent = decision.intent
@@ -178,7 +180,7 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
             "intent": chosen_intent,
             "search_query": search_q,
             "trace_logs": logs,
-            "node_timings": {"router": {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms}},
+            "node_timings": {"router": {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms, "llmCalls": llm_calls}},
         }
     except Exception:
         # Nếu LLM lỗi, quay về tìm kiếm theo query gốc.
@@ -188,5 +190,5 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
             "intent": "search",
             "search_query": user_query,
             "trace_logs": logs,
-            "node_timings": {"router": {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": 0}},
+            "node_timings": {"router": {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": 0, "llmCalls": llm_calls}},
         }

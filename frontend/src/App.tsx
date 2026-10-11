@@ -63,7 +63,8 @@ function TurnView({ turn, graphNodes, actions }: { turn: Turn; graphNodes: numbe
           <>
             <ProgressLine run={run} />
             {run.status === 'error' && <div className="banner err">{run.error ?? 'Run thất bại.'}</div>}
-            {run.status !== 'running' && run.status !== 'error' && run.result && <AnswerView run={run} graphNodes={graphNodes} actions={actions} />}
+            {/* The answer appears as soon as the quick summary arrives; the progress line keeps running for the report. */}
+            {(run.summary || (run.status !== 'running' && run.status !== 'error' && run.result)) && <AnswerView run={run} graphNodes={graphNodes} actions={actions} />}
           </>
         )}
       </div>
@@ -110,7 +111,8 @@ export function App() {
   useEffect(() => {
     for (const t of turns) {
       const run = t.run
-      if (run?.graph && run.status !== 'running' && !seenGraphs.current.has(t.id)) {
+      // The graph may arrive before or after the quick summary, while the report is still being written.
+      if (run?.graph && !seenGraphs.current.has(t.id)) {
         seenGraphs.current.add(t.id)
         setGraphTurnId(t.id)
         requestAnimationFrame(() => requestAnimationFrame(() => setPanelOpen(true)))
@@ -120,12 +122,14 @@ export function App() {
 
   const graphTurn = turns.find((t) => t.id === graphTurnId)
   const graph = graphTurn?.run?.graph
-  const lastWithSummary = [...turns].reverse().find((t) => t.run?.summary && t.run.status !== 'running')
+  const lastWithSummary = [...turns].reverse().find((t) => t.run?.summary)
   const lastTurn = turns[turns.length - 1]
   const hasResult = !!lastTurn?.run && lastTurn.run.status !== 'running' && lastTurn.run.status !== 'error' && (!!lastTurn.run.result || !!lastTurn.run.answerText)
+  // The quick summary is on screen but report.md is still being written: follow-ups wait for it.
+  const waitingReport = !!lastTurn?.run && lastTurn.run.status === 'running' && !!lastTurn.run.summary && !lastTurn.run.reportReady
   const chips = useMemo(
-    () => (hasResult && !busy ? followUps(lastWithSummary?.run, lastWithSummary?.run?.graph) : []),
-    [hasResult, busy, lastWithSummary],
+    () => ((hasResult && !busy) || waitingReport ? followUps(lastWithSummary?.run, lastWithSummary?.run?.graph) : []),
+    [hasResult, busy, waitingReport, lastWithSummary],
   )
 
   const firstSummary = turns.find((t) => t.run?.summary?.paper?.title)?.run?.summary?.paper?.title
@@ -252,13 +256,14 @@ export function App() {
               {chips.length > 0 && (
                 <div className="follow">
                   {chips.map((c) => (
-                    <button key={c.text} type="button" className="chip" onClick={() => submit(c.text, { arxivId: c.arxivId, attachment: c.attachment })}>
+                    <button key={c.text} type="button" className="chip" disabled={waitingReport} onClick={() => submit(c.text, { arxivId: c.arxivId, attachment: c.attachment })}>
                       {c.text}
                     </button>
                   ))}
                 </div>
               )}
-              <Composer formRef={formRef} textareaRef={textareaRef} value={input} onChange={setInput} file={file} onFile={setFile} onSubmit={onComposerSubmit} busy={busy} />
+              {waitingReport && <div className="wait-hint">Báo cáo đầy đủ đang được viết. Hỏi tiếp được khi báo cáo xong.</div>}
+              <Composer formRef={formRef} textareaRef={textareaRef} value={input} onChange={setInput} file={file} onFile={setFile} onSubmit={onComposerSubmit} busy={busy} placeholder={waitingReport ? 'Đang viết báo cáo đầy đủ, hỏi tiếp được khi xong…' : undefined} />
               <div className="hint modes">
                 <button type="button" className="chip" onClick={() => ask(EXAMPLE_PAPER)}>
                   Phân tích một bài

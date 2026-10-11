@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -12,6 +13,7 @@ from nodes.refine_query import refine_query_node
 from nodes.read_paper import read_paper_node
 from nodes.web_enrich import web_enrich_node
 from nodes.write_notes import write_notes_node
+from nodes.summarize import summarize_node
 from nodes.citation_graph import citation_graph_node
 from nodes.final_report import final_report_node
 from nodes.error_handler import error_handler_node
@@ -53,7 +55,8 @@ def route_after_eval_search(state: ResearchState) -> str:
 
 
 # Branches that run in parallel after ``read_paper`` and join at ``final_report``.
-PARALLEL_BRANCHES = ["write_notes", "citation_graph", "web_enrich"]
+# ``notes_branch`` is the chain write_notes -> summarize (see below).
+PARALLEL_BRANCHES = ["notes_branch", "citation_graph", "web_enrich"]
 
 
 def route_after_read_paper(state: ResearchState):
@@ -61,6 +64,46 @@ def route_after_read_paper(state: ResearchState):
     if state.get("status") == "error":
         return "error_handler"
     return list(PARALLEL_BRANCHES)
+
+
+# --- NOTES BRANCH: write_notes -> summarize ---
+#
+# LangGraph runs in supersteps: a node of step N+1 starts only after EVERY node of
+# step N has finished.  With ``write_notes -> summarize`` as plain top-level nodes,
+# ``summarize`` would wait for the slowest of ``citation_graph`` and ``web_enrich``.
+# The chain therefore runs inside ONE top-level node (a small inner graph with its
+# own supersteps), beside the other two branches.  Inner node events still reach
+# the API (``stream(..., subgraphs=True)``) under their own names.
+
+_NOTES_BRANCH_OUTPUT = ("paper_notes", "overview", "answer_summary", "trace_logs", "error_logs")
+_NOTES_BRANCH_TIMINGS = ("write_notes", "summarize")
+
+
+def _build_notes_branch():
+    inner = StateGraph(ResearchState)
+    inner.add_node("write_notes", write_notes_node)
+    inner.add_node("summarize", summarize_node)
+    inner.add_edge(START, "write_notes")
+    inner.add_edge("write_notes", "summarize")
+    inner.add_edge("summarize", END)
+    return inner.compile()
+
+
+_notes_branch = _build_notes_branch()
+
+
+def notes_branch_node(state: ResearchState, config: RunnableConfig):
+    """Run write_notes then summarize and return only what this branch owns.
+
+    The inner state starts with empty log lists so the append reducers of the
+    parent do not receive the old logs twice.
+    """
+
+    result = _notes_branch.invoke({**state, "trace_logs": [], "error_logs": []}, config)
+    update = {key: result[key] for key in _NOTES_BRANCH_OUTPUT if key in result}
+    timings = result.get("node_timings") or {}
+    update["node_timings"] = {key: timings[key] for key in _NOTES_BRANCH_TIMINGS if key in timings}
+    return update
 
 
 # --- GRAPH COMPILATION ---
@@ -76,7 +119,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     workflow.add_node("refine_query", refine_query_node)
     workflow.add_node("read_paper", read_paper_node)
     workflow.add_node("web_enrich", web_enrich_node)
-    workflow.add_node("write_notes", write_notes_node)
+    workflow.add_node("notes_branch", notes_branch_node)
     workflow.add_node("citation_graph", citation_graph_node)
     workflow.add_node("final_report", final_report_node)
     workflow.add_node("error_handler", error_handler_node)
@@ -113,14 +156,15 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     # Loop back from refine to search
     workflow.add_edge("refine_query", "search_papers")
 
-    # CE3: after read_paper, fan out to write_notes (PMRL LLM), citation_graph
-    # and web_enrich; final_report waits for all three.  Each branch writes its
-    # own state keys (see ResearchState.paper_notes / paper_enrichment).
+    # CE3: after read_paper, fan out to notes_branch (write_notes -> summarize),
+    # citation_graph and web_enrich; final_report waits for all three.  Each
+    # branch writes its own state keys (see ResearchState.paper_notes /
+    # paper_enrichment / overview).
     workflow.add_conditional_edges(
         "read_paper",
         route_after_read_paper,
         {
-            "write_notes": "write_notes",
+            "notes_branch": "notes_branch",
             "citation_graph": "citation_graph",
             "web_enrich": "web_enrich",
             "error_handler": "error_handler",

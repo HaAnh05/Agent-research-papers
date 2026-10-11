@@ -27,11 +27,12 @@ flowchart TD
     EvalSearch -->|CE2: error| ErrorHandler
 
     %% CE3 Routing: fan out to 3 parallel branches, join at final_report
-    ReadPaper -->|CE3: ok — song song| WriteNotes["write_notes (PMRL LLM - Pydantic Output)"]
+    ReadPaper -->|CE3: ok — song song| WriteNotes["notes_branch: write_notes (PMRL LLM - Pydantic Output)"]
+    WriteNotes --> Summarize["notes_branch: summarize (Overview LLM + answerSummary, không chờ 2 nhánh kia)"]
     ReadPaper -->|CE3: ok — song song| CitationGraph["citation_graph (code only: references + OpenAlex + similarity)"]
     ReadPaper -->|CE3: ok — song song| WebEnrich["web_enrich (repo: HTML link hoặc GitHub 3 tầng + BibTeX)"]
     ReadPaper -->|CE3: error| ErrorHandler
-    WriteNotes --> FinalReport["final_report (Section + Overview LLM, join kết quả 3 nhánh)"]
+    Summarize --> FinalReport["final_report (Section LLM, join 3 nhánh, ghép report.md, vá answerSummary)"]
     CitationGraph --> FinalReport
     WebEnrich --> FinalReport
 
@@ -47,6 +48,7 @@ flowchart TD
     style WebEnrich fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style WriteNotes fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style CitationGraph fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style Summarize fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
     style FinalReport fill:#ede7f6,stroke:#512da8,stroke-width:2px
     style ErrorHandler fill:#ffebee,stroke:#c62828,stroke-width:2px
 ```
@@ -61,9 +63,10 @@ flowchart TD
 |   4   | `refine_query`      | LLM tối ưu lại từ khóa tìm kiếm dựa trên feedback → quay lại bước 2                |
 |   5   | `read_paper`        | Đọc HTML trước (ar5iv → arxiv.org/html), PDF là phương án dự phòng; bóc tách sections, bảng, tài liệu tham khảo, link repo |
 |  6a  | `write_notes`       | **Song song.** LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)               |
+|  6a' | `summarize`         | Chạy ngay sau `write_notes`, cùng nhánh `notes_branch`. 1 lệnh LLM overview (JSON) + code dựng `answerSummary`. Không chờ nhánh 6b, 6c |
 |  6b  | `citation_graph`    | **Song song.** Code, không LLM: dựng đồ thị trích dẫn và đồ thị bài liên quan (JSON `citation_graph`) |
 |  6c  | `web_enrich`        | **Song song.** Không LLM: repo (link HTML của bài, nếu không có thì GitHub 3 tầng) + BibTeX |
-|   7   | `final_report`      | Chờ 3 nhánh, ghép kết quả vào `PaperItem`, LLM viết báo cáo, lưu file Markdown            |
+|   7   | `final_report`      | Chờ 3 nhánh, ghép kết quả vào `PaperItem`, mỗi bài 1 lệnh LLM viết mục, lưu file Markdown, vá `answerSummary` (bài nền tảng, đồ thị, BibTeX, `reportId`) |
 |   —   | `error_handler`     | Xử lý graceful fallback khi bất kỳ node nào gặp lỗi                                      |
 
 ---
@@ -106,6 +109,7 @@ d:\LABAI\agentresearch\
 │   ├── read_paper.py
 │   ├── web_enrich.py
 │   ├── write_notes.py
+│   ├── summarize.py
 │   ├── final_report.py
 │   └── error_handler.py
 │
@@ -194,25 +198,25 @@ def route_after_eval_search(state) -> str:
 
 def route_after_read_paper(state) -> str | list[str]:
     # CE3: error → error_handler
-    #       còn lại → ["write_notes", "citation_graph", "web_enrich"] (chạy song song)
+    #       còn lại → ["notes_branch", "citation_graph", "web_enrich"] (chạy song song)
     #       3 nhánh cùng nối vào final_report: add_edge([...], "final_report") chờ cả 3
 ```
 
 #### `build_research_graph()`
 
 1. **Tạo `StateGraph(ResearchState)`** — khai báo kiểu state
-2. **Thêm 10 node** bằng `workflow.add_node(name, function)`
-3. **Nối cạnh**: cạnh cố định + 3 conditional edges (CE1, CE2, CE3; CE3 trả list 3 node để chạy song song) + 1 cạnh join `[write_notes, citation_graph, web_enrich] → final_report` + 1 vòng lặp `refine_query → search_papers`
+2. **Thêm 11 node** bằng `workflow.add_node(name, function)` (`notes_branch` bọc 2 node trong: `write_notes` → `summarize`)
+3. **Nối cạnh**: cạnh cố định + 3 conditional edges (CE1, CE2, CE3; CE3 trả list 3 node để chạy song song) + 1 cạnh join `[notes_branch, citation_graph, web_enrich] → final_report` + 1 vòng lặp `refine_query → search_papers`
 4. **Compile** với `MemorySaver` checkpointer (lưu snapshot state theo `thread_id`)
 
 Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` hoặc `.invoke()`.
 
-#### Topology (sau P2)
+#### Topology (sau P6)
 
 ```text
-START -> router --direct_read--> read_paper --+--> write_notes ----+
-          |                          ^        +--> citation_graph -+--> final_report -> END
-          +--followup--> answer_followup -> END   +--> web_enrich -----+
+START -> router --direct_read--> read_paper --+--> notes_branch [write_notes -> summarize] --+
+          |                          ^        +--> citation_graph ----------------------------+--> final_report -> END
+          +--followup--> answer_followup -> END   +--> web_enrich ---------------------------+
           +--search--> search_papers |
                          |           |        (lỗi read_paper -> error_handler -> END)
                          v           |
@@ -220,25 +224,51 @@ START -> router --direct_read--> read_paper --+--> write_notes ----+
                          +--low--> refine_query -> search_papers
 ```
 
+**Vì sao `notes_branch`.** LangGraph chạy theo superstep: node ở bước N+1 chỉ bắt đầu khi **mọi** node ở bước N xong (đã đo bằng đồ thị thử: `write_notes -> summarize` ở top level làm `summarize` chờ `citation_graph` chậm nhất). `notes_branch` là 1 node top level; hàm của nó chạy 1 đồ thị con (`write_notes -> summarize`, superstep riêng) nên `summarize` bắt đầu ngay khi `write_notes` xong, kể cả khi `citation_graph` còn chạy. Đồ thị con nhận `trace_logs`/`error_logs` rỗng (reducer `operator.add` không nhân đôi log cũ) và node cha chỉ nhận lại `paper_notes`, `overview`, `answer_summary`, log và `node_timings` của 2 node trong. API gọi `stream(..., subgraphs=True)` (không nhận `subgraphs` thì quay về cách cũ) nên 2 node trong vẫn phát `step.started` / `step.updated` / `step.completed` dưới tên của chúng; task và update của `notes_branch` bị bỏ (`WRAPPER_NODES`).
+
 #### Ghép trạng thái an toàn giữa 3 nhánh song song
 
 - Cả 3 nhánh **đọc** `selected_papers` (do `read_paper` ghi) và **không ghi** `selected_papers`.
 - `write_notes` ghi `paper_notes`, `web_enrich` ghi `paper_enrichment`, `citation_graph` ghi `citation_graph`. Hai key đầu có reducer `operator.or_` (merge dict theo `paper_id`).
+- `summarize` (cùng nhánh với `write_notes`, chạy sau nó) ghi `overview` (JSON overview; `{}` khi lệnh LLM lỗi, `None` khi chưa chạy) và `answer_summary`. Hai key này chỉ có `summarize` ghi trước, `final_report` đọc `overview` rồi ghi đè `answer_summary` đã vá; hai node không bao giờ chạy cùng superstep.
 - `trace_logs`, `error_logs`, `node_timings` đã có reducer từ trước. Không nhánh nào ghi `status`.
 - `final_report` gọi `merge_branch_results()` để copy từng `PaperItem`, gắn notes, `github_repos`, `bibtex`, metadata, rồi trả `selected_papers` đã ghép. API và CLI đọc `selected_papers` sau bước này.
 - Mất 1 nhánh (ví dụ PMRL lỗi) không chặn các nhánh còn lại: `write_notes` tự tạo notes dự phòng; `citation_graph` và `web_enrich` không raise.
 
-#### 5 giai đoạn tiến trình trong UI chat (`api.py`)
+#### 6 giai đoạn tiến trình trong UI chat (`api.py`)
 
-Mỗi node tương ứng 1 giai đoạn; `TraceEvent` có thêm `label` tiếng Việt, `description`, `stage` (1-5) và `parallelGroup`. Router, search, eval, refine, error_handler có nhãn tiếng Việt nhưng không có `stage`. "Đọc toàn văn" và "Trích xuất bảng và tài liệu tham khảo" là nhãn và mô tả của cùng giai đoạn `read_paper` (một node = một giai đoạn).
+Mỗi node tương ứng 1 giai đoạn; `TraceEvent` có thêm `label` tiếng Việt, `description`, `stage` (1-6) và `parallelGroup`. Router, search, eval, refine, error_handler có nhãn tiếng Việt nhưng không có `stage`. "Đọc toàn văn" và "Trích xuất bảng và tài liệu tham khảo" là nhãn và mô tả của cùng giai đoạn `read_paper` (một node = một giai đoạn). Giai đoạn 2-5 chạy cùng lúc: `write_notes` rồi `summarize` là một chuỗi, chạy cạnh `citation_graph` và `web_enrich`.
 
 | stage | node             | label                  | description                                  | parallelGroup |
 | :---: | :--------------- | :--------------------- | :------------------------------------------- | :------------ |
 |   1   | `read_paper`     | Đọc toàn văn           | Trích xuất bảng và tài liệu tham khảo        | —             |
 |   2   | `write_notes`    | Ghi chú có cấu trúc    | Rút vấn đề, phương pháp, kết quả, hạn chế    | `analysis`    |
-|   3   | `citation_graph` | Dựng bản đồ liên quan  | Tìm bài nền tảng và bài kế thừa              | `analysis`    |
-|   4   | `web_enrich`     | Tìm mã nguồn và BibTeX | Tìm repository chính thức và tạo BibTeX      | `analysis`    |
-|   5   | `final_report`   | Viết báo cáo           | Tổng hợp báo cáo Markdown                    | —             |
+|   3   | `summarize`      | Tóm tắt nhanh          | Viết câu trả lời ngắn từ ghi chú, không chờ bản đồ | `analysis` |
+|   4   | `citation_graph` | Dựng bản đồ liên quan  | Tìm bài nền tảng và bài kế thừa              | `analysis`    |
+|   5   | `web_enrich`     | Tìm mã nguồn và BibTeX | Tìm repository chính thức và tạo BibTeX      | `analysis`    |
+|   6   | `final_report`   | Viết báo cáo đầy đủ    | Viết các mục và ghép report.md, chạy nền     | —             |
+
+**Dãy sự kiện SSE của run một bài** (`GET /api/runs/{id}/events`; frame đầu là `snapshot`):
+
+```text
+step.started router            -> step.updated -> step.completed
+step.started read_paper        -> step.updated -> step.completed
+step.started write_notes, citation_graph, web_enrich   (cùng lúc)
+  step.updated/completed web_enrich                     (thường xong trước)
+  step.updated/completed write_notes
+step.started summarize
+  assistant.delta          (lead của answerSummary)
+  step.updated summarize   (facts: keyResultCount, resultRowCount, llmCalls)
+  answer.summary           (answerSummary một phần, reportReady=false)
+  step.completed summarize
+  step.updated/completed citation_graph
+  answer.summary           (gửi lại, đã vá: bài nền tảng, đồ thị, BibTeX; chỉ khi graph/web_enrich xong sau summary)
+step.started final_report -> step.updated -> step.completed
+assistant.completed
+run.completed              (answerSummary cuối, reportReady=true)
+```
+
+`answer.summary` mang `answerSummary`, `reportReady`, `citationGraph` và `bibtex` (trường mới của `TraceEvent`). `run.completed` mang cùng 4 trường với giá trị cuối (`answerSummary.durationSec` là thời gian chạy thực đo). `GET /api/runs/{id}` và frame `snapshot` dùng cùng phép chiếu (`_result_from_state`): khi run còn chạy, `result.answerSummary` là bản một phần, `result.reportReady` là `false`, `result.report` và `result.reportId` là `null`; `result.bibtex`, `result.papers` và `result.citationGraph` có ngay khi nhánh của chúng xong (API ghép `paper_notes`/`paper_enrichment` vào `selected_papers` bằng cùng hàm `merge_branch_results` mà `final_report` dùng). `patch_answer_summary()` (code, idempotent) thêm khối `foundations`, `actions.graphNodes`, `actions.bibtexCount`, `actions.reportId`. Cả `final_report` và API gọi nó.
 
 Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có dữ liệu; `paperFacts` = 1 dict mỗi bài):
 
@@ -248,7 +278,9 @@ Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có d�
 | `write_notes`    | `insightCount`, `evalSettings {proposed, kept, dropped}`, `hardwareStatedCount` (hardware đã grounding); mỗi bài: `hardwareStated` |
 | `citation_graph` | `seeds`, `pool`, `nodeCount`, `edgeCount` (đồ thị bài liên quan; dùng đồ thị trích dẫn nếu không có), `graphStatus`, `refsTotal`, `refsResolved` (số mục tham khảo đã xác định arXiv id), `durationMs` |
 | `web_enrich`     | `repoSource` (html / github_search / none / mixed), `repositoryCount`, `bibtexCount`                                      |
+| `summarize`      | `keyResultCount` (số `keyResults` một bài, hoặc số insight nhiều bài), `resultRowCount` (số hàng bảng kết quả đã grounding)  |
 | `final_report`   | `sectionCount` (số heading `## `), `reportId`, `reportAvailable`                                                          |
+| mọi node có LLM  | `llmCalls[{kind, ms, inputTokens?, outputTokens?, reasoningTokens?, paperId?}]` (xem 3.13). `kind`: `router`, `eval_search`, `refine_query`, `pmrl`, `overview`, `section`, `followup` |
 
 `refsResolved` nằm ở `citation_graph` vì việc xác định id chạy trong node đó, không phải trong `read_paper`.
 
@@ -400,26 +432,43 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 **Fallback PMRL**: Nếu LLM lỗi → tạo PMRLNotes mặc định từ summary/text thô.
 
+**Số đo lệnh LLM**: mỗi lệnh PMRL (`kind: "pmrl"`, kèm `paperId`) ghi `ms` và token vào `node_timings.write_notes.llmCalls`. Cache hit không có lệnh LLM nên không có mục.
+
 **Ý nghĩa kiến trúc**: Sau bước này, toàn bộ nội dung bài báo (hàng chục ngàn ký tự `extracted_text`) đã được **nén** thành ~500 từ PMRLNotes có cấu trúc. Node phía sau (`final_report`) chỉ đọc `notes` — giảm ~70% token prompt.
+
+---
+
+### 3.10b. Node: `summarize` (`nodes/summarize.py`)
+
+**Chức năng**: Tóm tắt nhanh. Chạy ngay sau `write_notes` trong `notes_branch` (xem 3.3), nên không chờ `citation_graph` và `web_enrich`. Đọc `selected_papers` và `paper_notes` (chỉ ghi chú PMRL; chưa có repo, BibTeX, đồ thị).
+
+1. 1 lệnh LLM overview (`_write_overview`, JSON theo `OverviewSingle` / `OverviewMulti`, `kind: "overview"`).
+2. Code dựng `answerSummary` bằng `build_answer_summary()`: chưa có khối `foundations`, `actions.graphNodes` = 0, `actions.reportId` = `null`.
+3. Trả `overview` (JSON dump; `{}` khi lệnh lỗi hoặc thiếu `tldr`, để `final_report` không gọi lại), `answer_summary`, log và `node_timings.summarize` (`durationMs`, `llmMs`, `llmCalls`, `cache`).
+
+**Cache overview**: khóa `overview_<hash>` gồm provider, model, query, tiêu đề, ngôn ngữ, `REPORT_VERSION`, prompt overview, `_papers_context` và `_terms_text`. Overview lỗi hoặc thiếu mục `summary`/`conclusion` không được cache. Cache hit không gọi LLM.
+
+Số lệnh LLM mỗi run không đổi: PMRL (n), overview (1), section (n).
 
 ---
 
 ### 3.11. Node: `final_report` (`nodes/final_report.py`)
 
-**Chức năng**: Tổng hợp mọi thông tin thành **báo cáo nghiên cứu chuyên sâu** dạng Markdown.
+**Chức năng**: Viết các mục từng bài, ghép **báo cáo nghiên cứu chuyên sâu** dạng Markdown và hoàn tất `answerSummary`. Chạy khi cả 3 nhánh xong (UI gọi là "Viết báo cáo đầy đủ", chạy nền sau khi câu trả lời nhanh đã hiện).
 
 **Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Bối cảnh nghiên cứu` (code, từ `citation_graph`) → `## 4. Kết luận` → `## 5. Tài liệu tham khảo`. Không còn mục so sánh/benchmark và không còn summary card; nhiều bài đầu vào cũng đi theo `direct_read`.
 
 **Đặc điểm**:
 
-- Đường duy nhất (song song): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_*`), 1 lệnh overview — tất cả trong **1 pool** (`min(n+1, 2*LLM_MAX_CONCURRENCY)` worker). Số lệnh LLM của `final_report` = n + 1. Không có bài → không gọi LLM.
+- Đường duy nhất (song song): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_*`) trong **1 pool** (`min(n, 2*LLM_MAX_CONCURRENCY)` worker). Overview lấy từ `state["overview"]` do `summarize` làm, nên số lệnh LLM của `final_report` = n. Nếu state không có `overview` (gọi trực tiếp, không qua `summarize`; bench, test) thì node tự gọi overview trong cùng pool như trước (n + 1 lệnh). `overview == {}` (summarize lỗi) → không gọi lại, báo cáo dùng văn bản dự phòng và status `degraded`. Không có bài → không gọi LLM.
+- **`answer_summary`**: `final_report` lấy bản của `summarize` rồi gọi `patch_answer_summary()` (thêm `foundations`, `actions.graphNodes`, `actions.bibtexCount`, `actions.reportId`, `durationSec`); lời văn không đổi. Không có bản của `summarize` thì dựng mới bằng `build_answer_summary()`.
 - **Lệnh overview trả JSON** (structured output, ngôn ngữ báo cáo; vai trò trong system, dữ liệu và `<terms>` trong user). Một bài (`OverviewSingle`): `tldr`, `problem`, `intuition`, `keyResults[]`, `metrics[{name, meaning, higherIsBetter}]`, `setup[]` (có 1 dòng `Hardware:`), `caveats[]`, `takeaway`. Nhiều bài (`OverviewMulti`): `tldr`, `insights[{finding, why}]`, `papers[{paperId, intuition, keyResult}]`, `takeaway`. Code dựng `## 1. Tóm tắt` (tldr + keyResults hoặc insights) và `## 4. Kết luận` (caveats + takeaway) từ JSON bằng `render_overview_sections()`. Lệnh section lỗi → khối dựng từ notes; overview lỗi hoặc thiếu `tldr` → văn bản tối thiểu; cả hai đặt status `degraded` và không cache.
 - **Khối `<terms>`** (code dựng, `_terms_text`) có trong user message của section và overview: `method_name`, tên metric, tên benchmark/dataset và tên thành phần (token CamelCase/CHỮ HOA lặp ≥2 lần trong notes). Prompt yêu cầu dùng đúng các thuật ngữ này.
 - **Quy tắc văn phong ASD-STE100 (tiếng Việt)** nằm 1 lần trong `prompts/common.py::STE_RULES` và được chèn vào system của section và overview: dùng bullet thay đoạn; mỗi số, dataset, metric, baseline, hardware một bullet; một chủ đề mỗi câu; câu ≤ 25 từ (tiếng Việt ≤ 35 âm tiết), câu lệnh ≤ 20 từ (≤ 28 âm tiết); thể chủ động, nêu chủ thể, tránh "được"/"bị", tên ghép ≤ 3 danh từ; một thuật ngữ cho một khái niệm; thay từ mơ hồ bằng số hoặc điều kiện; văn phong học thuật, không lặp ý.
 - Khối paper có thêm sub-bullet `Ý tưởng cốt lõi` (tiếng Anh: `Core idea`) dưới `Phương pháp`, lấy từ `notes.intuition`.
 - **`answerSummary`** (`build_answer_summary`, code, không LLM): `state["answer_summary"]` và `RunResult.answerSummary`. Dạng: `{kind: single|multi, paper | papers, lead, tldr, blocks, actions: {reportId, bibtexCount, graphNodes}, durationSec}`. `blocks` một bài: `problem`, `intuition`, `keyResults`, `metrics`, `setup {items, hardware, missing: ["Hardware"] khi paper không nêu}`, `results {grounded, source[], methodName, rows[{setting, metric, method, baseline, delta, higherIsBetter}]}` (hàng từ `eval_settings` đã grounding; `delta` chỉ khi hai giá trị là số đơn), `caveats`, `foundations` (≤6 tên bài nền tảng từ `citation_graph`), `takeaway`. Nhiều bài: `insights`, `paperCards[{paperId, title, year, intuition, keyResult}]`, `foundations`, `takeaway`. `durationSec` là ước lượng từ `node_timings` (nối tiếp + nhánh song song chậm nhất). Mọi giá trị prose lấy từ JSON overview; thiếu overview thì dùng notes làm dự phòng. API stream `answer` = `lead` (không stream token LLM, vì nhiều lệnh LLM chạy song song); `report_id` lưu ở state.
 - **Khối "Kết quả chính" (PR 3)**: LLM nhận notes kèm insights, dòng eval_settings và setup, viết các sub-bullet `Insight` (đánh số), `Đại lượng đo`, `Thiết lập`, `Nhận xét` (tiếng Anh: Insight, Metrics, Setup, Remarks). **Code** dựng bảng kết quả từ `eval_settings` đã grounding (cột: Benchmark, Metric kèm đơn vị và ↑/↓, tên phương pháp, Baseline tốt nhất; `—` khi thiếu; dòng `*Nguồn: Table N trong paper*` khi nhãn bảng đã xác minh) và chèn trước sub-bullet `Nhận xét` (hoặc cuối khối Kết quả chính nếu thiếu); bảng thụt 2 dấu cách để nằm trong mục danh sách. Nếu `setup.hardware` rỗng mà `Thiết lập` không có câu về hardware, code thêm `Hardware: paper không nêu` (tiếng Anh: `Hardware: not stated in the paper`). Không có dòng đã grounding thì không có bảng. Lệnh section lỗi → `_deterministic_paper_section` dựng cùng cấu trúc từ notes. Overview nhận insights từng bài để "Tóm tắt" nêu insight xuyên suốt các bài.
-- Cache báo cáo lưu `report_text` và JSON overview (để dựng lại `answerSummary` khi cache hit). Phiên bản: `REPORT_VERSION = "p12"`; khóa cũng chứa `_paper_breakdown`, input section, context overview và mục 3 nên đổi notes là đổi khóa
+- Cache báo cáo lưu `report_text` và JSON overview (để dựng lại `answerSummary` khi cache hit không qua `summarize`). Phiên bản: `REPORT_VERSION = "p13"` (P6 đổi khóa: thêm JSON overview của `summarize`, và khóa overview riêng `overview_...`); khóa cũng chứa `_paper_breakdown`, input section, context overview và mục 3 nên đổi notes là đổi khóa
 - Mục 3 do `_context_section()` dựng từ `state["citation_graph"]` (thiếu graph → một dòng "chưa có dữ liệu"); nội dung mục 3 nằm trong khóa cache báo cáo
 - API `PaperDTO` có thêm: `intuition`, `insights[{finding, whyItMatters}]`, `evalSettings[]` (chỉ hàng đã grounding), `setup {datasets, trainingConfig, hardware, compute}`, `tableCount`, `referenceCount`, `repository {url, source: html|github}` (link HTML của bài ưu tiên, sau đó kết quả tìm GitHub).
 - Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`; tên file lưu ở `state["report_id"]`
@@ -429,7 +478,7 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 ### 3.11b. Node: `citation_graph` (`nodes/citation_graph.py`)
 
-**Chức năng**: Dựng đồ thị trích dẫn quanh các bài đã chọn bằng code (không LLM, không gọi mạng trừ OpenAlex khi có key). Chạy sau `write_notes`, trước `final_report`; không bao giờ làm run lỗi (lỗi → đồ thị rỗng + log).
+**Chức năng**: Dựng đồ thị trích dẫn quanh các bài đã chọn bằng code (không LLM, không gọi mạng trừ OpenAlex khi có key). Chạy song song với `notes_branch`, trước `final_report`; không bao giờ làm run lỗi (lỗi → đồ thị rỗng + log).
 
 - **Cạnh đi ra**: mỗi `PaperReference` của bài đã chọn được đổi thành arXiv id qua `tools/ref_resolver.py` (thứ tự: id có sẵn → DOI `10.48550/arXiv.X` → DOI trong index → tiêu đề chuẩn hóa khớp đúng 1 dòng trong index; tiêu đề < 4 từ hoặc khớp ≥ 2 dòng thì bỏ qua).
 - **Cạnh đi vào**: OpenAlex (`tools/openalex.py`): 1 lệnh lấy work theo DOI arXiv, 1 lệnh lấy 50 bài trích dẫn nhiều nhất cho mỗi bài đã chọn, và số trích dẫn của các ứng viên nền tảng. Không có `OPENALEX_API_KEY` → trạng thái `no_key`, vẫn có bài nền tảng từ co-citation.
@@ -531,6 +580,9 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 | :------------------------------- | :---------------------------------------------------------------------------------------------------------------- |
 | `get_llm()`                    | Factory tạo`BaseChatModel` theo provider: Gemini, OpenAI, OpenRouter, Anthropic                                |
 | `extract_text_from_response()` | Xử lý an toàn`response.content` — tương thích cả `str` lẫn `list[ContentPart]` từ Gemini SDK mới |
+| `track_llm_call(kind, sink, **extra)` | Context manager bọc **đúng 1** lệnh LLM (`invoke_structured_output`, `invoke_text` hoặc vòng `stream`). Ghi `{kind, ms, inputTokens?, outputTokens?, reasoningTokens?}` vào `sink` (cả khi lệnh lỗi) |
+
+**Số đo lệnh LLM (P6).** `track_llm_call` đặt một `_UsageCollector` (callback LangChain, đăng ký 1 lần bằng `register_configure_hook`) vào ContextVar của thread hiện tại, nên mọi lệnh model trong khối (kể cả qua `with_structured_output` và `stream`) đều báo cho nó; mỗi thread worker có collector riêng. Collector cộng `AIMessage.usage_metadata` (`input_tokens`, `output_tokens`, `output_token_details.reasoning`; ChatOpenAI điền từ `prompt_tokens`, `completion_tokens`, `completion_tokens_details.reasoning_tokens`, kể cả Z.AI), dự phòng `response_metadata["token_usage"]`. Trường nào provider không trả thì **bỏ khỏi** bản ghi, không đoán; model giả hoặc stream không có usage chỉ có `ms`. `outputTokens` là số provider báo (với API kiểu OpenAI đã gồm reasoning). Mỗi node ghi list vào `node_timings[node]["llmCalls"]` (list nằm ngoài `timings` số của API vì `_numeric_timings` bỏ qua list); API đưa vào `facts.llmCalls` của `step.updated` (đã lọc qua allowlist) và vào file thread (`runs[].llmCalls`: `{node, kind, ...}`).
 
 ---
 
@@ -591,6 +643,8 @@ Chạy `graph.stream()` đồng bộ, in trace log từng bước, xuất final 
 | `test_results_format.py` |  4  | Grounding loại số/hardware bịa, cache PMRL cũ vẫn load, bảng kết quả chèn trước `Nhận xét`, dòng hardware "không nêu" |
 | `test_bench_verify.py` |  +2  | `results_format` (Insight/Đại lượng đo/Thiết lập) và `results_table_numbers` (số trong bảng có trong nguồn) |
 
+P6 không thêm test mới; `test_graph_flow.py` đổi tên node `write_notes` → `notes_branch` ở topology top level, `test_concurrency.py` đổi `REPORT_VERSION` sang `p13`. Kiểm tra topology và dãy sự kiện P6 làm offline bằng đồ thị thật + model giả (xem `docs/plans/chat-ui-backend.md`, P6).
+
 Chạy: `.venv/bin/python -m pytest tests/ -q`.
 
 Xem trước định dạng báo cáo, hoàn toàn offline (LLM giả, số thật từ bảng đã parse): `.venv/bin/python -I bench/render_report_preview.py` → `data/arxiv/preview_report.md` (đọc `data/arxiv/html_probe/ar5iv_*.html`).
@@ -600,7 +654,7 @@ Xem trước định dạng báo cáo, hoàn toàn offline (LLM giả, số th�
 ### 3.17. Thread: ngữ cảnh và lưu trữ (`api.py`)
 
 - **Gửi tin nhắn**: `POST /api/threads/{id}/messages` (form `message`, tùy chọn `arxivId`/`paperInputs`/PDF). State ban đầu có `conversation_context` (văn bản ≤12k ký tự: artifact, report id, paper id, notes, intuition, 3 insight đầu, hardware) và `followup_context` (cấu trúc, xem 3.11c; `None` nếu thread chưa có báo cáo). Luật 1 run đang chạy cho cả hệ thống giữ nguyên (HTTP 409).
-- **Số đo thời gian**: `answerSummary.durationSec` bị ghi đè bằng thời gian chạy thực đo (`finished_at - started_at`) khi run xong; graph chỉ ước lượng.
+- **Số đo thời gian**: `answerSummary.durationSec` bị ghi đè bằng thời gian chạy thực đo (`finished_at - started_at`) khi run xong; graph chỉ ước lượng. UI đếm giờ từng step đang chạy từ lúc nhận `step.started` (mỗi giây), và hiện `durationMs` của server khi có `step.completed`.
 - **Lưu trên đĩa**: `config.THREADS_DIR` (mặc định `data/threads/`, git-ignored, đổi bằng biến môi trường `THREADS_DIR`). Mỗi thread một file `<threadId>.json`, ghi nguyên tử (file tạm rồi `replace`) khi tạo thread và khi mỗi run kết thúc. Nạp lúc server khởi động (lifespan của FastAPI). Registry không có `persist_dir` (test, thư viện) chỉ giữ trong RAM.
 
 ```json
@@ -611,9 +665,10 @@ Xem trước định dạng báo cáo, hoàn toàn offline (LLM giả, số th�
   "messages": [ThreadMessage ...], "artifacts": [ArtifactDTO ...],
   "runs": [{
     "runId": "...", "status": "success|degraded|error", "provider": "...", "model": "...",
+    "llmCalls": [{"node": "write_notes", "kind": "pmrl", "paperId": "...", "ms": 96000, "inputTokens": 9400, "outputTokens": 3100, "reasoningTokens": 9400}],
     "input": RunInput, "answer": "lead hoặc câu trả lời follow-up", "error": null,
     "startedAt": "ISO", "updatedAt": "ISO", "finishedAt": "ISO",
-    "result": RunResult (papers DTO, reportId, answerSummary, citationGraph, report),
+    "result": RunResult (papers DTO, reportId, reportReady, answerSummary, citationGraph, report),
     "followupContext": { ... riêng tư, xem 3.11c ... }
   }]
 }

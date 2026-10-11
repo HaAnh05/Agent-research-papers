@@ -232,3 +232,11 @@ table.res td.up{color:var(--ok)}
 .send:not(:disabled):hover{background:#000}
 .composer .attached + .send{margin-left:auto}
 .answer p.paper-ref{font:500 14px var(--sans);margin:8px 0 0;color:var(--ink-2)}
+
+/* ---------- P6: live timers, early summary, pending report ---------- */
+.step .facts.llm{color:var(--ink-3);font-size:12.5px;margin-top:1px}
+.btn.pending,.btn.pending:hover{background:var(--subtle);border-color:var(--rule);color:var(--ink-3);cursor:not-allowed}
+.btn.pending svg{color:var(--ink-3)}
+.chip:disabled{opacity:.55;cursor:not-allowed;background:var(--bg);border-color:var(--rule);color:var(--ink-3)}
+.chip:disabled:hover{border-color:var(--rule);background:var(--bg);color:var(--ink-3)}
+.wait-hint{width:min(760px,100%);color:var(--ink-3);font-size:13px;margin-bottom:8px}

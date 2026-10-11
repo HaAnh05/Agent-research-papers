@@ -4,7 +4,7 @@ import time
 from typing import Any, Dict
 from state import ResearchState
 from prompts.refine_query_prompt import REFINE_QUERY_SYSTEM, REFINE_QUERY_USER
-from tools.llm_provider import get_llm, extract_text_from_response, invoke_text
+from tools.llm_provider import get_llm, extract_text_from_response, invoke_text, track_llm_call
 
 
 def refine_query_node(state: ResearchState) -> Dict[str, Any]:
@@ -24,9 +24,11 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
     )
 
     llm_started = time.perf_counter()
+    llm_calls: list = []
     try:
         llm = get_llm()
-        response = invoke_text(llm, REFINE_QUERY_SYSTEM, prompt)
+        with track_llm_call("refine_query", llm_calls):
+            response = invoke_text(llm, REFINE_QUERY_SYSTEM, prompt)
         raw_text = extract_text_from_response(response.content)
         new_query = raw_text.replace('"', '').replace("'", "").strip()
         
@@ -37,6 +39,7 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
             "node_timings": {"refine_query": {
                 "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
                 "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+                "llmCalls": llm_calls,
             }},
             "trace_logs": logs
         }
@@ -50,6 +53,7 @@ def refine_query_node(state: ResearchState) -> Dict[str, Any]:
             "node_timings": {"refine_query": {
                 "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
                 "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+                "llmCalls": llm_calls,
             }},
             "trace_logs": logs
         }

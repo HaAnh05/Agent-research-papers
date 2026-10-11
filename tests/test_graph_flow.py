@@ -25,7 +25,7 @@ def test_graph_compilation():
         "refine_query",
         "read_paper",
         "web_enrich",
-        "write_notes",
+        "notes_branch",
         "citation_graph",
         "final_report",
         "error_handler",
@@ -35,7 +35,7 @@ def test_graph_compilation():
     assert "eval_search" in graph.nodes
     assert "read_paper" in graph.nodes
     assert "web_enrich" in graph.nodes
-    assert "write_notes" in graph.nodes
+    assert "notes_branch" in graph.nodes
     assert "compare_benchmark" not in graph.nodes
     assert "final_report" in graph.nodes
 
@@ -66,6 +66,6 @@ def test_routing_logic():
     # Test route_after_read_paper: fan out to the three parallel branches
     dummy_paper = PaperItem(paper_id="p1", title="Test Paper 1")
     assert set(route_after_read_paper({"selected_papers": [dummy_paper], "status": "running"})) == {
-        "write_notes", "citation_graph", "web_enrich",
+        "notes_branch", "citation_graph", "web_enrich",
     }
     assert route_after_read_paper({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"

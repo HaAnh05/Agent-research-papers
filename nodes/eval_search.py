@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 from state import ResearchState, EvalSearchOutput, PaperItem
 from config import config
 from prompts.eval_search_prompt import EVAL_SEARCH_SYSTEM, EVAL_SEARCH_USER
-from tools.llm_provider import get_llm, invoke_structured_output
+from tools.llm_provider import get_llm, invoke_structured_output, track_llm_call
 
 
 def eval_search_node(state: ResearchState) -> Dict[str, Any]:
@@ -56,15 +56,17 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
     )
 
     llm_started = time.perf_counter()
+    llm_calls: List[dict] = []
     try:
         llm = get_llm()
-        eval_result: EvalSearchOutput = invoke_structured_output(
-            prompt,
-            EvalSearchOutput,
-            llm=llm,
-            provider=config.DEFAULT_PROVIDER,
-            system=EVAL_SEARCH_SYSTEM,
-        )
+        with track_llm_call("eval_search", llm_calls):
+            eval_result: EvalSearchOutput = invoke_structured_output(
+                prompt,
+                EvalSearchOutput,
+                llm=llm,
+                provider=config.DEFAULT_PROVIDER,
+                system=EVAL_SEARCH_SYSTEM,
+            )
 
         # Select the chosen papers
         selected_papers: List[PaperItem] = []
@@ -88,6 +90,7 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
             "node_timings": {"eval_search": {
                 "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
                 "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+                "llmCalls": llm_calls,
             }},
             "trace_logs": logs
         }
@@ -101,6 +104,7 @@ def eval_search_node(state: ResearchState) -> Dict[str, Any]:
             "node_timings": {"eval_search": {
                 "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
                 "llmMs": max(0, int((time.perf_counter() - llm_started) * 1000)),
+                "llmCalls": llm_calls,
             }},
             "trace_logs": logs
         }
