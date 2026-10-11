@@ -76,9 +76,51 @@ class PMRLNotes(BaseModel):
     # ``setup.hardware`` are checked against the paper source in code
     # (nodes.write_notes.ground_structured_notes) before they are used.
     method_name: str = Field(default="", description="Short name the paper gives its own method (for example a model name); empty if none.")
+    intuition: str = Field(default="", description="The core idea in plain words and why it should work (English); empty if the paper gives no basis.")
     insights: List[Insight] = Field(default_factory=list)
     eval_settings: List[EvalSetting] = Field(default_factory=list)
     setup: Setup = Field(default_factory=Setup)
+
+
+# --- Overview call output (final_report): one JSON object in the report language ---
+
+class MetricInfo(_LenientModel):
+    name: str = Field(default="", description="Metric name as the paper writes it.")
+    meaning: str = Field(default="", description="One short sentence: what the metric measures and its unit.")
+    higherIsBetter: Optional[bool] = Field(default=None, description="true if higher is better, false if lower is better, null if unclear.")
+
+
+class OverviewSingle(_LenientModel):
+    """Overview of ONE paper.  Camel-case names are the public JSON keys."""
+
+    tldr: str = Field(default="", description="Two short sentences: the paper's contribution and why it matters.")
+    problem: str = Field(default="", description="The problem the paper solves, in one or two short sentences.")
+    intuition: str = Field(default="", description="The core idea in plain words and why it should work, in one or two short sentences.")
+    keyResults: List[str] = Field(default_factory=list, description="Two to four short bullets; each holds one result with its number, dataset and baseline.")
+    metrics: List[MetricInfo] = Field(default_factory=list, description="Each metric the paper uses for its key results.")
+    setup: List[str] = Field(default_factory=list, description="Short bullets: datasets, key training settings, and one hardware bullet.")
+    caveats: List[str] = Field(default_factory=list, description="Short bullets: limits of the evidence.")
+    takeaway: str = Field(default="", description="One or two short sentences: what a researcher should do with this paper.")
+
+
+class OverviewFinding(_LenientModel):
+    finding: str = Field(default="", description="One finding that holds across the papers.")
+    why: str = Field(default="", description="Why it matters, with the papers and numbers that support it.")
+
+
+class OverviewPaper(_LenientModel):
+    paperId: str = Field(default="", description="The paper_id from the context, copied exactly.")
+    intuition: str = Field(default="", description="The paper's core idea in one short sentence.")
+    keyResult: str = Field(default="", description="The paper's main result in one short sentence, with its number.")
+
+
+class OverviewMulti(_LenientModel):
+    """Overview of SEVERAL papers."""
+
+    tldr: str = Field(default="", description="Two short sentences: what the papers share and where the field is going.")
+    insights: List[OverviewFinding] = Field(default_factory=list, description="Two to four insights that hold across the papers.")
+    papers: List[OverviewPaper] = Field(default_factory=list, description="One entry per paper, in the context order.")
+    takeaway: str = Field(default="", description="One or two short sentences: what a researcher should do next.")
 
 
 class GitHubRepoInfo(BaseModel):
@@ -216,7 +258,11 @@ class ResearchState(TypedDict):
     paper_enrichment: Annotated[Dict[str, Dict[str, Any]], operator.or_]
 
     # Output Synthesis
-    final_report: Optional[str]              # Comprehensive research report (Markdown)
+    final_report: Optional[str]
+    report_id: Optional[str]                 # file name of the saved report (set by final_report)
+    # Structured chat answer built by code from the overview JSON and grounded
+    # notes (nodes.final_report.build_answer_summary); None when not built.
+    answer_summary: Optional[Dict[str, Any]]              # Comprehensive research report (Markdown)
 
     # Append-only measured timings.  Each node writes its own key, preserving
     # the existing LangGraph topology while making timing visible to API

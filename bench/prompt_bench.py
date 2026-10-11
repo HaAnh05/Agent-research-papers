@@ -45,6 +45,7 @@ import hashlib
 import importlib
 import inspect
 import json
+import re
 import shutil
 import statistics
 import sys
@@ -68,13 +69,21 @@ from bench import verify  # noqa: E402
 from bench.run_scenario import prompt_chars  # noqa: E402
 from config import config, resolved_provider  # noqa: E402
 from nodes.write_notes import PMRLCoreGeneration  # noqa: E402
-from state import PaperItem  # noqa: E402
+from state import OverviewMulti, OverviewSingle, PaperItem  # noqa: E402
 from text_utils import detect_response_language  # noqa: E402
 from tools import llm_provider  # noqa: E402
 
 VARIANTS_DIR = ROOT / "bench" / "prompt_variants"
 STAGES = ("pmrl", "section", "overview")
-STRUCTURED_SCHEMAS = {"pmrl": PMRLCoreGeneration}
+STRUCTURED_SCHEMAS = {"pmrl": PMRLCoreGeneration}  # v0 (frozen) structured stages
+# Variant "new": the overview call also returns JSON (OverviewSingle / OverviewMulti).
+NEW_STRUCTURED_STAGES = ("pmrl", "overview")
+
+
+def _new_schema(stage: str, run: "RunInput") -> Any:
+    if stage == "overview":
+        return OverviewSingle if len(run.papers) == 1 else OverviewMulti
+    return STRUCTURED_SCHEMAS[stage]
 KNOWN_VARIANTS = ("v0", "new")
 # Saved runs the fixed inputs come from (name -> directory under bench/runs/).
 DEFAULT_RUNS = {"single": "20261010_180106_single_v2", "multi": "20261010_180642_parallel_v2"}
@@ -248,7 +257,7 @@ _CAPTURE_RESPONSES = {
         "problem": "p ok", "method": "m ok", "result": "r ok", "limitation": "l ok",
     }),
     "section": "### Title\n- **Problem**: text\n- **Methodology**: text\n",
-    "overview": "## 1. Summary\ntext\n\n## 3. Conclusion\ntext\n",
+    "overview": json.dumps({"tldr": "t", "takeaway": "k"}),
 }
 
 
@@ -434,10 +443,10 @@ class FakeLLM:
             })
         if stage == "section":
             return f"### Paper\n- **Problem**: {_words(seed, 80)}\n\n$$\nx = y\n$$\n\n- **Results**: {_words(seed + 1, 80)}\n"
-        return (
-            f"## 1. Summary\n{_words(seed, 80)}\n\n"
-            f"## 3. Conclusion\n{_words(seed + 1, 60)}\n"
-        )
+        return json.dumps({
+            "tldr": _words(seed, 40), "takeaway": _words(seed + 1, 30),
+            "keyResults": [_words(seed + 2, 12)], "insights": [{"finding": _words(seed + 3, 10), "why": _words(seed + 4, 12)}],
+        })
 
 
 class Backend:
@@ -480,7 +489,7 @@ def new_unavailable_reason(stage: str) -> str:
     builder, reason = resolve_builder(stage)
     if builder is None:
         return reason
-    if stage in STRUCTURED_SCHEMAS:
+    if stage in NEW_STRUCTURED_STAGES:
         params = inspect.signature(llm_provider.invoke_structured_output).parameters
         if "system" not in params and not any(p.kind is p.VAR_KEYWORD for p in params.values()):
             return "tools.llm_provider.invoke_structured_output has no `system` keyword"
@@ -518,10 +527,10 @@ def _call_new(task: Task, run: RunInput, backend: Backend) -> None:
     if builder is None:
         raise RuntimeError(reason)
     system, user = builder(*_builder_args(task.case, run))
-    if task.stage in STRUCTURED_SCHEMAS:
+    if task.stage in NEW_STRUCTURED_STAGES:
         llm_provider.invoke_structured_output(
             user,
-            STRUCTURED_SCHEMAS[task.stage],
+            _new_schema(task.stage, run),
             system=system,
             llm=backend.get_llm(json_mode=True),
             provider=config.DEFAULT_PROVIDER,
@@ -562,12 +571,20 @@ def quality_text(text: str, sources: dict[str, str]) -> dict[str, Any]:
 
 
 def quality_overview(text: str, sources: dict[str, str], n_papers: int) -> dict[str, Any]:
-    from nodes.final_report import _parse_overview
+    """Overview quality.  JSON (variant "new") needs tldr and takeaway; legacy Markdown (v0) needs ``## 1`` and ``## 3|4``."""
 
     result = quality_text(text, sources)
-    required = ("summary", "conclusion")
-    parsed = _parse_overview(text)
-    missing = [key for key in required if not parsed.get(key)]
+    try:
+        data = llm_provider._decode_json_object(text)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        missing = [key for key in ("tldr", "takeaway") if not str(data.get(key) or "").strip()]
+    else:
+        missing = [
+            name for name, pattern in (("summary", r"(?m)^##\s*1\b"), ("conclusion", r"(?m)^##\s*[34]\b"))
+            if not re.search(pattern, text)
+        ]
     result.update({"headings_ok": not missing, "missing_headings": missing})
     return result
 

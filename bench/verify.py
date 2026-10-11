@@ -31,7 +31,7 @@ SECTION_HEADING_RE = re.compile(r"^##\s+([1-5])\s*[.)]", re.MULTILINE)
 @dataclass
 class Check:
     name: str
-    group: str  # HARD | QUALITY | LATENCY
+    group: str  # HARD | QUALITY | STYLE | LATENCY
     status: str  # PASS | FAIL | WARN | INFO
     detail: str = ""
 
@@ -58,6 +58,7 @@ class Run:
     report: str
     sources: dict[str, str]
     arxiv_ids: dict[str, str] = field(default_factory=dict)
+    answer_summary: dict[str, Any] | None = None  # candidate state["answer_summary"]
 
 
 # --- Loading ---------------------------------------------------------------
@@ -125,6 +126,7 @@ def load_candidate(path: Path) -> Run:
         notes=notes, report=report,
         sources=load_sources(path / "source_text"),
         arxiv_ids={str(p["paper_id"]): str(p.get("arxiv_id") or _arxiv_id(str(p["paper_id"]))) for p in papers},
+        answer_summary=state.get("answer_summary") if isinstance(state.get("answer_summary"), dict) else None,
     )
 
 
@@ -397,6 +399,135 @@ def _quality_status(ok: bool, strict: bool) -> str:
     return "PASS" if ok else ("FAIL" if strict else "WARN")
 
 
+# --- STYLE metrics (report only; never fail) --------------------------------
+
+SENTENCE_WORD_LIMIT = 25
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;:])\s+(?=[A-ZÀ-Ỹ0-9\"(\[*])")
+_PASSIVE_RE = re.compile(r"\b(?:được|bị)\b", re.IGNORECASE)
+_TAIL_LABEL_RE = re.compile(r"^\s*[-*•]\s*\**\s*(?:mã nguồn|source code|liên kết nguồn|source links|trích dẫn|citation|trích xuất|extraction)\b", re.IGNORECASE)
+
+
+def style_units(report: str) -> tuple[list[str], list[str]]:
+    """Prose units of the report: ``(bullets, paragraphs)``.
+
+    Skipped: code fences (BibTeX, ``$$`` blocks), tables, headings, the
+    references section, lines with URLs and the deterministic tail bullets
+    (code, links, citation), which carry no model prose.
+    """
+
+    text = re.sub(r"```.*?```", "", report, flags=re.DOTALL)
+    text = re.sub(r"\$\$.*?\$\$", "", text, flags=re.DOTALL)
+    refs = re.search(r"(?m)^##\s+5\s*[.)]", text)
+    if refs:
+        text = text[: refs.start()]
+    bullets: list[str] = []
+    paragraphs: list[str] = []
+    current: list[str] = []
+
+    def flush() -> None:
+        if current:
+            paragraphs.append(" ".join(current))
+            current.clear()
+
+    for raw in text.split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "|", "<!--")) or re.match(r"^\s*\*[^*]+\*\s*$", line):
+            flush()
+            continue
+        if "http" in stripped or _TAIL_LABEL_RE.match(line):
+            flush()
+            continue
+        if _BULLET_LINE_RE.match(line):
+            flush()
+            bullets.append(_BULLET_LINE_RE.sub("", line, count=1))
+        elif raw.startswith("  ") and bullets:
+            bullets[-1] += " " + stripped          # continuation of a bullet
+        else:
+            current.append(stripped)
+    flush()
+    return bullets, paragraphs
+
+
+def _sentences(unit: str) -> list[str]:
+    plain = re.sub(r"[*_`]", "", unit)
+    return [part.strip() for part in _SENTENCE_SPLIT_RE.split(plain) if part.strip()]
+
+
+def style_metrics(report: str) -> dict[str, Any]:
+    bullets, paragraphs = style_units(report)
+    sentences = [sentence for unit in (*bullets, *paragraphs) for sentence in _sentences(unit)]
+    lengths = [len(sentence.split()) for sentence in sentences]
+    long_count = sum(1 for n in lengths if n > SENTENCE_WORD_LIMIT)
+    return {
+        "sentences": len(lengths),
+        "mean_words_per_sentence": round(sum(lengths) / len(lengths), 1) if lengths else 0.0,
+        "pct_sentences_over_25_words": round(100 * long_count / len(lengths), 1) if lengths else 0.0,
+        "bullets": len(bullets),
+        "paragraphs": len(paragraphs),
+        "bullet_paragraph_ratio": round(len(bullets) / len(paragraphs), 2) if paragraphs else None,
+        "duoc_bi_count": len(_PASSIVE_RE.findall(" ".join((*bullets, *paragraphs)))),
+        "paragraphs_over_3_sentences": sum(1 for unit in paragraphs if len(_sentences(unit)) > 3),
+    }
+
+
+def check_style(report: str) -> Check:
+    m = style_metrics(report)
+    ratio = "inf" if m["bullet_paragraph_ratio"] is None else m["bullet_paragraph_ratio"]
+    detail = (
+        f"mean_words/sentence={m['mean_words_per_sentence']}; over_{SENTENCE_WORD_LIMIT}_words={m['pct_sentences_over_25_words']}%; "
+        f"bullets={m['bullets']} paragraphs={m['paragraphs']} ratio={ratio}; được/bị={m['duoc_bi_count']}; "
+        f"paragraphs>3_sentences={m['paragraphs_over_3_sentences']}"
+    )
+    return Check("style_metrics", "STYLE", "INFO", detail)
+
+
+_SUMMARY_BLOCK_TYPES = frozenset({
+    "insights", "problem", "intuition", "keyResults", "metrics", "setup", "results",
+    "caveats", "foundations", "takeaway", "paperCards",
+})
+_RESULT_ROW_KEYS = ("setting", "metric", "method", "baseline", "delta")
+
+
+def check_answer_summary(summary: dict[str, Any] | None) -> Check:
+    """Structure of the candidate's ``answer_summary``; INFO when the run has none."""
+
+    if summary is None:
+        return Check("answer_summary_structure", "STYLE", "INFO", "no answer_summary in this run")
+    problems: list[str] = []
+    kind = summary.get("kind")
+    if kind not in {"single", "multi"}:
+        problems.append(f"kind={kind!r}")
+    if not str(summary.get("lead") or "").strip():
+        problems.append("empty lead")
+    if kind == "single" and not isinstance(summary.get("paper"), dict):
+        problems.append("single without paper")
+    if kind == "multi" and not (isinstance(summary.get("papers"), list) and summary["papers"]):
+        problems.append("multi without papers")
+    actions = summary.get("actions")
+    if not isinstance(actions, dict) or not all(key in actions for key in ("reportId", "bibtexCount", "graphNodes")):
+        problems.append("actions needs reportId, bibtexCount, graphNodes")
+    blocks = summary.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        problems.append("no blocks")
+        blocks = []
+    for block in blocks:
+        btype = block.get("type") if isinstance(block, dict) else None
+        if btype not in _SUMMARY_BLOCK_TYPES:
+            problems.append(f"unknown block {btype!r}")
+        elif btype == "results":
+            rows = block.get("rows")
+            if not isinstance(rows, list) or any(not isinstance(r, dict) or any(k not in r for k in _RESULT_ROW_KEYS) for r in rows):
+                problems.append("results rows need " + "/".join(_RESULT_ROW_KEYS))
+        elif btype == "paperCards" and not (isinstance(block.get("items"), list) and block["items"]):
+            problems.append("paperCards without items")
+    types = [b.get("type") for b in blocks if isinstance(b, dict)]
+    if kind == "single" and "setup" not in types:
+        problems.append("single without setup block")
+    return Check("answer_summary_structure", "HARD", "FAIL" if problems else "PASS", "; ".join(problems) or f"{kind}: {', '.join(map(str, types))}")
+
+
 def word_count(text: str) -> int:
     return len(text.split())
 
@@ -483,6 +614,8 @@ def verify(baseline: Run, candidate: Run, th: Thresholds | None = None, *, stric
         check_table_numbers(candidate.report, candidate),
         check_arxiv_links(candidate.report, candidate),
         check_no_internal_lines(candidate.report),
+        check_answer_summary(candidate.answer_summary),
+        check_style(candidate.report),
         check_pmrl_word_counts(baseline, candidate, th, strict),
         check_report_length(baseline, candidate, th, strict),
         check_grounding(baseline, candidate, th, strict),

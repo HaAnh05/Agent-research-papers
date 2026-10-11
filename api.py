@@ -162,6 +162,38 @@ class PMRLDTO(APIModel):
     status: Literal["complete", "missing", "invalid", "unknown"] = "unknown"
 
 
+class InsightDTO(APIModel):
+    finding: str = ""
+    why_it_matters: str = Field(default="", alias="whyItMatters")
+
+
+class EvalSettingDTO(APIModel):
+    """One grounded result row (rows that failed grounding never reach the DTO)."""
+
+    benchmark: str = ""
+    metric: str = ""
+    metric_meaning: str = Field(default="", alias="metricMeaning")
+    higher_is_better: bool | None = Field(default=None, alias="higherIsBetter")
+    unit: str = ""
+    method_value: str = Field(default="", alias="methodValue")
+    baseline_name: str = Field(default="", alias="baselineName")
+    baseline_value: str = Field(default="", alias="baselineValue")
+    table_label: str = Field(default="", alias="tableLabel")
+
+
+class SetupDTO(APIModel):
+    datasets: str = ""
+    training_config: str = Field(default="", alias="trainingConfig")
+    hardware: str = ""
+    compute: str = ""
+
+
+class RepositoryDTO(APIModel):
+    url: str
+    # ``html``: link found in the paper's own HTML; ``github``: GitHub search hit.
+    source: Literal["html", "github"]
+
+
 class SourceQualityDTO(APIModel):
     """Measured parser metadata safe to show beside one paper's source."""
 
@@ -209,6 +241,13 @@ class PaperDTO(APIModel):
     github_repos: list[RepoDTO] = Field(default_factory=list, alias="githubRepos")
     bibtex: str | None = None
     notes: PMRLDTO | None = None
+    intuition: str = ""
+    insights: list[InsightDTO] = Field(default_factory=list)
+    eval_settings: list[EvalSettingDTO] = Field(default_factory=list, alias="evalSettings")
+    setup: SetupDTO = Field(default_factory=SetupDTO)
+    table_count: int = Field(default=0, alias="tableCount")
+    reference_count: int = Field(default=0, alias="referenceCount")
+    repository: RepositoryDTO | None = None
     pmrl_status: Literal["complete", "missing", "invalid", "unknown"] = Field(
         default="unknown", alias="pmrlStatus"
     )
@@ -224,6 +263,8 @@ class RunResult(APIModel):
     report_id: str | None = Field(default=None, alias="reportId")
     bibtex: str | None = None
     answer: str | None = None
+    # Structured chat answer built by final_report (blocks the UI renders).
+    answer_summary: dict[str, Any] | None = Field(default=None, alias="answerSummary")
     # Citation graph for a future UI: {"nodes": [...], "edges": [...], "stats": {...}}
     # (same JSON as the ``citation_graph`` state channel); ``null`` when not built.
     citation_graph: dict[str, Any] | None = Field(default=None, alias="citationGraph")
@@ -912,6 +953,43 @@ def _paper_dto(value: Any) -> PaperDTO | None:
     quality_raw = raw.get("source_quality") or raw.get("sourceQuality") or raw.get("extraction_quality") or raw.get("extractionQuality")
     source_quality = _source_quality(quality_raw)
 
+    notes_data = notes_raw or {}
+    insights = [
+        InsightDTO(
+            finding=_safe_text(item.get("finding"), 600),
+            whyItMatters=_safe_text(item.get("why_it_matters"), 600),
+        )
+        for item in _sequence_items(notes_data.get("insights"))[:8]
+        if isinstance(item, Mapping) and str(item.get("finding") or "").strip()
+    ]
+    eval_settings = [
+        EvalSettingDTO(
+            benchmark=_safe_text(item.get("benchmark"), 200),
+            metric=_safe_text(item.get("metric"), 200),
+            metricMeaning=_safe_text(item.get("metric_meaning"), 300),
+            higherIsBetter=item.get("higher_is_better") if isinstance(item.get("higher_is_better"), bool) else None,
+            unit=_safe_text(item.get("unit"), 40),
+            methodValue=_safe_text(item.get("method_value"), 120),
+            baselineName=_safe_text(item.get("baseline_name"), 200),
+            baselineValue=_safe_text(item.get("baseline_value"), 120),
+            tableLabel=_safe_text(item.get("table_label"), 40),
+        )
+        for item in _sequence_items(notes_data.get("eval_settings"))[:32]
+        if isinstance(item, Mapping)
+    ]
+    setup_raw = notes_data.get("setup") if isinstance(notes_data.get("setup"), Mapping) else {}
+    setup = SetupDTO(
+        datasets=_safe_text(setup_raw.get("datasets"), 600),
+        trainingConfig=_safe_text(setup_raw.get("training_config"), 600),
+        hardware=_safe_text(setup_raw.get("hardware"), 300),
+        compute=_safe_text(setup_raw.get("compute"), 300),
+    )
+    repository: RepositoryDTO | None = None
+    if source_quality.code_urls:
+        repository = RepositoryDTO(url=source_quality.code_urls[0], source="html")
+    elif repos:
+        repository = RepositoryDTO(url=repos[0].url, source="github")
+
     try:
         return PaperDTO(
             paperId=_safe_text(raw.get("paper_id") or raw.get("paperId"), 260),
@@ -931,6 +1009,13 @@ def _paper_dto(value: Any) -> PaperDTO | None:
             githubRepos=repos,
             bibtex=_safe_text(raw.get("bibtex"), 6000) if raw.get("bibtex") else None,
             notes=notes,
+            intuition=_safe_text(notes_data.get("intuition"), 600),
+            insights=insights,
+            evalSettings=eval_settings,
+            setup=setup,
+            tableCount=len(_sequence_items(raw.get("tables"))),
+            referenceCount=len(_sequence_items(raw.get("references"))),
+            repository=repository,
             pmrlStatus=pmrl_status,
             notesQuality=notes_quality,
             sourceQuality=source_quality,
@@ -1144,6 +1229,15 @@ def _fallback_note_ids(update: Mapping[str, Any]) -> list[str]:
 
 
 def _report_id_from_state(state: Mapping[str, Any]) -> str | None:
+    # ``final_report`` stores the saved file name in ``report_id``.  The trace
+    # log scan below only serves states from graphs that do not set it.
+    stored = state.get("report_id")
+    if isinstance(stored, str) and re.fullmatch(r"[A-Za-z0-9_.-]+\.md", stored):
+        try:
+            if _safe_report_path(stored).exists():
+                return stored
+        except HTTPException:
+            pass
     logs = state.get("trace_logs") or []
     for log in reversed(logs if isinstance(logs, list) else []):
         match = re.search(r"(?:Báo cáo lưu|saved)\s*:\s*([A-Za-z0-9_.-]+\.md)", str(log), re.IGNORECASE)
@@ -1178,12 +1272,12 @@ def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
             return None
         out = {
             "id": text(item.get("id"), 120),
-            "arxiv_id": text(item.get("arxiv_id"), 40),
+            "arxivId": text(item.get("arxiv_id"), 40),
             "title": text(item.get("title"), 300) or "",
             "year": count(item.get("year")),
-            "cited_by_count": count(item.get("cited_by_count")),
-            "title_source": text(item.get("title_source"), 12),
-            "first_author": text(item.get("first_author"), 120) or "",
+            "citedByCount": count(item.get("cited_by_count")),
+            "titleSource": text(item.get("title_source"), 12),
+            "firstAuthor": text(item.get("first_author"), 120) or "",
             "abstract": text(item.get("abstract"), limit_abstract) or "",
             "similarity": num(item.get("similarity")),
             "role": text(item.get("role"), 20),
@@ -1207,15 +1301,15 @@ def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
         "seeds": count(raw.get("seeds")) or 0,
         "pool": count(raw.get("pool")) or 0,
         "requests": count(raw.get("requests")) or 0,
-        "cache_hits": count(raw.get("cache_hits")) or 0,
-        "duration_ms": count(raw.get("duration_ms")) or 0,
-        "unverified_dropped": count(raw.get("unverified_dropped")) or 0,
+        "cacheHits": count(raw.get("cache_hits")) or 0,
+        "durationMs": count(raw.get("duration_ms")) or 0,
+        "unverifiedDropped": count(raw.get("unverified_dropped")) or 0,
         "status": status if status in {"ok", "no_key", "error", "partial"} else "error",
     }
     return {
         "nodes": works(value["nodes"], 100), "edges": edges,
-        "prior_works": works(value.get("prior_works"), 20),
-        "derivative_works": works(value.get("derivative_works"), 20),
+        "priorWorks": works(value.get("prior_works"), 20),
+        "derivativeWorks": works(value.get("derivative_works"), 20),
         "stats": stats,
     }
 
@@ -1266,6 +1360,25 @@ def _public_citation_graph(value: Any) -> dict[str, Any] | None:
     return public
 
 
+def _public_answer_summary(value: Any, *, depth: int = 0) -> Any:
+    """Bounded, JSON-safe copy of ``state["answer_summary"]`` (``None`` when absent or not a dict)."""
+
+    if depth == 0:
+        return _public_answer_summary(dict(value), depth=1) if isinstance(value, Mapping) and value else None
+    if isinstance(value, Mapping):
+        return {
+            _safe_text(key, 60): _public_answer_summary(item, depth=depth + 1)
+            for key, item in list(value.items())[:48]
+        } if depth < 7 else None
+    if isinstance(value, (list, tuple)):
+        return [_public_answer_summary(item, depth=depth + 1) for item in list(value)[:64]] if depth < 7 else None
+    if isinstance(value, str):
+        return _safe_text(value, 2000)
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return None
+
+
 def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> RunResult:
     papers: list[PaperDTO] = []
     for paper in state.get("selected_papers", []) or []:
@@ -1283,6 +1396,7 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
         papers=papers,
         report=report_content,
         reportId=_report_id_from_state(state) if report_valid else None,
+        answerSummary=_public_answer_summary(state.get("answer_summary")) if report_valid else None,
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
         citationGraph=_public_citation_graph(state.get("citation_graph")),
         answer=_safe_answer(answer or (report_content if report_valid else None), 100_000)
@@ -2378,59 +2492,12 @@ def _task_is_end(data: Mapping[str, Any], known_task: bool) -> bool:
     return known_task and not any(key in values for key in ("input", "triggers"))
 
 
-def _message_part(data: Any) -> tuple[Any, Mapping[str, Any]]:
-    if isinstance(data, Mapping):
-        message = data.get("message") or data.get("chunk") or data.get("data")
-        metadata = data.get("metadata") or {}
-        return message, metadata if isinstance(metadata, Mapping) else {}
-    if isinstance(data, (tuple, list)) and len(data) >= 2:
-        metadata = data[1] if isinstance(data[1], Mapping) else {}
-        return data[0], metadata
-    return data, {}
+def _answer_lead(summary: Any) -> str:
+    """The short chat answer: ``lead`` (tldr) of ``answer_summary``."""
 
-
-def _message_node(metadata: Mapping[str, Any]) -> str:
-    for key in ("langgraph_node", "node", "node_name", "name"):
-        value = metadata.get(key)
-        if value:
-            return str(value)
+    if isinstance(summary, Mapping):
+        return _safe_stream_text(str(summary.get("lead") or summary.get("tldr") or "")).strip()
     return ""
-
-
-def _message_text(message: Any) -> str:
-    """Extract plain text only; tool calls and arbitrary message metadata stay out."""
-
-    if message is None:
-        return ""
-    value = getattr(message, "content", message)
-    if isinstance(value, str):
-        return _safe_stream_text(value)
-    if isinstance(value, list):
-        parts: list[str] = []
-        for item in value:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, Mapping) and item.get("type") in {"text", "output_text"} and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return _safe_stream_text("".join(parts))
-    return ""
-
-
-def _merge_answer(previous: str, incoming: str) -> str:
-    """Merge chunk or final text without duplicating cumulative messages."""
-
-    candidate = _safe_stream_text(incoming)
-    if not candidate.strip():
-        return previous
-    if not previous:
-        return candidate
-    if candidate == previous or previous.endswith(candidate):
-        return previous
-    if candidate.startswith(previous):
-        return candidate
-    if previous.startswith(candidate):
-        return previous
-    return _safe_stream_text(previous + candidate)
 
 
 def _task_summary(node: str, completed: bool, failed: bool = False) -> str:
@@ -2681,29 +2748,10 @@ def _execute_run(
             part_type, data = _stream_part(payload)
 
             if part_type == "messages":
-                message, metadata = _message_part(data)
-                node = _message_node(metadata)
-                # LangGraph also forwards internal model/tool messages.  Only
-                # the public answer-producing nodes are allowed through.
-                if node != "final_report":
-                    continue
-                text = _message_text(message)
-                if not text:
-                    continue
-                merged_answer = _merge_answer(record.assistant_answer, text)
-                if merged_answer == record.assistant_answer:
-                    continue
-                registry_instance.set_assistant_answer(run_id, merged_answer)
-                _append_node_started(run_id, node, registry_instance, record)
-                now = time.monotonic()
-                should_emit = (
-                    not record.last_answer_event_length
-                    or len(merged_answer) - record.last_answer_event_length >= 256
-                    or now - record.last_answer_event_at >= 0.15
-                    or merged_answer.endswith((".", "!", "?", "\n"))
-                )
-                if should_emit:
-                    _append_assistant_delta(run_id, node, merged_answer, registry_instance, record)
+                # LLM tokens of the paper-section, overview and PMRL calls are
+                # separate generations that run in parallel; concatenating them
+                # would garble the answer.  The streamed answer is the
+                # ``lead`` of ``answer_summary`` (see the updates branch).
                 continue
 
             if part_type == "tasks":
@@ -2769,6 +2817,12 @@ def _execute_run(
             for node, update in updates:
                 node = _public_node(node or _node_from_logs(update.get("trace_logs")))
                 _merge_state(current_state, update)
+                if node == "final_report":
+                    lead = _answer_lead(update.get("answer_summary"))
+                    if lead:
+                        registry_instance.set_assistant_answer(run_id, lead)
+                        _append_node_started(run_id, node, registry_instance, record)
+                        _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
                 node_failed = str(update.get("status") or current_state.get("status") or "").lower() == "error"
                 registry_instance.set_state(run_id, current_state, current_node=node)
                 if node != "workflow":
@@ -2794,7 +2848,9 @@ def _execute_run(
         current_state = _final_graph_state(graph, graph_config, current_state)
         # Checkpointer values are authoritative for the final DTO, but never
         # expose their raw task input/result payloads.
-        candidate_answer = None if record.assistant_answer else current_state.get("final_report")
+        candidate_answer = None if record.assistant_answer else (
+            _answer_lead(current_state.get("answer_summary")) or current_state.get("final_report")
+        )
         if candidate_answer:
             registry_instance.set_assistant_answer(run_id, _safe_answer(candidate_answer))
         if candidate_answer or record.assistant_answer:
