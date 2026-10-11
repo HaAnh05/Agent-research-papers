@@ -12,7 +12,6 @@ from langchain_core.messages import AIMessage
 from bench import prompt_bench as pb
 from nodes import final_report as fr
 from nodes import write_notes as wn
-from state import PMRLGeneration
 from tools import llm_provider
 
 INPUTS_DIR = pb.VARIANTS_DIR / "v0" / "inputs"
@@ -41,22 +40,22 @@ def variants_dir(tmp_path: Path) -> Path:
     return target
 
 
-def test_capture_renders_14_cases_with_non_empty_prompts(variants_dir: Path) -> None:
+def test_capture_renders_10_cases_with_non_empty_prompts(variants_dir: Path) -> None:
     files = sorted((variants_dir / "v0" / "rendered").glob("*.json"))
-    assert len(files) == 14
+    assert len(files) == 10
     records = [json.loads(f.read_text(encoding="utf-8")) for f in files]
     counts: dict[str, int] = {}
     for record in records:
         assert record["prompt"].strip()
         assert record["prompt_chars"] == len(record["prompt"])
-        assert record["structured"] == (record["stage"] in ("pmrl", "cards"))
+        assert record["structured"] == (record["stage"] == "pmrl")
         counts[record["stage"]] = counts.get(record["stage"], 0) + 1
-    assert counts == {"pmrl": 4, "cards": 4, "section": 4, "overview": 2}
+    assert counts == {"pmrl": 4, "section": 4, "overview": 2}
     assert {r["case"] for r in records if r["stage"] == "overview"} == {"single", "multi"}
 
 
-def test_committed_rendered_dir_has_14_frozen_v0_prompts(runs: dict[str, pb.RunInput]) -> None:
-    assert len(list(RENDERED_DIR.glob("*.json"))) == 14
+def test_committed_rendered_dir_has_10_frozen_v0_prompts(runs: dict[str, pb.RunInput]) -> None:
+    assert len(list(RENDERED_DIR.glob("*.json"))) == 10
     paper = runs["single"].papers[0]
     record = json.loads((RENDERED_DIR / f"pmrl__single_{paper.paper_id.removeprefix('arxiv_')}.json").read_text("utf-8"))
     # Frozen zai v0 request shape: one user string ending with the JSON Schema suffix.
@@ -108,18 +107,18 @@ def test_v0_replay_sends_exact_captured_string(variants_dir: Path, tmp_path: Pat
     )
     rendered = pb.load_rendered(variants_dir / "v0" / "rendered")
     sent = [item[0] for item in RecordingLLM.log]
-    assert len(sent) == 14 * 2
+    assert len(sent) == 10 * 2
     assert all(isinstance(item, str) for item in sent)
     for record in rendered.values():
         assert sent.count(record["prompt"]) == 2
     for prompt, bound in RecordingLLM.log:
         structured = prompt.rstrip().endswith('"type":"object"}')
         assert ("response_format" in bound) == structured
-    assert summary["meta"]["calls"] == 28 and summary["meta"]["failed"] == 0
+    assert summary["meta"]["calls"] == 20 and summary["meta"]["failed"] == 0
     rows = [json.loads(line) for line in (tmp_path / "out" / "results.jsonl").read_text("utf-8").splitlines()]
-    assert len(rows) == 28
+    assert len(rows) == 20
     assert all(r["output_tokens"] and r["reasoning_tokens"] and r["response_text"] for r in rows)
-    assert len(list((tmp_path / "out" / "outputs").iterdir())) == 28
+    assert len(list((tmp_path / "out" / "outputs").iterdir())) == 20
 
 
 def test_percentile_median_and_delta() -> None:
@@ -163,7 +162,7 @@ def test_missing_new_builders_reported_not_crashing(variants_dir: Path, tmp_path
     )
     assert set(summary["unavailable"]["new"]) == set(pb.STAGES)
     assert all("missing" in reason for reason in summary["unavailable"]["new"].values())
-    assert summary["meta"]["calls"] == 14 and summary["meta"]["failed"] == 0
+    assert summary["meta"]["calls"] == 10 and summary["meta"]["failed"] == 0
     assert all(set(entry["variants"]) == {"v0"} for entry in summary["stages"].values())
     markdown = (tmp_path / "out" / "summary.md").read_text("utf-8")
     assert "## Unavailable" in markdown and "build_pmrl_messages" in markdown
@@ -188,7 +187,6 @@ def test_new_variant_runs_through_builders(variants_dir: Path, tmp_path: Path, m
 
     monkeypatch.setattr(llm_provider, "invoke_structured_output", structured)
     monkeypatch.setattr(wn, "build_pmrl_messages", lambda paper: ("SYS-P", f"USER {paper.paper_id}"), raising=False)
-    monkeypatch.setattr(fr, "build_cards_messages", lambda paper, lang: ("SYS-C", f"USER {lang}"), raising=False)
     monkeypatch.setattr(fr, "build_section_messages", lambda paper, i, q, lang: ("SYS-S", f"USER {i} {q}"), raising=False)
     monkeypatch.setattr(
         fr, "build_overview_messages", lambda papers, q, t, lang: ("SYS-O", f"USER {len(papers)} {t}"), raising=False
@@ -198,9 +196,9 @@ def test_new_variant_runs_through_builders(variants_dir: Path, tmp_path: Path, m
         out_dir=tmp_path / "out", variants_dir=variants_dir, dry_run=True, log=lambda _: None,
     )
     assert summary["unavailable"] == {}
-    assert summary["meta"]["calls"] == 14 * 3 * 2 and summary["meta"]["failed"] == 0
-    assert len(sent) == 8 * 3  # pmrl + cards, 4 cases each, 3 reps
-    assert {s[1] for s in sent} == {"SYS-P", "SYS-C"}
+    assert summary["meta"]["calls"] == 10 * 3 * 2 and summary["meta"]["failed"] == 0
+    assert len(sent) == 4 * 3  # pmrl, 4 cases, 3 reps
+    assert {s[1] for s in sent} == {"SYS-P"}
     for entry in summary["stages"].values():
         assert entry["delta_vs_v0"]["new"]["pct"]["output_tokens"]["median"] is not None
     assert "new vs v0" in (tmp_path / "out" / "summary.md").read_text("utf-8")
@@ -229,16 +227,6 @@ def test_failed_call_is_recorded_not_retried(variants_dir: Path, tmp_path: Path)
     assert summary["meta"] == {**summary["meta"], "calls": 1, "failed": 1}
     row = json.loads((tmp_path / "out" / "results.jsonl").read_text("utf-8").splitlines()[0])
     assert row["ok"] is False and "TimeoutError" in row["error"]
-
-
-def test_quality_uses_production_card_validation(runs: dict[str, pb.RunInput]) -> None:
-    paper = runs["single"].papers[0]
-    saved = paper.notes.summary_cards  # cards stored by the saved run
-    quality = pb.quality_cards(json.dumps(saved.model_dump()), paper)
-    assert quality["parse_ok"] is True
-    assert set(quality["card_statuses"]) == set(wn.SUMMARY_CARD_FIELDS)
-    assert quality["status"] in {"complete", "partial", "invalid", "missing"}
-    assert pb.quality_cards("not json", paper) == {"parse_ok": False, "parse_error": "ValueError"}
 
 
 def test_quality_text_and_overview_headings(runs: dict[str, pb.RunInput]) -> None:

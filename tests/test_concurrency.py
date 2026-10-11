@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from config import config
 from nodes import final_report, read_paper as read_paper_module, web_enrich as web_enrich_module
 from nodes import write_notes as write_notes_module
-from state import GitHubRepoInfo, PMRLNotes, PaperItem, SummaryCards
+from state import GitHubRepoInfo, PMRLNotes, PaperItem
 
 arxiv_search = importlib.import_module("tools.arxiv_search")  # ``tools`` re-exports a function with this name
 
@@ -153,7 +153,7 @@ def test_read_paper_applies_metadata_that_arrives_within_grace(monkeypatch):
 
 def _pmrl_ok(paper, *, llm=None):
     result = copy.deepcopy(paper)
-    result.notes = PMRLNotes(problem="p", method="m", result="r", limitation="l", brief_summary="C.\n- a\n- b\n- c")
+    result.notes = PMRLNotes(problem="p", method="m", result="r", limitation="l")
     result.notes_quality = "complete"
     return result, "ok", {"durationMs": 1, "llmMs": 1}
 
@@ -204,8 +204,7 @@ def _paper(pid: str, title: str, arxiv_id: str, repo: str | None = None) -> Pape
         summary="alpha beta gamma delta epsilon",
         sections={"abstract": "alpha beta gamma delta epsilon " * 200, "methodology": "alpha beta gamma delta epsilon " * 200},
         source_quality={"coverageStatus": "complete"},
-        notes=PMRLNotes(problem=f"problem of {title}", method="m", result="r", limitation="l",
-                        brief_summary="Conclusion.\n- a\n- b\n- c"),
+        notes=PMRLNotes(problem=f"problem of {title}", method="m", result="r", limitation="l"),
         github_repos=[GitHubRepoInfo(name="o/r", url=repo, stars=3, framework="PyTorch")] if repo else [],
         bibtex=f"@article{{{pid}}}",
     )
@@ -240,7 +239,7 @@ class SectionLLM:
             if self.fail_overview:
                 raise RuntimeError("provider failure")
             return SimpleNamespace(content="## 1. Tóm tắt\n- overview text\n\n## 3. Kết luận\n- done\n")
-        return SimpleNamespace(content="# Legacy report\n\nlegacy body\n")
+        raise AssertionError("unexpected prompt")
 
 
 def _setup(monkeypatch, tmp_path, llm):
@@ -249,17 +248,6 @@ def _setup(monkeypatch, tmp_path, llm):
     monkeypatch.setattr(config, "SUMMARY_CACHE_DIR", tmp_path / "summaries")
     (tmp_path / "summaries").mkdir()
     monkeypatch.setattr(final_report, "get_llm", lambda: llm)
-    def card(word: str, count: int) -> str:
-        return ((word + " ") * count).strip() + "."
-
-    cards = SummaryCards(
-        tldr=card("alpha", 25),
-        problem=card("beta", 40),
-        method=card("gamma", 40),
-        key_results=card("delta", 40),
-        why_it_matters=card("epsilon", 40),
-    )
-    monkeypatch.setattr(final_report, "invoke_structured_output", lambda *a, **k: cards)
 
 
 def _state(papers):
@@ -310,8 +298,7 @@ def test_parallel_report_assembles_in_order_with_deterministic_parts(monkeypatch
     timing = result["node_timings"]["final_report"]
     assert set(timing["sectionPapers"]) == {"p1", "p2"}
     assert {"durationMs", "llmMs"} <= set(timing["sectionPapers"]["p1"])
-    assert "overviewMs" in timing and set(timing["summaryPapers"]) == {"p1", "p2"}
-    assert result["selected_papers"][0].notes.summary_quality == "complete"
+    assert "overviewMs" in timing
 
 
 def test_parallel_report_degrades_failed_section_from_notes_and_skips_cache(monkeypatch, tmp_path):
@@ -324,8 +311,7 @@ def test_parallel_report_degrades_failed_section_from_notes_and_skips_cache(monk
     assert result["status"] == "degraded"
     assert "### Second Paper" in report and "problem of Second Paper" in report
     assert "written by llm" in report  # the other section is still LLM-written
-    assert len([p for p in llm.prompts if "ONE paper block" in p]) == 2  # no legacy retry
-    assert not any("Synthesize a clear" in p for p in llm.prompts)
+    assert len([p for p in llm.prompts if "ONE paper block" in p]) == 2  # no retry
     # A degraded report is retryable: a rerun calls the provider again.
     llm.prompts.clear()
     final_report.final_report_node(_state(papers))
@@ -343,7 +329,7 @@ def test_parallel_report_overview_failure_uses_minimal_text(monkeypatch, tmp_pat
     assert "## 4. Kết luận" in report
 
 
-def test_parallel_report_caches_good_reports_separately_from_legacy(monkeypatch, tmp_path):
+def test_parallel_report_caches_good_reports(monkeypatch, tmp_path):
     llm = SectionLLM()
     _setup(monkeypatch, tmp_path, llm)
     papers = [_paper("p1", "First Paper", "2303.04137")]
@@ -352,23 +338,6 @@ def test_parallel_report_caches_good_reports_separately_from_legacy(monkeypatch,
     second = final_report.final_report_node(_state(papers))
     assert llm.prompts == [] and second["node_timings"]["final_report"]["cache"] is True
     assert second["final_report"] == first["final_report"]
-
-    # Legacy mode must miss that entry and use the single synthesis call.
-    monkeypatch.setattr(config, "REPORT_PARALLEL_SECTIONS", False)
-    legacy = final_report.final_report_node(_state(papers))
-    assert legacy["node_timings"]["final_report"].get("cache") is not True
-    assert len(llm.prompts) == 1 and "Synthesize a clear" in llm.prompts[0]
-
-
-def test_legacy_flag_keeps_single_synthesis_call(monkeypatch, tmp_path):
-    llm = SectionLLM()
-    _setup(monkeypatch, tmp_path, llm)
-    monkeypatch.setattr(config, "REPORT_PARALLEL_SECTIONS", False)
-    result = final_report.final_report_node(_state([_paper("p1", "First Paper", "2303.04137")]))
-    assert len(llm.prompts) == 1
-    assert result["final_report"].startswith("# Research Report: First Paper")
-    assert "legacy body" in result["final_report"]
-    assert "sectionPapers" not in result["node_timings"]["final_report"]
 
 
 def test_section_prompt_has_no_code_link_or_bibtex_input(monkeypatch, tmp_path):
@@ -410,11 +379,10 @@ def test_single_paper_english_mode_headings(monkeypatch, tmp_path):
     assert "Comparison" not in report
 
 
-def test_parallel_cache_key_includes_version(monkeypatch):
+def test_report_cache_key_includes_version(monkeypatch):
     paper = _paper("p1", "First Paper", "2303.04137")
-    assert final_report.PARALLEL_REPORT_VERSION == "p10"
-    first, _ = final_report._report_cache_key("q", "T", "English", "b", [paper], parallel=True)
-    monkeypatch.setattr(final_report, "PARALLEL_REPORT_VERSION", "next")
-    second, _ = final_report._report_cache_key("q", "T", "English", "b", [paper], parallel=True)
-    legacy1, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])
-    assert first != second and legacy1 not in {first, second}
+    assert final_report.REPORT_VERSION == "p11"
+    first, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])
+    monkeypatch.setattr(final_report, "REPORT_VERSION", "next")
+    second, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])
+    assert first != second

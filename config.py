@@ -61,12 +61,6 @@ class AppConfig:
     GITHUB_MAX_CONCURRENCY: int = int(os.getenv("GITHUB_MAX_CONCURRENCY", "4"))
     LLM_MAX_CONCURRENCY: int = int(os.getenv("LLM_MAX_CONCURRENCY", "6"))
 
-    # final_report: write each paper section and the overview in separate
-    # concurrent LLM calls.  False restores the legacy single synthesis call.
-    REPORT_PARALLEL_SECTIONS: bool = os.getenv("REPORT_PARALLEL_SECTIONS", "true").strip().lower() not in {
-        "0", "false", "no", "off", ""
-    }
-
     # Local arXiv metadata index (SQLite FTS5, built by bench/build_local_index.py).
     # Off by default: search_papers then uses only the arXiv API.  When on and the
     # index file exists, local hits come first and API hits fill in the rest.

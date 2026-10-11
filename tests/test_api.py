@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 import api
 from config import config
-from state import GitHubRepoInfo, PMRLNotes, PaperItem, SummaryCards
+from state import GitHubRepoInfo, PMRLNotes, PaperItem
 
 
 class FakeGraph:
@@ -334,7 +334,7 @@ def test_sensitive_path_mask_does_not_corrupt_https_urls():
     assert api._mask_sensitive("https://example.com/?next=C:/tmp/file") == "https://example.com/?next=C:/tmp/file"
 
 
-def test_paper_dto_validates_brief_and_marks_legacy_quality_unknown():
+def test_paper_dto_marks_legacy_quality_unknown():
     valid = PaperItem(
         paper_id="arxiv_1706.03762",
         title="Attention Is All You Need",
@@ -344,28 +344,16 @@ def test_paper_dto_validates_brief_and_marks_legacy_quality_unknown():
             method="method",
             result="result",
             limitation="limit",
-            brief_summary="Conclusion: the method is effective.\n- It improves the baseline.\n- It is evaluated on the reported data.\n- It remains sensitive to compute.",
         ),
         source_quality={"heading": "heading", "parser_status": "success"},
         notes_quality="complete",
     )
     valid_payload = api._paper_dto(valid).model_dump(mode="json", by_alias=True)
-    assert valid_payload["notes"]["briefSummary"].startswith("Conclusion:")
     assert valid_payload["notes"]["status"] == "complete"
     assert valid_payload["pmrlStatus"] == "complete"
     assert valid_payload["notesQuality"] == "complete"
     assert valid_payload["sourceQuality"]["heading"] == "heading"
     assert valid_payload["sourceQuality"]["parserStatus"] == "success"
-
-    invalid = PaperItem(
-        paper_id="arxiv_2005.14165",
-        title="Legacy",
-        notes=PMRLNotes(problem="p", method="m", result="r", limitation="l", brief_summary="Conclusion only"),
-    )
-    invalid_payload = api._paper_dto(invalid).model_dump(mode="json", by_alias=True)
-    assert invalid_payload["notes"]["briefSummary"] is None
-    assert invalid_payload["notes"]["briefStatus"] == "invalid"
-    assert invalid_payload["pmrlStatus"] == "unknown"
 
     legacy = PaperItem(
         paper_id="arxiv_2101.00001",
@@ -373,85 +361,11 @@ def test_paper_dto_validates_brief_and_marks_legacy_quality_unknown():
         notes=PMRLNotes(problem="p", method="m", result="r", limitation="l"),
     )
     legacy_payload = api._paper_dto(legacy).model_dump(mode="json", by_alias=True)
-    assert legacy_payload["notes"]["briefSummary"] is None
     assert legacy_payload["pmrlStatus"] == "unknown"
     assert legacy_payload["notesQuality"] == "unknown"
     assert legacy_payload["sourceQuality"]["heading"] == "unknown"
     assert legacy_payload["sourceQuality"]["parserStatus"] == "unknown"
     assert legacy_payload["sourceQuality"]["coverageStatus"] == "unknown"
-
-
-def test_paper_dto_keeps_complete_summary_when_source_coverage_is_incomplete():
-    cards = SummaryCards(
-        tldr="Alpha contribution improves sequence learning.",
-        problem="Beta problem limits parallel recurrent training.",
-        method="Gamma method uses a self attention architecture.",
-        key_results="Delta benchmark evidence improves the reported baseline.",
-        why_it_matters="Epsilon impact enables faster practical modeling.",
-    )
-    paper = PaperItem(
-        paper_id="incomplete-source",
-        title="Incomplete source",
-        source_quality={"coverageStatus": "incomplete", "missingSections": ["experiments"]},
-        notes=PMRLNotes(
-            problem="p", method="m", result="r", limitation="l",
-            summary_cards=cards, summary_quality="complete",
-        ),
-    )
-
-    payload = api._paper_dto(paper).model_dump(mode="json", by_alias=True)
-
-    assert payload["summaryCards"]["status"] == "complete"
-    assert payload["summaryCards"]["tldr"] == cards.tldr
-    assert payload["sourceQuality"]["coverageStatus"] == "incomplete"
-
-
-def test_paper_dto_preserves_valid_cards_from_partial_summary():
-    paper = PaperItem(
-        paper_id="partial-summary",
-        title="Partial summary",
-        source_quality={"coverageStatus": "incomplete"},
-        notes=PMRLNotes(
-            problem="p", method="m", result="r", limitation="l",
-            summary_cards=SummaryCards(
-                tldr="Alpha contribution improves sequence learning.",
-                problem="Beta problem limits parallel recurrent training.",
-                method="Gamma method uses a self attention architecture.",
-                key_results="",
-                why_it_matters="Epsilon impact enables faster practical modeling.",
-            ),
-            summary_quality="partial",
-            summary_card_statuses={
-                "tldr": "complete", "problem": "complete", "method": "complete",
-                "key_results": "missing", "why_it_matters": "complete",
-            },
-            summary_card_reasons={"key_results": "number_not_in_source:62.5%"},
-        ),
-    )
-
-    cards = api._paper_dto(paper).model_dump(mode="json", by_alias=True)["summaryCards"]
-
-    assert cards["status"] == "partial"
-    assert cards["tldr"]
-    assert cards["keyResults"] == ""
-    assert cards["cardStatuses"]["keyResults"] == "missing"
-    assert cards["cardReasons"]["keyResults"] == "number_not_in_source:62.5%"
-
-
-def test_deprecated_comparison_keys_are_always_null():
-    # Stale state from an older run must not leak into the deprecated keys.
-    result = api._result_from_state(
-        {
-            "status": "success",
-            "selected_papers": [],
-            "benchmark_matrix": "| Paper | Result |",
-            "comparison_artifact": {"papers": [{"paper_id": "p1"}], "rows": [{"metric": "ATE"}]},
-        }
-    )
-    payload = result.model_dump(mode="json", by_alias=True)
-    assert "benchmark" in payload and payload["benchmark"] is None
-    assert "comparisonArtifact" in payload and payload["comparisonArtifact"] is None
-    assert api.RunResult().model_dump(mode="json", by_alias=True)["comparisonArtifact"] is None
 
 
 def test_trace_duration_and_snapshot_timings_are_numeric():
@@ -609,38 +523,11 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
     ) == {"noteFallbackPaperIds": ["arxiv_1706.03762"]}
     assert not hasattr(api, "_valid_benchmark")
     assert "compare_benchmark" not in api.NODE_LABELS and "compare_benchmark" not in api.NODE_KINDS
-    paper_with_reason = paper_one.model_copy(update={
-        "notes": PMRLNotes(
-            problem="p", method="m", result="r", limitation="l",
-            summary_quality="partial",
-            summary_card_statuses={"key_results": "unsupported"},
-            summary_card_reasons={"key_results": "number_not_in_source:62.5%"},
-        )
-    })
     assert api._step_facts(
         "final_report",
         {"status": "success", "trace_logs": ["[final_report] saved: run.md"]},
-        {"final_report": "# Run", "status": "success", "selected_papers": [paper_with_reason]},
-    ) == {
-        "reportAvailable": True,
-        # Deprecated constants kept for client compatibility.
-        "comparisonAvailable": False,
-        "comparedPaperIds": [],
-        "reportId": "run.md",
-        "summaryCardReasons": {
-            "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
-        },
-    }
-    assert api._sanitize_facts({
-        "summaryCardReasons": {
-            "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
-            "arxiv_1706.03762.method": "/tmp/private source text",
-        }
-    }) == {
-        "summaryCardReasons": {
-            "arxiv_1706.03762.keyResults": "number_not_in_source:62.5%",
-        }
-    }
+        {"final_report": "# Run", "status": "success"},
+    ) == {"reportAvailable": True, "reportId": "run.md"}
     assert api._valid_report("# Findings\n\nThe report explains an error in the final report.") is True
     assert api._valid_report("# Error Generating Final Report\n\nProvider unavailable.") is False
 
@@ -677,7 +564,6 @@ def test_result_dto_suppresses_failed_report_placeholders():
         "error_logs": [],
     }
     result = api._result_from_state(state)
-    assert result.benchmark is None and result.comparison_artifact is None
     assert result.report is None
     assert result.report_id is None
     assert result.answer is None

@@ -1,7 +1,6 @@
 """FastAPI bridge for the LangGraph Research Scout workflow.
 
-The Streamlit application remains available from :mod:`app`.  This module is
-the small HTTP boundary used by the React client: it owns an in-memory run
+This module is the small HTTP boundary used by the React client: it owns an in-memory run
 registry, streams safe operational events, and exposes persisted Markdown
 reports without leaking local paths or extracted PDF text.
 """
@@ -59,7 +58,7 @@ class TraceFacts(TypedDict, total=False):
     the corresponding node update did not provide that measurement.
     """
 
-    intent: Literal["direct_read", "direct_compare", "search"]
+    intent: Literal["direct_read", "search"]
     resultCount: int
     selectedCount: int
     retryCount: int
@@ -68,13 +67,8 @@ class TraceFacts(TypedDict, total=False):
     repositoryCount: int
     bibtexCount: int
     noteFallbackPaperIds: list[str]
-    # Deprecated: the comparison step was removed.  Kept for client
-    # compatibility; always ``False`` / ``[]`` on the final report event.
-    comparisonAvailable: bool
-    comparedPaperIds: list[str]
     reportAvailable: bool
     reportId: str
-    summaryCardReasons: dict[str, str]
     # Numeric measurements emitted by nodes/tools.  Keys are an allowlisted
     # timing name (for example ``llm`` or ``github.search``), never a prompt,
     # URL, cache path, or provider payload.
@@ -129,24 +123,7 @@ class PMRLDTO(APIModel):
     method: str = ""
     result: str = ""
     limitation: str = ""
-    brief_summary: str | None = Field(default=None, alias="briefSummary")
-    brief_status: Literal["valid", "missing", "invalid"] = Field(default="missing", alias="briefStatus")
     status: Literal["complete", "missing", "invalid", "unknown"] = "unknown"
-
-
-class SummaryCardsDTO(APIModel):
-    """Validated prose for the five cards shown by default in Results."""
-
-    tldr: str = ""
-    problem: str = ""
-    method: str = ""
-    key_results: str = Field(default="", alias="keyResults")
-    why_it_matters: str = Field(default="", alias="whyItMatters")
-    status: Literal["complete", "partial", "missing", "invalid", "unknown"] = "unknown"
-    card_statuses: dict[
-        str, Literal["complete", "unsupported", "missing", "invalid", "unknown"]
-    ] = Field(default_factory=dict, alias="cardStatuses")
-    card_reasons: dict[str, str] = Field(default_factory=dict, alias="cardReasons")
 
 
 class SourceQualityDTO(APIModel):
@@ -196,7 +173,6 @@ class PaperDTO(APIModel):
     github_repos: list[RepoDTO] = Field(default_factory=list, alias="githubRepos")
     bibtex: str | None = None
     notes: PMRLDTO | None = None
-    summary_cards: SummaryCardsDTO = Field(default_factory=SummaryCardsDTO, alias="summaryCards")
     pmrl_status: Literal["complete", "missing", "invalid", "unknown"] = Field(
         default="unknown", alias="pmrlStatus"
     )
@@ -208,10 +184,6 @@ class PaperDTO(APIModel):
 
 class RunResult(APIModel):
     papers: list[PaperDTO] = Field(default_factory=list)
-    # Deprecated: the benchmark/comparison feature was removed.  Both keys stay
-    # in the response (always ``null``) so existing clients keep working.
-    benchmark: None = None
-    comparison_artifact: None = Field(default=None, alias="comparisonArtifact")
     report: str | None = None
     report_id: str | None = Field(default=None, alias="reportId")
     bibtex: str | None = None
@@ -703,164 +675,6 @@ _NOTES_QUALITY_VALUES = frozenset({"complete", "fallback", "invalid", "missing",
 _PARSER_STATUS_VALUES = frozenset({"success", "degraded", "error", "unknown"})
 
 
-def _brief_summary_status(value: Any) -> tuple[str | None, Literal["valid", "missing", "invalid"]]:
-    """Validate the compact PMRL summary without truncating invalid output."""
-
-    if value is None or not str(value).strip():
-        return None, "missing"
-    if not isinstance(value, str):
-        return None, "invalid"
-    text = value.strip()
-    if len(re.findall(r"\S+", text)) > 150:
-        return None, "invalid"
-    # Providers may serialize the bullets on one physical line.  Normalize
-    # only the structural boundary; preserve the original prose and do not
-    # shorten it to fit the limit.
-    text = re.sub(r"\s+(?=[-*•]\s+)", "\n", text)
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    bullet_lines = [
-        line
-        for line in lines
-        if re.match(r"^(?:[-*•]|\d{1,2}[.)])\s+\S+", line)
-    ]
-    if len(bullet_lines) not in {3, 4}:
-        return None, "invalid"
-    bullet_positions = [
-        index for index, line in enumerate(lines) if re.match(r"^(?:[-*•]|\d{1,2}[.)])\s+", line)
-    ]
-    first_bullet = bullet_positions[0] if bullet_positions else -1
-    if first_bullet != 1 or any(index != first_bullet + offset for offset, index in enumerate(bullet_positions)):
-        return None, "invalid"
-    if not lines or re.match(r"^(?:[-*•]|\d{1,2}[.)])\s+", lines[0]):
-        return None, "invalid"
-    return _safe_text(text, 5000), "valid"
-
-
-_SUMMARY_PUBLIC_KEYS = {
-    "tldr": "tldr",
-    "problem": "problem",
-    "method": "method",
-    "key_results": "keyResults",
-    "why_it_matters": "whyItMatters",
-}
-_SUMMARY_REASON_RE = re.compile(
-    r"^(?:empty_field|no_source_overlap|insufficient_source_text|schema_mismatch|"
-    r"no_structured_output|too_long|near_duplicate:(?:tldr|problem|method|key_results|"
-    r"keyResults|why_it_matters|whyItMatters)|number_not_in_source:[+-]?\d+(?:[.,]\d+)?%?)$"
-)
-
-
-def _safe_summary_card_reason(value: Any) -> str | None:
-    """Allow only bounded validator reason codes across the API boundary."""
-
-    reason = str(value or "").strip()
-    if len(reason) > 96 or not _SUMMARY_REASON_RE.fullmatch(reason):
-        return None
-    return reason
-
-
-def _declared_summary_card_reasons(value: Mapping[str, Any]) -> dict[str, str]:
-    raw = value.get("summary_card_reasons") or value.get("summaryCardReasons")
-    if not isinstance(raw, Mapping):
-        return {}
-    result: dict[str, str] = {}
-    for internal, public in _SUMMARY_PUBLIC_KEYS.items():
-        reason = _safe_summary_card_reason(raw.get(internal) or raw.get(public))
-        if reason:
-            result[public] = reason
-    return result
-
-
-def _summary_cards(value: Mapping[str, Any] | None) -> SummaryCardsDTO:
-    """Publish independently validated cards without letting one erase four."""
-
-    if not value:
-        return SummaryCardsDTO(status="missing")
-    declared = str(value.get("summary_quality") or value.get("summaryQuality") or "").casefold()
-    card_reasons = _declared_summary_card_reasons(value)
-    if declared in {"invalid", "missing"}:
-        return SummaryCardsDTO(
-            status=declared,
-            cardStatuses={
-                key: declared
-                for key in ("tldr", "problem", "method", "keyResults", "whyItMatters")
-            },
-            cardReasons=card_reasons,
-        )
-    nested = _model_dump(value.get("summary_cards") or value.get("summaryCards"))
-    cards_raw = nested if isinstance(nested, Mapping) else value
-    declared_statuses_raw = value.get("summary_card_statuses") or value.get("summaryCardStatuses")
-    declared_statuses = declared_statuses_raw if isinstance(declared_statuses_raw, Mapping) else {}
-    keys = {
-        "tldr": ("tldr",),
-        "problem": ("problem", "summary_problem", "summaryProblem"),
-        "method": ("method", "summary_method", "summaryMethod"),
-        "key_results": ("key_results", "keyResults"),
-        "why_it_matters": ("why_it_matters", "whyItMatters"),
-    }
-    public_keys = _SUMMARY_PUBLIC_KEYS
-    cards: dict[str, str] = {}
-    card_statuses: dict[str, Literal["complete", "unsupported", "missing", "invalid", "unknown"]] = {}
-    for name, aliases in keys.items():
-        raw = next((cards_raw.get(alias) for alias in aliases if alias in cards_raw), None)
-        declared_card = str(
-            declared_statuses.get(name)
-            or declared_statuses.get(public_keys[name])
-            or ""
-        ).casefold()
-        public_name = public_keys[name]
-        if declared_card in {"unsupported", "invalid", "missing"}:
-            cards[name] = ""
-            card_statuses[public_name] = declared_card  # type: ignore[assignment]
-        elif isinstance(raw, str) and raw.strip():
-            cards[name] = " ".join(raw.split())
-            card_statuses[public_name] = "complete"
-        else:
-            cards[name] = ""
-            card_statuses[public_name] = "missing" if not raw else "invalid"
-
-    for name, prose in cards.items():
-        if len(prose) > 1600:
-            cards[name] = ""
-            card_statuses[public_keys[name]] = "invalid"
-            card_reasons[public_keys[name]] = "too_long"
-    # Current pipeline output already carries the validator's per-card
-    # decisions. Keep the duplicate guard only for legacy payloads that lack
-    # that metadata instead of applying a second semantic policy.
-    if not declared_statuses:
-        names = list(keys)
-        for index, left_name in enumerate(names):
-            left = set(re.findall(r"[\w]+", cards[left_name].casefold()))
-            if not left:
-                continue
-            for right_name in names[index + 1:]:
-                right = set(re.findall(r"[\w]+", cards[right_name].casefold()))
-                if left and right and len(left & right) / min(len(left), len(right)) >= 0.86:
-                    cards[right_name] = ""
-                    card_statuses[public_keys[right_name]] = "invalid"
-                    card_reasons[public_keys[right_name]] = f"near_duplicate:{public_keys[left_name]}"
-
-    valid_count = sum(bool(prose) for prose in cards.values())
-    if valid_count == len(cards):
-        status = "complete"
-    elif valid_count:
-        status = "partial"
-    elif any(item in {"unsupported", "invalid"} for item in card_statuses.values()):
-        status = "invalid"
-    else:
-        status = "missing"
-    return SummaryCardsDTO(
-        tldr=cards["tldr"],
-        problem=cards["problem"],
-        method=cards["method"],
-        keyResults=cards["key_results"],
-        whyItMatters=cards["why_it_matters"],
-        status=status,
-        cardStatuses=card_statuses,
-        cardReasons=card_reasons,
-    )
-
-
 def _normalise_quality_value(value: Any, *, kind: Literal["heading", "parser"] = "heading") -> str:
     if isinstance(value, bool):
         if kind == "heading":
@@ -953,24 +767,15 @@ def _source_quality(value: Any) -> SourceQualityDTO:
     )
 
 
-def _notes_quality(raw: Mapping[str, Any], notes_raw: Mapping[str, Any] | None, brief_state: str) -> tuple[str, str]:
+def _notes_quality(raw: Mapping[str, Any], notes_raw: Mapping[str, Any] | None) -> tuple[str, str]:
     explicit = raw.get("notes_quality") or raw.get("notesQuality") or raw.get("pmrl_status") or raw.get("pmrlStatus")
     explicit_text = str(explicit or "").strip().casefold()
     if explicit_text in _NOTES_QUALITY_VALUES and explicit_text != "unknown":
         notes_quality = explicit_text
-    elif notes_raw is None:
+    elif notes_raw is None or explicit_text == "unknown":
+        # A legacy PaperItem often carries the model default ``unknown``;
+        # preserve that measured uncertainty.
         notes_quality = "unknown"
-    elif explicit_text == "unknown" and brief_state == "missing":
-        # A legacy PaperItem often carries the model default ``unknown`` but
-        # has no compact summary metadata at all.  Preserve that measured
-        # uncertainty rather than labeling the full PMRL notes as missing.
-        notes_quality = "unknown"
-    elif explicit_text in _PMRL_STATUS_VALUES:
-        notes_quality = "complete" if explicit_text == "complete" else explicit_text
-    elif brief_state == "valid":
-        notes_quality = "complete"
-    elif brief_state == "missing":
-        notes_quality = "missing"
     else:
         notes_quality = "missing"
 
@@ -1021,14 +826,7 @@ def _paper_dto(value: Any) -> PaperDTO | None:
     notes: PMRLDTO | None = None
     notes_raw_value = _model_dump(raw.get("notes"))
     notes_raw = notes_raw_value if isinstance(notes_raw_value, Mapping) else None
-    brief_value = (
-        (notes_raw.get("brief_summary") or notes_raw.get("briefSummary"))
-        if notes_raw is not None
-        else raw.get("brief_summary") or raw.get("briefSummary")
-    )
-    brief_summary, brief_state = _brief_summary_status(brief_value)
-    notes_quality, pmrl_status = _notes_quality(raw, notes_raw, brief_state)
-    summary_cards = _summary_cards(notes_raw)
+    notes_quality, pmrl_status = _notes_quality(raw, notes_raw)
     if notes_raw is not None:
         try:
             notes = PMRLDTO(
@@ -1036,8 +834,6 @@ def _paper_dto(value: Any) -> PaperDTO | None:
                 method=_safe_text(notes_raw.get("method"), 4000),
                 result=_safe_text(notes_raw.get("result"), 4000),
                 limitation=_safe_text(notes_raw.get("limitation"), 4000),
-                briefSummary=brief_summary,
-                briefStatus=brief_state,
                 status=pmrl_status,
             )
         except Exception:
@@ -1067,7 +863,6 @@ def _paper_dto(value: Any) -> PaperDTO | None:
             githubRepos=repos,
             bibtex=_safe_text(raw.get("bibtex"), 6000) if raw.get("bibtex") else None,
             notes=notes,
-            summaryCards=summary_cards,
             pmrlStatus=pmrl_status,
             notesQuality=notes_quality,
             sourceQuality=source_quality,
@@ -1085,7 +880,7 @@ _REPORT_ERROR_MARKERS = (
     "error generating final report",
     "research workflow execution notice",
 )
-_PUBLIC_INTENTS = frozenset({"direct_read", "direct_compare", "search"})
+_PUBLIC_INTENTS = frozenset({"direct_read", "search"})
 _PUBLIC_FAILURE_MESSAGES = {
     "router": "Could not understand the request. Check the request and start again.",
     "search_papers": "Could not find papers. The search service did not respond. Start again.",
@@ -1418,8 +1213,6 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
     ) if report_valid else None
     return RunResult(
         papers=papers,
-        benchmark=None,  # deprecated
-        comparisonArtifact=None,  # deprecated
         report=report_content,
         reportId=_report_id_from_state(state) if report_valid else None,
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
@@ -1508,31 +1301,6 @@ def _merge_state(target: dict[str, Any], update: Mapping[str, Any]) -> None:
             target[key] = value
 
 
-def _summary_failure_reason(state: Mapping[str, Any]) -> str:
-    """Return a short sanitized summary-cards failure reason for Activity display."""
-
-    papers = state.get("selected_papers")
-    if not isinstance(papers, (list, tuple)):
-        return ""
-    for paper in papers:
-        raw = _model_dump(paper)
-        if not isinstance(raw, Mapping):
-            continue
-        metadata = raw.get("processing_metadata")
-        if not isinstance(metadata, Mapping):
-            continue
-        summary = metadata.get("summary")
-        summary_map = _model_dump(summary) if isinstance(summary, Mapping) else None
-        if not isinstance(summary_map, Mapping):
-            continue
-        if str(summary_map.get("status") or "") == "complete":
-            continue
-        reason = re.sub(r"[^A-Za-z0-9_=:./+ -]", "", str(summary_map.get("reason") or ""))[:80].strip()
-        if reason:
-            return reason
-    return ""
-
-
 def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) -> str:
     """Describe a node without copying arbitrary trace/log content."""
 
@@ -1556,9 +1324,7 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
         nodes = graph.get("nodes") if isinstance(graph, Mapping) else None
         return f"Built citation graph ({len(nodes) if isinstance(nodes, list) else 0} node(s))"
     if node == "final_report":
-        reason = _summary_failure_reason(state)
-        base = "Prepared final research report"
-        return f"{base} (summary cards unavailable: {reason})" if reason else base
+        return "Prepared final research report"
     if node == "error_handler":
         return "Workflow entered error handling"
     return NODE_LABELS.get(node, "Workflow update")
@@ -1619,27 +1385,6 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
     if node == "error_handler":
         return {"message": _safe_text(state.get("error_message"), 800)}
     return {}
-
-
-def _summary_card_reasons_from_papers(value: Any) -> dict[str, str]:
-    """Collect safe card reasons without exposing source text or model prose."""
-
-    result: dict[str, str] = {}
-    for paper in _sequence_items(value):
-        raw = _model_dump(paper)
-        if not isinstance(raw, Mapping):
-            continue
-        paper_id = _public_identifier(raw.get("paper_id") or raw.get("paperId"))
-        notes = raw.get("notes")
-        if not paper_id or not isinstance(notes, Mapping):
-            continue
-        cards = _summary_cards(notes)
-        for card, reason in cards.card_reasons.items():
-            if reason:
-                result[f"{paper_id}.{card}"] = reason
-            if len(result) >= 64:
-                return result
-    return result
 
 
 def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) -> dict[str, Any]:
@@ -1705,22 +1450,12 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
         status = str(update.get("status") or state.get("status") or "").lower()
         report_available = _valid_report(update.get("final_report")) and status not in {"error", "failed"}
         facts["reportAvailable"] = report_available
-        # Deprecated constants kept for client compatibility.
-        facts["comparisonAvailable"] = False
-        facts["comparedPaperIds"] = []
         if report_available:
             # The report ID is sourced from the append-only save log and is
             # returned only after the file has been verified within REPORTS_DIR.
             report_id = _report_id_from_state(state)
             if report_id:
                 facts["reportId"] = report_id
-        reasons = _summary_card_reasons_from_papers(
-            update.get("selected_papers")
-            if "selected_papers" in update
-            else state.get("selected_papers")
-        )
-        if reasons:
-            facts["summaryCardReasons"] = reasons
 
     measured_timings = _timings_from_mapping(update)
     if measured_timings:
@@ -1770,27 +1505,6 @@ def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
 
     if isinstance(facts.get("reportAvailable"), bool):
         clean["reportAvailable"] = facts["reportAvailable"]
-    # Deprecated: the comparison step was removed; the values are constant.
-    if "comparisonAvailable" in facts:
-        clean["comparisonAvailable"] = False
-    if "comparedPaperIds" in facts:
-        clean["comparedPaperIds"] = []
-
-    raw_reasons = facts.get("summaryCardReasons")
-    if isinstance(raw_reasons, Mapping):
-        reasons: dict[str, str] = {}
-        key_re = re.compile(
-            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,255}\.(?:tldr|problem|method|keyResults|whyItMatters)"
-        )
-        for raw_key, raw_reason in raw_reasons.items():
-            key = str(raw_key or "").strip()
-            reason = _safe_summary_card_reason(raw_reason)
-            if key_re.fullmatch(key) and reason:
-                reasons[key] = reason
-            if len(reasons) >= 64:
-                break
-        if reasons:
-            clean["summaryCardReasons"] = reasons
 
     timings = _numeric_timings(facts.get("timings")) if isinstance(facts.get("timings"), Mapping) else {}
     if timings:
@@ -2887,9 +2601,8 @@ def _parse_form_inputs(values: Sequence[Any]) -> list[str]:
             if isinstance(decoded, list):
                 result.extend(_parse_form_inputs(decoded))
                 continue
-        # Supporting comma/newline separated IDs keeps the endpoint compatible
-        # with the Streamlit-era input shape while repeated form keys remain
-        # the canonical multipart representation.
+        # Comma/newline separated IDs are accepted while repeated form keys
+        # remain the canonical multipart representation.
         chunks = re.split(r"[,\n]", text) if "," in text or "\n" in text else [text]
         result.extend(item.strip() for item in chunks if item.strip())
     return result
