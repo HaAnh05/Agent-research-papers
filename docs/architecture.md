@@ -12,6 +12,7 @@ flowchart TD
 
     %% CE1 Routing
     Router -->|CE1: direct_read| ReadPaper["read_paper (ThreadPool + Two-column Parser)"]
+    Router -->|CE1: followup — thread đã có báo cáo| AnswerFollowup["answer_followup (1 lệnh LLM streaming, không có stage)"]
     Router -->|CE1: search| SearchPapers["search_papers (ArXiv API + Thread-Safe Lock)"]
     Router -->|CE1: error| ErrorHandler["error_handler (Graceful Fallback)"]
 
@@ -35,6 +36,7 @@ flowchart TD
     WebEnrich --> FinalReport
 
     FinalReport --> End([End: Research Report])
+    AnswerFollowup --> End
     ErrorHandler --> End
 
     style Router fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
@@ -210,7 +212,8 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 ```text
 START -> router --direct_read--> read_paper --+--> write_notes ----+
           |                          ^        +--> citation_graph -+--> final_report -> END
-          +--search--> search_papers |        +--> web_enrich -----+
+          +--followup--> answer_followup -> END   +--> web_enrich -----+
+          +--search--> search_papers |
                          |           |        (lỗi read_paper -> error_handler -> END)
                          v           |
                      eval_search --pass/max_retry
@@ -253,7 +256,7 @@ Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có d�
 
 ### 3.4. Node: `router` (`nodes/router.py`)
 
-**Chức năng**: Phân loại intent của người dùng thành 1 trong 3 nhánh.
+**Chức năng**: Phân loại intent của người dùng thành 1 trong 3 nhánh: `direct_read`, `search`, `followup`.
 
 **Chiến lược 2 lớp**:
 
@@ -261,11 +264,13 @@ Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có d�
 
    - Nếu `raw_inputs` có ≥ 1 phần tử → `direct_read` (nhiều phần tử = nhiều bài)
    - Tự động phát hiện ArXiv ID (`\d{4}\.\d{4,5}`) và local PDF path
+   - **Id/URL arXiv trong câu hỏi** (`arxiv.org/abs|pdf|html/<id>` hoặc id trần dạng `YYMM.NNNNN`, tháng 01-12) cũng thành `raw_inputs` → `direct_read`, kể cả khi thread đã có báo cáo. Form field `arxivId` của `POST /api/threads/{id}/messages` đi cùng đường này ("Phân tích bài này" từ đồ thị liên quan; không cần endpoint mới)
 2. **LLM Classifier (Fallback)** — Cho câu hỏi tự nhiên:
 
    - Gọi LLM với `with_structured_output(RouterDecision)` (trường `intent`, `search_query`; không có `reasoning`) → đảm bảo JSON output
    - Prompt yêu cầu trích xuất **từ khóa tiếng Anh học thuật** nếu câu hỏi bằng tiếng Việt
    - Ví dụ: `"Tôi muốn tìm bài báo unlearning"` → `search_query = "machine unlearning in AI"`
+   - `followup` chỉ khi `<thread_report>` khác `none` (thread có báo cáo đã xong; `state["followup_context"]` do API cấp) và câu hỏi nói về báo cáo hoặc một bài trong đó: giải thích, so sánh các bài trong báo cáo, hỏi về bảng/số ("Table 17 …"), "vì sao …". Tên bài mới không có id → `search`; chủ đề mới → `search`. Router đưa `followup` mà thread chưa có báo cáo → hạ về `search`. `route_after_router` chỉ chọn `answer_followup` khi có cả intent và `followup_context`.
 
 **Error handling**: Nếu LLM lỗi (mạng, quota) → fallback tự động về `intent="search"` với `search_query` nguyên bản.
 
@@ -385,13 +390,13 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 **Cơ chế**:
 
 1. Ghép text: abstract, methodology, `setup`, experiments, limitations, rồi các bảng có cấu trúc (`PaperTable`, dạng gọn: dòng nhãn + caption, hàng header, các hàng). Cắt ở `PMRL_INPUT_MAX_CHARS`
-2. Gọi LLM với `with_structured_output(PMRLCoreGeneration)`: 4 trường PMRL + `method_name`, `insights`, `eval_settings`, `setup`
+2. Gọi LLM với `with_structured_output(PMRLCoreGeneration)`: 4 trường PMRL + `method_name`, `intuition` (ý tưởng cốt lõi bằng lời đơn giản và lý do nó hoạt động, tiếng Anh), `insights`, `eval_settings`, `setup`
 3. **Grounding bằng code** (`ground_structured_notes`, chạy sau mỗi lần LLM và cả khi cache hit; cache lưu output thô):
    - Giữ 1 dòng `eval_settings` chỉ khi mọi số trong `method_value` (và `baseline_value` nếu có số) xuất hiện trong text nguồn hoặc ô bảng. Dòng không đạt bị loại.
    - `table_label` chỉ giữ khi bảng mang nhãn đó chứa đủ các số của dòng; `source_quote` chỉ giữ khi quote có trong nguồn.
    - `setup.hardware` và `setup.compute` bị xóa nếu text không có trong nguồn (kiểm tra token: mọi token chứa chữ số và ≥50% từ còn lại). `method_name` bị xóa nếu không có trong tiêu đề/nguồn.
    - `insights` không bị loại. Số lượng ghi ở `processing_metadata["evalSettings"]` (`proposed`, `kept`, `dropped`, `hardwareDropped`, `computeDropped`).
-4. Khóa cache PMRL chứa `PMRL_NOTES_VERSION` (hiện `n2`)
+4. Khóa cache PMRL chứa `PMRL_NOTES_VERSION` (hiện `n3`; `n3` thêm trường `intuition`). Cache cũ không có `intuition` vẫn load (mặc định rỗng)
 
 **Fallback PMRL**: Nếu LLM lỗi → tạo PMRLNotes mặc định từ summary/text thô.
 
@@ -407,11 +412,17 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 **Đặc điểm**:
 
-- Đường duy nhất (song song): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_*`, chỉ nhận `_paper_section_input` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 4. Kết luận` (`REPORT_OVERVIEW_*`; `_parse_overview` vẫn nhận số 3 cũ, bản 1 bài và nhiều bài) — tất cả trong **1 pool** (`min(n+1, 2*LLM_MAX_CONCURRENCY)` worker). Số lệnh LLM của `final_report` = n + 1 (1 bài: 2 lệnh). Không có bài → không gọi LLM, báo cáo dựng từ văn bản dự phòng. H1, header mục 2, thứ tự bài, mục 3 (Bối cảnh nghiên cứu) và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded` và không cache. Timing thêm `sectionPapers` và `overviewMs`.
+- Đường duy nhất (song song): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_*`), 1 lệnh overview — tất cả trong **1 pool** (`min(n+1, 2*LLM_MAX_CONCURRENCY)` worker). Số lệnh LLM của `final_report` = n + 1. Không có bài → không gọi LLM.
+- **Lệnh overview trả JSON** (structured output, ngôn ngữ báo cáo; vai trò trong system, dữ liệu và `<terms>` trong user). Một bài (`OverviewSingle`): `tldr`, `problem`, `intuition`, `keyResults[]`, `metrics[{name, meaning, higherIsBetter}]`, `setup[]` (có 1 dòng `Hardware:`), `caveats[]`, `takeaway`. Nhiều bài (`OverviewMulti`): `tldr`, `insights[{finding, why}]`, `papers[{paperId, intuition, keyResult}]`, `takeaway`. Code dựng `## 1. Tóm tắt` (tldr + keyResults hoặc insights) và `## 4. Kết luận` (caveats + takeaway) từ JSON bằng `render_overview_sections()`. Lệnh section lỗi → khối dựng từ notes; overview lỗi hoặc thiếu `tldr` → văn bản tối thiểu; cả hai đặt status `degraded` và không cache.
+- **Khối `<terms>`** (code dựng, `_terms_text`) có trong user message của section và overview: `method_name`, tên metric, tên benchmark/dataset và tên thành phần (token CamelCase/CHỮ HOA lặp ≥2 lần trong notes). Prompt yêu cầu dùng đúng các thuật ngữ này.
+- **Quy tắc văn phong ASD-STE100 (tiếng Việt)** nằm 1 lần trong `prompts/common.py::STE_RULES` và được chèn vào system của section và overview: dùng bullet thay đoạn; mỗi số, dataset, metric, baseline, hardware một bullet; một chủ đề mỗi câu; câu ≤ 25 từ (tiếng Việt ≤ 35 âm tiết), câu lệnh ≤ 20 từ (≤ 28 âm tiết); thể chủ động, nêu chủ thể, tránh "được"/"bị", tên ghép ≤ 3 danh từ; một thuật ngữ cho một khái niệm; thay từ mơ hồ bằng số hoặc điều kiện; văn phong học thuật, không lặp ý.
+- Khối paper có thêm sub-bullet `Ý tưởng cốt lõi` (tiếng Anh: `Core idea`) dưới `Phương pháp`, lấy từ `notes.intuition`.
+- **`answerSummary`** (`build_answer_summary`, code, không LLM): `state["answer_summary"]` và `RunResult.answerSummary`. Dạng: `{kind: single|multi, paper | papers, lead, tldr, blocks, actions: {reportId, bibtexCount, graphNodes}, durationSec}`. `blocks` một bài: `problem`, `intuition`, `keyResults`, `metrics`, `setup {items, hardware, missing: ["Hardware"] khi paper không nêu}`, `results {grounded, source[], methodName, rows[{setting, metric, method, baseline, delta, higherIsBetter}]}` (hàng từ `eval_settings` đã grounding; `delta` chỉ khi hai giá trị là số đơn), `caveats`, `foundations` (≤6 tên bài nền tảng từ `citation_graph`), `takeaway`. Nhiều bài: `insights`, `paperCards[{paperId, title, year, intuition, keyResult}]`, `foundations`, `takeaway`. `durationSec` là ước lượng từ `node_timings` (nối tiếp + nhánh song song chậm nhất). Mọi giá trị prose lấy từ JSON overview; thiếu overview thì dùng notes làm dự phòng. API stream `answer` = `lead` (không stream token LLM, vì nhiều lệnh LLM chạy song song); `report_id` lưu ở state.
 - **Khối "Kết quả chính" (PR 3)**: LLM nhận notes kèm insights, dòng eval_settings và setup, viết các sub-bullet `Insight` (đánh số), `Đại lượng đo`, `Thiết lập`, `Nhận xét` (tiếng Anh: Insight, Metrics, Setup, Remarks). **Code** dựng bảng kết quả từ `eval_settings` đã grounding (cột: Benchmark, Metric kèm đơn vị và ↑/↓, tên phương pháp, Baseline tốt nhất; `—` khi thiếu; dòng `*Nguồn: Table N trong paper*` khi nhãn bảng đã xác minh) và chèn trước sub-bullet `Nhận xét` (hoặc cuối khối Kết quả chính nếu thiếu); bảng thụt 2 dấu cách để nằm trong mục danh sách. Nếu `setup.hardware` rỗng mà `Thiết lập` không có câu về hardware, code thêm `Hardware: paper không nêu` (tiếng Anh: `Hardware: not stated in the paper`). Không có dòng đã grounding thì không có bảng. Lệnh section lỗi → `_deterministic_paper_section` dựng cùng cấu trúc từ notes. Overview nhận insights từng bài để "Tóm tắt" nêu insight xuyên suốt các bài.
-- Cache báo cáo chỉ lưu `report_text` (không còn card). Phiên bản: `REPORT_VERSION = "p11"`; khóa cũng chứa `_paper_breakdown`, input section, context overview và mục 3 nên đổi notes là đổi khóa
+- Cache báo cáo lưu `report_text` và JSON overview (để dựng lại `answerSummary` khi cache hit). Phiên bản: `REPORT_VERSION = "p12"`; khóa cũng chứa `_paper_breakdown`, input section, context overview và mục 3 nên đổi notes là đổi khóa
 - Mục 3 do `_context_section()` dựng từ `state["citation_graph"]` (thiếu graph → một dòng "chưa có dữ liệu"); nội dung mục 3 nằm trong khóa cache báo cáo
-- Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`
+- API `PaperDTO` có thêm: `intuition`, `insights[{finding, whyItMatters}]`, `evalSettings[]` (chỉ hàng đã grounding), `setup {datasets, trainingConfig, hardware, compute}`, `tableCount`, `referenceCount`, `repository {url, source: html|github}` (link HTML của bài ưu tiên, sau đó kết quả tìm GitHub).
+- Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`; tên file lưu ở `state["report_id"]`
 - Dùng `extract_text_from_response()` để xử lý an toàn response từ mọi LLM provider
 
 ---
@@ -431,7 +442,7 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 #### Đồ thị tương đồng (`nodes/similarity_graph.py`, kiểu Connected Papers)
 
-- Lưu ở `citation_graph["similarity"]`, API trả thêm `citationGraph.similarity` (chỉ khi có; khóa giữ snake_case): `{nodes:[{id, arxiv_id, title, year, cited_by_count, first_author, abstract, similarity, role:"origin"|"similar", url}], edges:[{source, target, weight}], prior_works:[… + support], derivative_works:[… + support], stats:{seeds, pool, requests, cache_hits, duration_ms, status:"ok"|"no_key"|"error"|"partial"}}`. UI sau này: cỡ nút = `cited_by_count`, màu = `year`, cạnh = `weight`, nút `origin` nổi bật.
+- Lưu ở `citation_graph["similarity"]` (state giữ snake_case); API trả `citationGraph.similarity` (chỉ khi có) bằng **camelCase**: `{nodes:[{id, arxivId, title, year, citedByCount, titleSource, firstAuthor, abstract, similarity, role:"origin"|"similar", url}], edges:[{source, target, weight}], priorWorks:[… + support], derivativeWorks:[… + support], stats:{seeds, pool, requests, cacheHits, durationMs, unverifiedDropped, status:"ok"|"no_key"|"error"|"partial"}}`. UI sau này: cỡ nút = `citedByCount`, màu = `year`, cạnh = `weight`, nút `origin` nổi bật. Phần còn lại của `citationGraph` (nodes/edges/stats của đồ thị trích dẫn) giữ snake_case.
 - **Seed** = tham khảo HTML đã giải ra arXiv id (ánh xạ sang W id bằng 1 lệnh lọc DOI cho ≤ 50 id) + `referenced_works` của bài đã chọn nếu có (OpenAlex hay để trống `referenced_works` với preprint). **Pool** = bài trích dẫn từng seed và bài đã chọn (100 bài nhiều trích dẫn nhất mỗi lần), giữ `CITATION_SIMILARITY_POOL` (300) bài trích dẫn nhiều seed nhất, lấy chi tiết theo lô 50.
 - **Nhận diện bài**: arXiv id lấy từ bản đồ seed W→arXiv (DOI lookup), rồi DOI OpenAlex, rồi khớp chính xác tiêu đề đã chuẩn hóa với index cục bộ (bỏ qua mơ hồ / < 4 từ). Nếu bài có trong index → `title`, `year`, `abstract` lấy từ index (`title_source: "index"`), vì tiêu đề OpenAlex của vài preprint bị sai; không có trong index nhưng là seed → tiêu đề trong danh mục HTML (`"reference"`); còn lại `"openalex"` (origin thiếu dữ liệu: `"paper"`).
 - **Điểm** = cosine bibliographic coupling `|refs ∩ seeds| / √(|refs|·|seeds|)` + `CITATION_SIMILARITY_DIRECT_BONUS` (0,10) nếu bài trích dẫn trực tiếp bài đã chọn (thay co-citation thật, vì không tốn thêm request) + `CITATION_SIMILARITY_INDEX_BONUS` (0,08) nếu bài có trong index cục bộ (cs.*); bài chia sẻ < `CITATION_SIMILARITY_MIN_SHARED` (1) seed bị loại trừ khi trích dẫn trực tiếp. Giữ `CITATION_SIMILARITY_NODES` (40) bài cao nhất; `similarity` của nút = cosine thuần.
@@ -439,6 +450,16 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 - **Lọc prior/derivative**: bỏ bài không xác minh được (không có arXiv id sau khi khớp DOI/tiêu đề, `referenced_works` rỗng và `title_source == "openalex"`); số bài bỏ ghi ở `stats.unverified_dropped`; danh sách được bù cho đủ 10.
 - **Ngân sách**: `CITATION_SIMILARITY_BUDGET_SEC` (60 s, đồng hồ thật; tính cả các lần tra tiêu đề trong index cục bộ) — hết giờ thì dừng gọi request và tra index và trả đồ thị `partial` từ dữ liệu đang có. Request lỗi cũng cho `partial` (hoặc `error` nếu chưa có gì). Tắt hẳn: `CITATION_SIMILARITY_ENABLED=false`. Node không bao giờ raise.
 - Probe thật (cần mạng + key): `.venv/bin/python -I bench/similarity_graph_probe.py <arxiv_id> [--out file.json]`. Test offline: `tests/test_similarity_graph.py`.
+
+---
+
+### 3.11c. Node: `answer_followup` (`nodes/answer_followup.py`)
+
+**Chức năng**: Trả lời câu hỏi tiếp theo từ báo cáo và ghi chú đã có của thread. Một lệnh LLM (`stream()`; role tách system/user; `STE_RULES`; trả lời bằng ngôn ngữ của báo cáo; trích nguồn dạng `[Báo cáo §2]`, `[Table 17]`, `[Notes: <paperId>]`; nếu tài liệu không có câu trả lời thì nói rõ một câu và gợi ý chạy phân tích đầy đủ). Sau node là `END`; không có stage. Trace: một step "Trả lời từ báo cáo đã có" với facts `{sources: [...]}`. API chỉ stream token của node này (`assistant.delta`); token của các node báo cáo vẫn bị bỏ.
+
+**Context** (`followup_context`, API dựng từ run xong gần nhất có báo cáo, lưu riêng, không nằm trong DTO): `reportId`, `reportText` (≤150k ký tự), mỗi bài: `paperId`, `arxivId`, `title`, notes có cấu trúc (problem, method, result, limitation, intuition, insights, eval_settings, setup), bảng (≤40 bảng, ≤40 hàng, ô ≤80 ký tự), và `related` (≤60 nút bản đồ liên quan: title, abstract, year, firstAuthor, arxivId).
+
+**Chọn phần đưa vào prompt** (ngân sách tối đa ≈35k ký tự, dưới 9k token): mục 1, 3, 4 của báo cáo (≤2,5k mỗi mục); tối đa 2 bài liên quan nhất (khớp tiêu đề/tên phương pháp, "bài 2"/"paper 2", arXiv id; không khớp thì 2 bài đầu): khối `###` (≤5k) và notes (≤3,5k); bảng được nêu trong câu hỏi ("Table N", "Bảng N", ≤4 bảng, ≤2k mỗi bảng; nếu không nêu bảng thì chỉ đưa caption); tối đa 3 bài từ bản đồ liên quan khi câu hỏi nêu tên (≥2 từ trùng tiêu đề) hoặc id (≤0,9k abstract). Danh sách nguồn đã dùng nằm trong `<sources>` và thành `followup_sources`.
 
 ---
 
@@ -573,3 +594,29 @@ Chạy `graph.stream()` đồng bộ, in trace log từng bước, xuất final 
 Chạy: `.venv/bin/python -m pytest tests/ -q`.
 
 Xem trước định dạng báo cáo, hoàn toàn offline (LLM giả, số thật từ bảng đã parse): `.venv/bin/python -I bench/render_report_preview.py` → `data/arxiv/preview_report.md` (đọc `data/arxiv/html_probe/ar5iv_*.html`).
+
+---
+
+### 3.17. Thread: ngữ cảnh và lưu trữ (`api.py`)
+
+- **Gửi tin nhắn**: `POST /api/threads/{id}/messages` (form `message`, tùy chọn `arxivId`/`paperInputs`/PDF). State ban đầu có `conversation_context` (văn bản ≤12k ký tự: artifact, report id, paper id, notes, intuition, 3 insight đầu, hardware) và `followup_context` (cấu trúc, xem 3.11c; `None` nếu thread chưa có báo cáo). Luật 1 run đang chạy cho cả hệ thống giữ nguyên (HTTP 409).
+- **Số đo thời gian**: `answerSummary.durationSec` bị ghi đè bằng thời gian chạy thực đo (`finished_at - started_at`) khi run xong; graph chỉ ước lượng.
+- **Lưu trên đĩa**: `config.THREADS_DIR` (mặc định `data/threads/`, git-ignored, đổi bằng biến môi trường `THREADS_DIR`). Mỗi thread một file `<threadId>.json`, ghi nguyên tử (file tạm rồi `replace`) khi tạo thread và khi mỗi run kết thúc. Nạp lúc server khởi động (lifespan của FastAPI). Registry không có `persist_dir` (test, thư viện) chỉ giữ trong RAM.
+
+```json
+{
+  "version": 1,
+  "threadId": "...", "title": "...", "createdAt": "ISO", "updatedAt": "ISO",
+  "runIds": ["..."],
+  "messages": [ThreadMessage ...], "artifacts": [ArtifactDTO ...],
+  "runs": [{
+    "runId": "...", "status": "success|degraded|error", "provider": "...", "model": "...",
+    "input": RunInput, "answer": "lead hoặc câu trả lời follow-up", "error": null,
+    "startedAt": "ISO", "updatedAt": "ISO", "finishedAt": "ISO",
+    "result": RunResult (papers DTO, reportId, answerSummary, citationGraph, report),
+    "followupContext": { ... riêng tư, xem 3.11c ... }
+  }]
+}
+```
+
+Run chưa kết thúc không được lưu. Run nạp lại có `traceEvents` rỗng (không lưu trace); `GET /api/runs/{id}` và `GET /api/threads/{id}` trả `result` đã lưu, và follow-up vẫn chạy được từ `followupContext` cộng file báo cáo trong `reports/`.

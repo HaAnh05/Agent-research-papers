@@ -60,3 +60,5 @@ bench/runs/
 # Local arXiv metadata + FTS index (large)
 # arXiv dataset (HF secemp9/arxiv-complete) and derived indexes
 data/arxiv/
+# Persisted chat threads
+data/threads/

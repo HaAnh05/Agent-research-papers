@@ -154,7 +154,7 @@ def test_section_overview_send_pairs(monkeypatch):
     assert "@article" not in user and "arxiv.org" not in user
     assert block.startswith("### Paper one")
 
-    over = Recorder("## 1. Summary\nx\n\n## 3. Conclusion\ny\n")
+    over = Recorder(json.dumps({"tldr": "x", "takeaway": "y"}))
     final_report._write_overview(over, "q", "T", "English", [_paper()])
     system, user = _assert_pair(over.inputs[0])
     assert "omparison" not in system and "So sánh" not in user and "## 2." not in user
@@ -180,7 +180,7 @@ def test_builders_are_pure_and_non_empty(monkeypatch, tmp_path):
         assert "{user_query}" not in user and "{language_mode}" not in user and "{label_" not in user
     multi_system, multi_user = pairs[3]
     assert "<benchmark_matrix>" not in multi_user and "So sánh" not in multi_user
-    assert "## 4. Kết luận" in multi_user and "covering several papers" in multi_system
+    assert "<terms>" in multi_user and "several papers" in multi_system
     single_user = pairs[2][1]
     assert "So sánh" not in single_user and "<benchmark_matrix>" not in single_user
     # Report prompts keep the v0 rule text in system and state the data-tag rule once.

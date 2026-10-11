@@ -5,6 +5,7 @@ All LLM, network and PDF work is faked; no provider or arXiv call is made.
 from __future__ import annotations
 
 import copy
+import json
 import importlib
 import threading
 import time
@@ -215,14 +216,15 @@ class SectionLLM:
                 "- **Liên kết nguồn**: https://evil.example/x\n"
                 "- **Trích dẫn**:\n\n```bibtex\n@article{llm_invented}\n```\n"
             ))
-        if "summary and conclusion of a research report" in prompt:
+        if "overview of a research report" in prompt:
             if self.fail_overview:
                 raise RuntimeError("provider failure")
-            return SimpleNamespace(content="## 1. Tóm tắt\n- overview text\n\n## 3. Kết luận\n- done\n")
+            return SimpleNamespace(content=json.dumps({"tldr": "overview text", "takeaway": "done", "keyResults": ["kr"], "insights": [{"finding": "f", "why": "w"}]}))
         raise AssertionError("unexpected prompt")
 
 
 def _setup(monkeypatch, tmp_path, llm):
+    monkeypatch.setattr(config, "DEFAULT_PROVIDER", "zai")
     monkeypatch.setattr(config, "REPORTS_DIR", tmp_path / "reports")
     (tmp_path / "reports").mkdir()
     monkeypatch.setattr(config, "SUMMARY_CACHE_DIR", tmp_path / "summaries")
@@ -334,7 +336,7 @@ def test_single_paper_overview_has_two_sections_and_no_compare(monkeypatch, tmp_
     llm = SectionLLM()
     _setup(monkeypatch, tmp_path, llm)
     result = final_report.final_report_node(_state([_paper("p1", "First Paper", "2303.04137")]))
-    overview_prompts = [p for p in llm.prompts if "summary and conclusion of a research report" in p]
+    overview_prompts = [p for p in llm.prompts if "overview of a research report" in p]
     assert len(overview_prompts) == 1
     assert "So sánh" not in overview_prompts[0] and "<benchmark_matrix>" not in overview_prompts[0]
     report = result["final_report"]
@@ -361,7 +363,7 @@ def test_single_paper_english_mode_headings(monkeypatch, tmp_path):
 
 def test_report_cache_key_includes_version(monkeypatch):
     paper = _paper("p1", "First Paper", "2303.04137")
-    assert final_report.REPORT_VERSION == "p11"
+    assert final_report.REPORT_VERSION == "p12"
     first, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])
     monkeypatch.setattr(final_report, "REPORT_VERSION", "next")
     second, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])

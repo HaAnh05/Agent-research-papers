@@ -17,7 +17,7 @@ from tools.llm_provider import get_llm, invoke_structured_output
 
 # Bump when the PMRL schema or its grounding rules change: old cache entries
 # then miss instead of loading notes without the structured fields.
-PMRL_NOTES_VERSION = "n2"
+PMRL_NOTES_VERSION = "n3"
 
 _TABLE_MAX_ROWS = 40
 _TABLE_MAX_CHARS = 2500
@@ -203,6 +203,7 @@ class PMRLCoreGeneration(BaseModel):
     result: str = Field(description="Key empirical results with datasets, metrics and numbers.")
     limitation: str = Field(description="Limitations, trade-offs, assumptions and future work.")
     method_name: str = Field(default="", description="Short name the paper gives its own method; empty if none.")
+    intuition: str = Field(default="", description="The core idea in plain words and why it should work; empty if the paper gives no basis.")
     insights: List[Insight] = Field(default_factory=list, description="Findings a reader cannot get from the abstract alone.")
     eval_settings: List[EvalSetting] = Field(default_factory=list, description="Key benchmark/metric rows: own method vs strongest baseline.")
     setup: Setup = Field(default_factory=Setup, description="Datasets, key training config, hardware and compute as stated in the paper.")
@@ -235,7 +236,10 @@ def _structured_fields(source: Any) -> Dict[str, Any]:
     """
 
     get = source.get if isinstance(source, dict) else lambda name, default=None: getattr(source, name, default)
-    fields: Dict[str, Any] = {"method_name": str(get("method_name", "") or "")}
+    fields: Dict[str, Any] = {
+        "method_name": str(get("method_name", "") or ""),
+        "intuition": str(get("intuition", "") or ""),
+    }
     for name, model in (("insights", Insight), ("eval_settings", EvalSetting)):
         try:
             fields[name] = [model.model_validate(item) for item in (get(name, None) or [])]
@@ -329,6 +333,7 @@ def analyze_paper_notes(
             "result": notes.result,
             "limitation": notes.limitation,
             "method_name": notes.method_name,
+            "intuition": notes.intuition,
             "insights": [item.model_dump() for item in notes.insights],
             "eval_settings": [item.model_dump() for item in notes.eval_settings],
             "setup": notes.setup.model_dump(),

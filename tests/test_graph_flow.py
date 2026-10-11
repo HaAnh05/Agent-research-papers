@@ -29,6 +29,7 @@ def test_graph_compilation():
         "citation_graph",
         "final_report",
         "error_handler",
+        "answer_followup",
     }
     assert "search_papers" in graph.nodes
     assert "eval_search" in graph.nodes
@@ -48,6 +49,8 @@ def test_routing_logic():
     assert route_after_router({"intent": "direct_read", "selected_papers": [], "status": "running"}) == "search_papers"
     assert route_after_router({"intent": "search", "status": "running"}) == "search_papers"
     assert route_after_router({"status": "error"}) == "error_handler"
+    assert route_after_router({"intent": "followup", "followup_context": {"reportId": "r.md"}, "status": "running"}) == "answer_followup"
+    assert route_after_router({"intent": "followup", "status": "running"}) == "search_papers"
 
     # Test route_after_eval_search
     assert route_after_eval_search({"eval_passed": True, "status": "running"}) == "read_paper"

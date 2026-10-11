@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,8 +9,8 @@ from nodes import final_report
 from state import PaperItem, PMRLNotes
 
 
-_OVERVIEW_OK = (
-    "## 1. Tóm tắt\n- Tổng quan.\n\n## 3. Kết luận\n- Kết luận.\n"
+_OVERVIEW_OK = json.dumps(
+    {"tldr": "Tổng quan.", "takeaway": "Kết luận.", "keyResults": ["kr"], "insights": [{"finding": "f", "why": "w"}]}
 )
 
 
@@ -24,7 +25,7 @@ class FakeLLM:
         # The report sends a paper-block prompt and an overview prompt.
         if "ONE paper block" in prompt:
             return SimpleNamespace(content="### Fake paper\n- **Vấn đề**: p\n")
-        if "summary and conclusion of a research report" in prompt:
+        if "overview of a research report" in prompt:
             return SimpleNamespace(content=_OVERVIEW_OK)
         return SimpleNamespace(content="# Collision-safe report\n")
 
@@ -66,6 +67,7 @@ def test_final_report_uses_unique_readable_filename_and_trace(monkeypatch, tmp_p
 
 
 def test_final_report_reuses_cache_on_identical_rerun(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "DEFAULT_PROVIDER", "zai")
     monkeypatch.setattr(config, "REPORTS_DIR", tmp_path / "reports")
     (tmp_path / "reports").mkdir()
     monkeypatch.setattr(config, "SUMMARY_CACHE_DIR", tmp_path / "summaries")

@@ -15,6 +15,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,7 +59,8 @@ class TraceFacts(TypedDict, total=False):
     the corresponding node update did not provide that measurement.
     """
 
-    intent: Literal["direct_read", "search"]
+    intent: Literal["direct_read", "search", "followup"]
+    sources: list[str]         # answer_followup: report sections, tables and notes the answer used
     resultCount: int
     selectedCount: int
     retryCount: int
@@ -162,6 +164,38 @@ class PMRLDTO(APIModel):
     status: Literal["complete", "missing", "invalid", "unknown"] = "unknown"
 
 
+class InsightDTO(APIModel):
+    finding: str = ""
+    why_it_matters: str = Field(default="", alias="whyItMatters")
+
+
+class EvalSettingDTO(APIModel):
+    """One grounded result row (rows that failed grounding never reach the DTO)."""
+
+    benchmark: str = ""
+    metric: str = ""
+    metric_meaning: str = Field(default="", alias="metricMeaning")
+    higher_is_better: bool | None = Field(default=None, alias="higherIsBetter")
+    unit: str = ""
+    method_value: str = Field(default="", alias="methodValue")
+    baseline_name: str = Field(default="", alias="baselineName")
+    baseline_value: str = Field(default="", alias="baselineValue")
+    table_label: str = Field(default="", alias="tableLabel")
+
+
+class SetupDTO(APIModel):
+    datasets: str = ""
+    training_config: str = Field(default="", alias="trainingConfig")
+    hardware: str = ""
+    compute: str = ""
+
+
+class RepositoryDTO(APIModel):
+    url: str
+    # ``html``: link found in the paper's own HTML; ``github``: GitHub search hit.
+    source: Literal["html", "github"]
+
+
 class SourceQualityDTO(APIModel):
     """Measured parser metadata safe to show beside one paper's source."""
 
@@ -209,6 +243,13 @@ class PaperDTO(APIModel):
     github_repos: list[RepoDTO] = Field(default_factory=list, alias="githubRepos")
     bibtex: str | None = None
     notes: PMRLDTO | None = None
+    intuition: str = ""
+    insights: list[InsightDTO] = Field(default_factory=list)
+    eval_settings: list[EvalSettingDTO] = Field(default_factory=list, alias="evalSettings")
+    setup: SetupDTO = Field(default_factory=SetupDTO)
+    table_count: int = Field(default=0, alias="tableCount")
+    reference_count: int = Field(default=0, alias="referenceCount")
+    repository: RepositoryDTO | None = None
     pmrl_status: Literal["complete", "missing", "invalid", "unknown"] = Field(
         default="unknown", alias="pmrlStatus"
     )
@@ -224,6 +265,8 @@ class RunResult(APIModel):
     report_id: str | None = Field(default=None, alias="reportId")
     bibtex: str | None = None
     answer: str | None = None
+    # Structured chat answer built by final_report (blocks the UI renders).
+    answer_summary: dict[str, Any] | None = Field(default=None, alias="answerSummary")
     # Citation graph for a future UI: {"nodes": [...], "edges": [...], "stats": {...}}
     # (same JSON as the ``citation_graph`` state channel); ``null`` when not built.
     citation_graph: dict[str, Any] | None = Field(default=None, alias="citationGraph")
@@ -320,6 +363,7 @@ NODE_LABELS: dict[str, str] = {
     "web_enrich": "Tìm mã nguồn và BibTeX",
     "final_report": "Viết báo cáo",
     "error_handler": "Xử lý lỗi",
+    "answer_followup": "Trả lời từ báo cáo đã có",
 }
 
 # One short description line per node, shown under the label.
@@ -334,6 +378,7 @@ NODE_DESCRIPTIONS: dict[str, str] = {
     "web_enrich": "Tìm repository chính thức và tạo BibTeX",
     "final_report": "Tổng hợp báo cáo Markdown",
     "error_handler": "Dừng run và báo lỗi",
+    "answer_followup": "Trả lời câu hỏi tiếp theo bằng báo cáo và ghi chú đã có",
 }
 
 # The five chat-UI progress stages.  One node = one stage ("Đọc toàn văn" and
@@ -365,12 +410,15 @@ NODE_KINDS: dict[str, str] = {
     "citation_graph": "artifact",
     "final_report": "artifact",
     "error_handler": "error",
+    "answer_followup": "artifact",
 }
+# Nodes whose output is the assistant answer shown in the chat.
+ANSWER_NODES = frozenset({"final_report", "answer_followup"})
 
 TERMINAL_STATUSES = {"success", "degraded", "error"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 UPLOAD_KEYS = ("pdfs", "files", "attachments", "pdf")
-INPUT_KEYS = ("paper_inputs", "paperInputs", "inputs", "papers", "paper_ids")
+INPUT_KEYS = ("paper_inputs", "paperInputs", "inputs", "papers", "paper_ids", "arxivId", "arxiv_id")
 
 
 def _now() -> datetime:
@@ -912,6 +960,43 @@ def _paper_dto(value: Any) -> PaperDTO | None:
     quality_raw = raw.get("source_quality") or raw.get("sourceQuality") or raw.get("extraction_quality") or raw.get("extractionQuality")
     source_quality = _source_quality(quality_raw)
 
+    notes_data = notes_raw or {}
+    insights = [
+        InsightDTO(
+            finding=_safe_text(item.get("finding"), 600),
+            whyItMatters=_safe_text(item.get("why_it_matters"), 600),
+        )
+        for item in _sequence_items(notes_data.get("insights"))[:8]
+        if isinstance(item, Mapping) and str(item.get("finding") or "").strip()
+    ]
+    eval_settings = [
+        EvalSettingDTO(
+            benchmark=_safe_text(item.get("benchmark"), 200),
+            metric=_safe_text(item.get("metric"), 200),
+            metricMeaning=_safe_text(item.get("metric_meaning"), 300),
+            higherIsBetter=item.get("higher_is_better") if isinstance(item.get("higher_is_better"), bool) else None,
+            unit=_safe_text(item.get("unit"), 40),
+            methodValue=_safe_text(item.get("method_value"), 120),
+            baselineName=_safe_text(item.get("baseline_name"), 200),
+            baselineValue=_safe_text(item.get("baseline_value"), 120),
+            tableLabel=_safe_text(item.get("table_label"), 40),
+        )
+        for item in _sequence_items(notes_data.get("eval_settings"))[:32]
+        if isinstance(item, Mapping)
+    ]
+    setup_raw = notes_data.get("setup") if isinstance(notes_data.get("setup"), Mapping) else {}
+    setup = SetupDTO(
+        datasets=_safe_text(setup_raw.get("datasets"), 600),
+        trainingConfig=_safe_text(setup_raw.get("training_config"), 600),
+        hardware=_safe_text(setup_raw.get("hardware"), 300),
+        compute=_safe_text(setup_raw.get("compute"), 300),
+    )
+    repository: RepositoryDTO | None = None
+    if source_quality.code_urls:
+        repository = RepositoryDTO(url=source_quality.code_urls[0], source="html")
+    elif repos:
+        repository = RepositoryDTO(url=repos[0].url, source="github")
+
     try:
         return PaperDTO(
             paperId=_safe_text(raw.get("paper_id") or raw.get("paperId"), 260),
@@ -931,6 +1016,13 @@ def _paper_dto(value: Any) -> PaperDTO | None:
             githubRepos=repos,
             bibtex=_safe_text(raw.get("bibtex"), 6000) if raw.get("bibtex") else None,
             notes=notes,
+            intuition=_safe_text(notes_data.get("intuition"), 600),
+            insights=insights,
+            evalSettings=eval_settings,
+            setup=setup,
+            tableCount=len(_sequence_items(raw.get("tables"))),
+            referenceCount=len(_sequence_items(raw.get("references"))),
+            repository=repository,
             pmrlStatus=pmrl_status,
             notesQuality=notes_quality,
             sourceQuality=source_quality,
@@ -948,7 +1040,7 @@ _REPORT_ERROR_MARKERS = (
     "error generating final report",
     "research workflow execution notice",
 )
-_PUBLIC_INTENTS = frozenset({"direct_read", "search"})
+_PUBLIC_INTENTS = frozenset({"direct_read", "search", "followup"})
 _PUBLIC_FAILURE_MESSAGES = {
     "router": "Could not understand the request. Check the request and start again.",
     "search_papers": "Could not find papers. The search service did not respond. Start again.",
@@ -958,6 +1050,7 @@ _PUBLIC_FAILURE_MESSAGES = {
     "web_enrich": "Could not enrich sources. Related repositories or citations may be unavailable. Start again.",
     "write_notes": "Could not write structured notes. The language-model provider did not respond. Start again.",
     "final_report": "Could not prepare the research report. The language-model provider did not respond. Start again.",
+    "answer_followup": "Could not answer the follow-up question. The language-model provider did not respond. Ask again.",
     "error_handler": "Research failed. Edit the request or start again.",
     "workflow": "Research failed. Edit the request or start again.",
 }
@@ -1144,6 +1237,15 @@ def _fallback_note_ids(update: Mapping[str, Any]) -> list[str]:
 
 
 def _report_id_from_state(state: Mapping[str, Any]) -> str | None:
+    # ``final_report`` stores the saved file name in ``report_id``.  The trace
+    # log scan below only serves states from graphs that do not set it.
+    stored = state.get("report_id")
+    if isinstance(stored, str) and re.fullmatch(r"[A-Za-z0-9_.-]+\.md", stored):
+        try:
+            if _safe_report_path(stored).exists():
+                return stored
+        except HTTPException:
+            pass
     logs = state.get("trace_logs") or []
     for log in reversed(logs if isinstance(logs, list) else []):
         match = re.search(r"(?:Báo cáo lưu|saved)\s*:\s*([A-Za-z0-9_.-]+\.md)", str(log), re.IGNORECASE)
@@ -1178,12 +1280,12 @@ def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
             return None
         out = {
             "id": text(item.get("id"), 120),
-            "arxiv_id": text(item.get("arxiv_id"), 40),
+            "arxivId": text(item.get("arxiv_id"), 40),
             "title": text(item.get("title"), 300) or "",
             "year": count(item.get("year")),
-            "cited_by_count": count(item.get("cited_by_count")),
-            "title_source": text(item.get("title_source"), 12),
-            "first_author": text(item.get("first_author"), 120) or "",
+            "citedByCount": count(item.get("cited_by_count")),
+            "titleSource": text(item.get("title_source"), 12),
+            "firstAuthor": text(item.get("first_author"), 120) or "",
             "abstract": text(item.get("abstract"), limit_abstract) or "",
             "similarity": num(item.get("similarity")),
             "role": text(item.get("role"), 20),
@@ -1207,15 +1309,15 @@ def _public_similarity_graph(value: Any) -> dict[str, Any] | None:
         "seeds": count(raw.get("seeds")) or 0,
         "pool": count(raw.get("pool")) or 0,
         "requests": count(raw.get("requests")) or 0,
-        "cache_hits": count(raw.get("cache_hits")) or 0,
-        "duration_ms": count(raw.get("duration_ms")) or 0,
-        "unverified_dropped": count(raw.get("unverified_dropped")) or 0,
+        "cacheHits": count(raw.get("cache_hits")) or 0,
+        "durationMs": count(raw.get("duration_ms")) or 0,
+        "unverifiedDropped": count(raw.get("unverified_dropped")) or 0,
         "status": status if status in {"ok", "no_key", "error", "partial"} else "error",
     }
     return {
         "nodes": works(value["nodes"], 100), "edges": edges,
-        "prior_works": works(value.get("prior_works"), 20),
-        "derivative_works": works(value.get("derivative_works"), 20),
+        "priorWorks": works(value.get("prior_works"), 20),
+        "derivativeWorks": works(value.get("derivative_works"), 20),
         "stats": stats,
     }
 
@@ -1266,6 +1368,25 @@ def _public_citation_graph(value: Any) -> dict[str, Any] | None:
     return public
 
 
+def _public_answer_summary(value: Any, *, depth: int = 0) -> Any:
+    """Bounded, JSON-safe copy of ``state["answer_summary"]`` (``None`` when absent or not a dict)."""
+
+    if depth == 0:
+        return _public_answer_summary(dict(value), depth=1) if isinstance(value, Mapping) and value else None
+    if isinstance(value, Mapping):
+        return {
+            _safe_text(key, 60): _public_answer_summary(item, depth=depth + 1)
+            for key, item in list(value.items())[:48]
+        } if depth < 7 else None
+    if isinstance(value, (list, tuple)):
+        return [_public_answer_summary(item, depth=depth + 1) for item in list(value)[:64]] if depth < 7 else None
+    if isinstance(value, str):
+        return _safe_text(value, 2000)
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value
+    return None
+
+
 def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> RunResult:
     papers: list[PaperDTO] = []
     for paper in state.get("selected_papers", []) or []:
@@ -1283,6 +1404,7 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
         papers=papers,
         report=report_content,
         reportId=_report_id_from_state(state) if report_valid else None,
+        answerSummary=_public_answer_summary(state.get("answer_summary")) if report_valid else None,
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
         citationGraph=_public_citation_graph(state.get("citation_graph")),
         answer=_safe_answer(answer or (report_content if report_valid else None), 100_000)
@@ -1668,6 +1790,9 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
     elif node == "citation_graph" and "citation_graph" in update:
         facts.update(_citation_graph_facts(update))
 
+    elif node == "answer_followup" and "followup_sources" in update:
+        facts["sources"] = [_safe_text(item, 80) for item in _sequence_items(update.get("followup_sources"))[:12]]
+
     elif node == "final_report" and "final_report" in update:
         status = str(update.get("status") or state.get("status") or "").lower()
         report_available = _valid_report(update.get("final_report")) and status not in {"error", "failed"}
@@ -1794,6 +1919,10 @@ def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
         clean["reportAvailable"] = facts["reportAvailable"]
 
     clean.update(_sanitize_stage_facts(facts))
+    if isinstance(facts.get("sources"), (list, tuple)):
+        sources = [_safe_text(item, 80) for item in list(facts["sources"])[:12] if isinstance(item, str) and item.strip()]
+        if sources:
+            clean["sources"] = sources
 
     timings = _numeric_timings(facts.get("timings")) if isinstance(facts.get("timings"), Mapping) else {}
     if timings:
@@ -1855,6 +1984,11 @@ class _RunRecord:
     trace_events: list[TraceEvent] = field(default_factory=list)
     started_at: datetime = field(default_factory=_now)
     updated_at: datetime = field(default_factory=_now)
+    finished_at: datetime | None = None            # set by set_terminal (measured wall time)
+    # Loaded from disk: the public result and the private follow-up context of a
+    # finished run whose graph state is gone.
+    stored_result: "RunResult | None" = None
+    stored_followup: dict[str, Any] | None = None
     started_nodes: set[str] = field(default_factory=set)
     completed_nodes: set[str] = field(default_factory=set)
     task_stream_seen: bool = False
@@ -1883,6 +2017,93 @@ class _ThreadRecord:
     artifacts: list[ArtifactDTO] = field(default_factory=list)
 
 
+def _record_result(record: "_RunRecord") -> RunResult:
+    """Public result of a run: from disk for a loaded run, else from its state.
+
+    ``answerSummary.durationSec`` is overwritten with the measured wall time once
+    the run has finished (the graph only estimates it).
+    """
+
+    if record.stored_result is not None:
+        return record.stored_result
+    result = _result_from_state(record.state, answer=record.assistant_answer)
+    if result.answer_summary is not None and record.finished_at is not None:
+        result.answer_summary["durationSec"] = max(0, int(round((record.finished_at - record.started_at).total_seconds())))
+    return result
+
+
+# Budgets of the stored follow-up context (the node trims again per question).
+_FOLLOWUP_REPORT_CHARS = 150_000
+_FOLLOWUP_TABLES_PER_PAPER = 40
+_FOLLOWUP_TABLE_ROWS = 40
+_FOLLOWUP_RELATED = 60
+
+
+def _followup_context_from_state(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Private, bounded context for the ``followup`` intent from a finished run's state.
+
+    Holds the report id and Markdown, each paper's structured notes and tables,
+    and the related-papers map.  It never leaves the server: it is not part of
+    any DTO.  ``None`` when the run has no valid report.
+    """
+
+    report_value = state.get("final_report")
+    status = str(state.get("status") or "").lower()
+    if not _valid_report(report_value) or status in {"error", "failed"}:
+        return None
+    report_id = _report_id_from_state(state)
+    report_text = ""
+    if report_id:
+        try:
+            report_text = _safe_report_path(report_id).read_text(encoding="utf-8")
+        except (OSError, HTTPException):
+            report_text = ""
+    report_text = (report_text or str(report_value))[:_FOLLOWUP_REPORT_CHARS]
+    papers: list[dict[str, Any]] = []
+    for paper in _sequence_items(state.get("selected_papers"))[:12]:
+        raw = _model_dump(paper)
+        if not isinstance(raw, Mapping):
+            continue
+        notes = raw.get("notes") if isinstance(raw.get("notes"), Mapping) else {}
+        tables = []
+        for table in _sequence_items(raw.get("tables"))[:_FOLLOWUP_TABLES_PER_PAPER]:
+            if isinstance(table, Mapping):
+                tables.append({
+                    "label": _safe_text(table.get("label"), 40),
+                    "caption": _safe_text(table.get("caption"), 300),
+                    "rows": [
+                        [_safe_text(cell, 80) for cell in row[:12]]
+                        for row in _sequence_items(table.get("rows"))[:_FOLLOWUP_TABLE_ROWS] if isinstance(row, list)
+                    ],
+                })
+        papers.append({
+            "paperId": _safe_text(raw.get("paper_id"), 260),
+            "arxivId": _safe_text(raw.get("arxiv_id"), 80),
+            "title": _safe_text(raw.get("title"), 400),
+            "published": _safe_text(raw.get("published"), 40),
+            "methodName": _safe_text(notes.get("method_name"), 120),
+            "notes": {
+                key: _model_dump(notes.get(key))
+                for key in ("problem", "method", "result", "limitation", "intuition", "insights", "eval_settings", "setup")
+                if notes.get(key) not in (None, "", [])
+            },
+            "tables": tables,
+        })
+    graph = state.get("citation_graph")
+    similarity = graph.get("similarity") if isinstance(graph, Mapping) else None
+    related: list[dict[str, Any]] = []
+    for node in _sequence_items(similarity.get("nodes") if isinstance(similarity, Mapping) else None)[:_FOLLOWUP_RELATED]:
+        if isinstance(node, Mapping) and node.get("title"):
+            related.append({
+                "title": _safe_text(node.get("title"), 300),
+                "abstract": _safe_text(node.get("abstract"), 1500),
+                "year": node.get("year") if isinstance(node.get("year"), int) else None,
+                "firstAuthor": _safe_text(node.get("first_author"), 120),
+                "arxivId": _safe_text(node.get("arxiv_id"), 40),
+            })
+    return {"reportId": report_id, "reportText": report_text, "papers": papers, "related": related}
+
+
 class ActiveRunError(RuntimeError):
     """Raised when the one-workflow-at-a-time gate is occupied."""
 
@@ -1894,9 +2115,11 @@ class ActiveRunError(RuntimeError):
 class RunRegistry:
     """Thread-safe in-memory snapshots and append-only event history."""
 
-    def __init__(self) -> None:
+    def __init__(self, persist_dir: Path | None = None) -> None:
         self.lock = threading.RLock()
         self.condition = threading.Condition(self.lock)
+        # ``None`` keeps the registry purely in memory (tests, library use).
+        self.persist_dir = persist_dir
         self.runs: dict[str, _RunRecord] = {}
         self.threads: dict[str, _ThreadRecord] = {}
         # Compatibility alias useful to small integration tests and callers.
@@ -1943,6 +2166,7 @@ class RunRegistry:
             record = _ThreadRecord(thread_id=thread_id, title=clean_title)
             self.threads[thread_id] = record
             self.condition.notify_all()
+            self._persist_thread_unlocked(record)
             return record
 
     def get_thread(self, thread_id: str) -> _ThreadRecord | None:
@@ -2000,7 +2224,7 @@ class RunRegistry:
             # Reuse the public result projection so an error-handler notice or
             # report placeholder cannot be published as a normal
             # assistant artifact in thread history.
-            public_result = _result_from_state(record.state, answer=record.assistant_answer)
+            public_result = _record_result(record)
             answer = public_result.answer or ""
             report_id = public_result.report_id
             if not answer and not report_id:
@@ -2065,20 +2289,32 @@ class RunRegistry:
                 if run_id in self.runs and self.runs[run_id].status in {"success", "degraded"}
             ][-8:]
             for run_index, record in enumerate(reversed(completed), 1):
-                papers = record.state.get("selected_papers") or []
+                papers = [_model_dump(paper) for paper in (record.state.get("selected_papers") or [])]
+                report_id = _report_id_from_state(record.state) if record.state else None
+                if not papers and record.stored_followup:
+                    # A run loaded from disk keeps its notes in the follow-up context.
+                    report_id = record.stored_followup.get("reportId")
+                    papers = [
+                        {
+                            "paper_id": item.get("paperId"), "title": item.get("title"), "arxiv_id": item.get("arxivId"),
+                            "notes": item.get("notes"),
+                        }
+                        for item in record.stored_followup.get("papers") or [] if isinstance(item, Mapping)
+                    ]
                 if not papers:
                     continue
                 reference = "Most recent completed research run" if run_index == 1 else "Prior completed research run"
-                lines.append(f"{reference} {record.run_id[:12]}:")
-                for ordinal, paper in enumerate(papers[:12], 1):
-                    raw = _model_dump(paper)
+                report = f"; report_id={report_id}" if report_id else ""
+                lines.append(f"{reference} {record.run_id[:12]}{report}:")
+                for ordinal, raw in enumerate(papers[:12], 1):
                     if not isinstance(raw, Mapping):
                         continue
                     title = _context_text(raw.get("title") or "Untitled paper", 260)
                     arxiv_id = _context_text(raw.get("arxiv_id") or raw.get("arxivId"), 80)
-                    summary = _context_text(raw.get("summary"), 900)
+                    paper_id = _context_text(raw.get("paper_id") or raw.get("paperId"), 120)
+                    summary = _context_text(raw.get("summary"), 600)
                     identifier = f"; arxiv_id={arxiv_id}" if arxiv_id else ""
-                    lines.append(f"{ordinal}. {title}{identifier}")
+                    lines.append(f"{ordinal}. {title}{identifier}; paper_id={paper_id}")
                     if summary:
                         lines.append(f"   Summary: {summary}")
                     notes = _model_dump(raw.get("notes"))
@@ -2086,17 +2322,146 @@ class RunRegistry:
                         for label, key in (
                             ("Problem", "problem"),
                             ("Method", "method"),
+                            ("Intuition", "intuition"),
                             ("Result", "result"),
                             ("Limitation", "limitation"),
                         ):
-                            value = _context_text(notes.get(key), 1200)
+                            value = _context_text(notes.get(key), 800)
                             if value:
                                 lines.append(f"   {label}: {value}")
-                    bibtex = _context_text(raw.get("bibtex"), 1800)
+                        for item in _sequence_items(notes.get("insights"))[:3]:
+                            if isinstance(item, Mapping) and item.get("finding"):
+                                lines.append(f"   Insight: {_context_text(item.get('finding'), 300)}")
+                        setup = notes.get("setup") if isinstance(notes.get("setup"), Mapping) else {}
+                        if setup.get("hardware"):
+                            lines.append(f"   Hardware: {_context_text(setup.get('hardware'), 160)}")
+                    bibtex = _context_text(raw.get("bibtex"), 900)
                     if bibtex:
                         lines.append(f"   BibTeX: {bibtex}")
 
             return "\n".join(lines)[:12_000]
+
+    def followup_context(self, thread_id: str) -> dict[str, Any] | None:
+        """Follow-up context of the thread's newest finished run that has a report."""
+
+        with self.lock:
+            thread = self.threads.get(thread_id)
+            if thread is None:
+                raise KeyError(thread_id)
+            for run_id in reversed(thread.run_ids):
+                record = self.runs.get(run_id)
+                if record is None or record.status not in {"success", "degraded"}:
+                    continue
+                if record.stored_followup is None and record.stored_result is None:
+                    record.stored_followup = _followup_context_from_state(record.state)
+                if record.stored_followup:
+                    return record.stored_followup
+            return None
+
+    # --- persistence: one JSON file per thread -----------------------------------
+
+    def _run_summary_unlocked(self, record: _RunRecord) -> dict[str, Any]:
+        if record.stored_followup is None and record.stored_result is None:
+            record.stored_followup = _followup_context_from_state(record.state)
+        return {
+            "runId": record.run_id,
+            "status": record.status,
+            "provider": record.provider,
+            "model": record.model,
+            "input": record.input.model_dump(mode="json", by_alias=True),
+            "answer": _safe_answer(record.assistant_answer) or None,
+            "error": record.error,
+            "currentNode": record.current_node,
+            "startedAt": record.started_at.isoformat(),
+            "updatedAt": record.updated_at.isoformat(),
+            "finishedAt": record.finished_at.isoformat() if record.finished_at else None,
+            "result": _record_result(record).model_dump(mode="json", by_alias=True),
+            # Private (never in a DTO): lets a follow-up work after a restart.
+            "followupContext": record.stored_followup,
+        }
+
+    def _persist_thread_unlocked(self, thread: _ThreadRecord) -> None:
+        """Write the thread and its finished runs atomically; failures only log."""
+
+        if self.persist_dir is None:
+            return
+        try:
+            self.persist_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "threadId": thread.thread_id,
+                "title": thread.title,
+                "createdAt": thread.created_at.isoformat(),
+                "updatedAt": thread.updated_at.isoformat(),
+                "runIds": [run_id for run_id in thread.run_ids if run_id in self.runs and self.runs[run_id].status in TERMINAL_STATUSES],
+                "messages": [message.model_dump(mode="json", by_alias=True) for message in thread.messages],
+                "artifacts": [artifact.model_dump(mode="json", by_alias=True) for artifact in thread.artifacts],
+                "runs": [
+                    self._run_summary_unlocked(self.runs[run_id])
+                    for run_id in thread.run_ids
+                    if run_id in self.runs and self.runs[run_id].status in TERMINAL_STATUSES
+                ],
+            }
+            target = self.persist_dir / f"{thread.thread_id}.json"
+            temporary = target.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(target)
+        except Exception:
+            logger.exception("Could not persist thread", extra={"thread_id": thread.thread_id})
+
+    def load_threads(self) -> int:
+        """Load persisted threads (call once at startup); returns the thread count.
+
+        A stored run is always terminal.  Its trace events are not stored, so a
+        reloaded run snapshot has an empty ``traceEvents`` list.
+        """
+
+        if self.persist_dir is None or not self.persist_dir.is_dir():
+            return 0
+        loaded = 0
+        for path in sorted(self.persist_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, Mapping) or data.get("version") != 1:
+                    continue
+                thread = _ThreadRecord(
+                    thread_id=str(data["threadId"]),
+                    title=_safe_text(data.get("title"), 160) or "New research",
+                    created_at=datetime.fromisoformat(str(data["createdAt"])),
+                    updated_at=datetime.fromisoformat(str(data["updatedAt"])),
+                    messages=[ThreadMessage.model_validate(item) for item in data.get("messages") or []],
+                    artifacts=[ArtifactDTO.model_validate(item) for item in data.get("artifacts") or []],
+                )
+                restored: dict[str, _RunRecord] = {}
+                for item in data.get("runs") or []:
+                    started = datetime.fromisoformat(str(item["startedAt"]))
+                    record = _RunRecord(
+                        run_id=str(item["runId"]),
+                        input=RunInput.model_validate(item.get("input") or {}),
+                        provider=str(item.get("provider") or ""),
+                        model=str(item.get("model") or ""),
+                        state={},
+                        thread_id=thread.thread_id,
+                        status=item.get("status") if item.get("status") in TERMINAL_STATUSES else "error",
+                        current_node=item.get("currentNode"),
+                        error=item.get("error"),
+                        started_at=started,
+                        updated_at=datetime.fromisoformat(str(item["updatedAt"])),
+                        finished_at=datetime.fromisoformat(item["finishedAt"]) if item.get("finishedAt") else None,
+                        assistant_answer=str(item.get("answer") or ""),
+                        assistant_message_added=True,
+                        stored_result=RunResult.model_validate(item.get("result") or {}),
+                        stored_followup=item.get("followupContext") if isinstance(item.get("followupContext"), dict) else None,
+                    )
+                    restored[record.run_id] = record
+                    thread.run_ids.append(record.run_id)
+                with self.lock:
+                    self.runs.update(restored)
+                    self.threads[thread.thread_id] = thread
+                loaded += 1
+            except Exception:
+                logger.exception("Skipping unreadable thread file", extra={"path": path.name})
+        return loaded
 
     def get(self, run_id: str) -> _RunRecord | None:
         with self.lock:
@@ -2123,7 +2488,7 @@ class RunRegistry:
             status=record.status,
             currentNode=record.current_node,
             traceEvents=list(record.trace_events),
-            result=_result_from_state(record.state, answer=record.assistant_answer),
+            result=_record_result(record),
             error=record.error,
             seq=record.trace_events[-1].seq if record.trace_events else 0,
             progress=current_progress,
@@ -2134,7 +2499,7 @@ class RunRegistry:
         )
 
     def _thread_run_unlocked(self, record: _RunRecord) -> ThreadRunDTO:
-        report_id = _result_from_state(record.state, answer=record.assistant_answer).report_id
+        report_id = _record_result(record).report_id
         return ThreadRunDTO(
             runId=record.run_id,
             status=record.status,
@@ -2199,7 +2564,10 @@ class RunRegistry:
             record.status = status
             record.error = _safe_text(error, 1200) if error else None
             record.updated_at = _now()
+            record.finished_at = record.updated_at
             self.condition.notify_all()
+            if record.thread_id is not None and record.thread_id in self.threads:
+                self._persist_thread_unlocked(self.threads[record.thread_id])
 
     def append_event(
         self,
@@ -2259,7 +2627,7 @@ class RunRegistry:
             return [event for event in record.trace_events if event.seq > seq]
 
 
-run_registry = RunRegistry()
+run_registry = RunRegistry(persist_dir=config.THREADS_DIR)
 # Public alias kept short for callers that want to reset/inspect the registry.
 registry = run_registry
 
@@ -2269,8 +2637,9 @@ def _initial_state(
     raw_inputs: Sequence[str],
     *,
     conversation_context: str = "",
+    followup_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    state = {
         "user_query": query.strip() or "Direct Paper Analysis",
         "raw_inputs": list(raw_inputs),
         "intent": "search",
@@ -2292,6 +2661,11 @@ def _initial_state(
         # unknown channels, while injected graphs can consume them directly.
         "conversation_context": _safe_text(conversation_context, 12_000),
     }
+    if followup_context:
+        # Structured report/notes/tables of the thread's latest finished run;
+        # lets the router choose ``followup`` and ``answer_followup`` answer.
+        state["followup_context"] = dict(followup_context)
+    return state
 
 
 def _graph_stream(graph: Any, initial_state: dict[str, Any], graph_config: dict[str, Any]) -> Iterable[Any]:
@@ -2416,21 +2790,23 @@ def _message_text(message: Any) -> str:
     return ""
 
 
-def _merge_answer(previous: str, incoming: str) -> str:
-    """Merge chunk or final text without duplicating cumulative messages."""
+def _append_followup_chunk(previous: str, incoming: str) -> str:
+    """Append a streamed chunk of the single follow-up call; a cumulative repeat replaces."""
 
     candidate = _safe_stream_text(incoming)
-    if not candidate.strip():
+    if not candidate:
         return previous
-    if not previous:
+    if len(previous) > 8 and candidate.startswith(previous):
         return candidate
-    if candidate == previous or previous.endswith(candidate):
-        return previous
-    if candidate.startswith(previous):
-        return candidate
-    if previous.startswith(candidate):
-        return previous
     return _safe_stream_text(previous + candidate)
+
+
+def _answer_lead(summary: Any) -> str:
+    """The short chat answer: ``lead`` (tldr) of ``answer_summary``."""
+
+    if isinstance(summary, Mapping):
+        return _safe_stream_text(str(summary.get("lead") or summary.get("tldr") or "")).strip()
+    return ""
 
 
 def _task_summary(node: str, completed: bool, failed: bool = False) -> str:
@@ -2608,7 +2984,7 @@ def _append_assistant_completed(
     """Flush a final delta and publish one public completion marker per node."""
 
     node = _public_node(node)
-    if node != "final_report" or node in record.assistant_completed_nodes:
+    if node not in ANSWER_NODES or node in record.assistant_completed_nodes:
         return
     _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
     registry_instance.append_event(
@@ -2681,29 +3057,29 @@ def _execute_run(
             part_type, data = _stream_part(payload)
 
             if part_type == "messages":
+                # Only ``answer_followup`` streams tokens: it makes ONE LLM call.
+                # The report nodes run several LLM calls in parallel; their
+                # tokens would interleave, so they are ignored (the streamed
+                # answer there is the ``lead`` of ``answer_summary``).
                 message, metadata = _message_part(data)
-                node = _message_node(metadata)
-                # LangGraph also forwards internal model/tool messages.  Only
-                # the public answer-producing nodes are allowed through.
-                if node != "final_report":
+                if _message_node(metadata) != "answer_followup":
                     continue
                 text = _message_text(message)
                 if not text:
                     continue
-                merged_answer = _merge_answer(record.assistant_answer, text)
-                if merged_answer == record.assistant_answer:
+                streamed = _append_followup_chunk(record.assistant_answer, text)
+                if streamed == record.assistant_answer:
                     continue
-                registry_instance.set_assistant_answer(run_id, merged_answer)
-                _append_node_started(run_id, node, registry_instance, record)
+                registry_instance.set_assistant_answer(run_id, streamed)
+                _append_node_started(run_id, "answer_followup", registry_instance, record)
                 now = time.monotonic()
-                should_emit = (
+                if (
                     not record.last_answer_event_length
-                    or len(merged_answer) - record.last_answer_event_length >= 256
+                    or len(streamed) - record.last_answer_event_length >= 256
                     or now - record.last_answer_event_at >= 0.15
-                    or merged_answer.endswith((".", "!", "?", "\n"))
-                )
-                if should_emit:
-                    _append_assistant_delta(run_id, node, merged_answer, registry_instance, record)
+                    or streamed.endswith((".", "!", "?", "\n"))
+                ):
+                    _append_assistant_delta(run_id, "answer_followup", streamed, registry_instance, record)
                 continue
 
             if part_type == "tasks":
@@ -2758,7 +3134,7 @@ def _execute_run(
                     timings=_timings_from_mapping(task),
                     emit_updated=False,
                 )
-                if node == "final_report" and not failed:
+                if node in ANSWER_NODES and not failed:
                     _append_assistant_completed(run_id, node, registry_instance, record)
                 continue
 
@@ -2769,6 +3145,18 @@ def _execute_run(
             for node, update in updates:
                 node = _public_node(node or _node_from_logs(update.get("trace_logs")))
                 _merge_state(current_state, update)
+                if node == "answer_followup" and isinstance(update.get("followup_answer"), str):
+                    final_answer = _safe_stream_text(update["followup_answer"]).strip()
+                    if final_answer:
+                        registry_instance.set_assistant_answer(run_id, final_answer)
+                        _append_node_started(run_id, node, registry_instance, record)
+                        _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
+                if node == "final_report":
+                    lead = _answer_lead(update.get("answer_summary"))
+                    if lead:
+                        registry_instance.set_assistant_answer(run_id, lead)
+                        _append_node_started(run_id, node, registry_instance, record)
+                        _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
                 node_failed = str(update.get("status") or current_state.get("status") or "").lower() == "error"
                 registry_instance.set_state(run_id, current_state, current_node=node)
                 if node != "workflow":
@@ -2794,12 +3182,17 @@ def _execute_run(
         current_state = _final_graph_state(graph, graph_config, current_state)
         # Checkpointer values are authoritative for the final DTO, but never
         # expose their raw task input/result payloads.
-        candidate_answer = None if record.assistant_answer else current_state.get("final_report")
+        answer_node = "answer_followup" if current_state.get("intent") == "followup" else "final_report"
+        candidate_answer = None if record.assistant_answer else (
+            current_state.get("followup_answer")
+            or _answer_lead(current_state.get("answer_summary"))
+            or current_state.get("final_report")
+        )
         if candidate_answer:
             registry_instance.set_assistant_answer(run_id, _safe_answer(candidate_answer))
         if candidate_answer or record.assistant_answer:
-            _append_node_started(run_id, "final_report", registry_instance, record)
-            _append_assistant_completed(run_id, "final_report", registry_instance, record)
+            _append_node_started(run_id, answer_node, registry_instance, record)
+            _append_assistant_completed(run_id, answer_node, registry_instance, record)
         registry_instance.set_state(run_id, current_state, current_node=record.current_node)
         state_status = str(current_state.get("status") or "success").lower()
         errors = current_state.get("error_logs") or []
@@ -3098,9 +3491,17 @@ def create_app(
 ) -> FastAPI:
     """Create an API application, allowing tests to inject a fake graph."""
 
-    application = FastAPI(title="Research Scout API", version="1.0")
+    chosen_registry = RunRegistry(persist_dir=config.THREADS_DIR) if registry_instance is None else registry_instance
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Reload persisted conversations when the server starts.
+        chosen_registry.load_threads()
+        yield
+
+    application = FastAPI(title="Research Scout API", version="1.0", lifespan=lifespan)
     application.state.graph_factory = _default_graph_factory if graph_factory is None else graph_factory
-    application.state.run_registry = RunRegistry() if registry_instance is None else registry_instance
+    application.state.run_registry = chosen_registry
 
     application.add_middleware(
         CORSMiddleware,
@@ -3159,7 +3560,12 @@ def create_app(
         conversation_context = registry_instance.thread_context(thread_id)
         provider = resolved_provider(config.DEFAULT_PROVIDER)
         run_input = RunInput(query=query, paperInputs=paper_inputs, pdfNames=pdf_names, fileNames=pdf_names)
-        initial_state = _initial_state(query, raw_inputs, conversation_context=conversation_context)
+        initial_state = _initial_state(
+            query,
+            raw_inputs,
+            conversation_context=conversation_context,
+            followup_context=registry_instance.followup_context(thread_id),
+        )
         try:
             record = registry_instance.create(
                 run_input,

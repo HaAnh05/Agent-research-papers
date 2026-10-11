@@ -15,6 +15,7 @@ from nodes.write_notes import write_notes_node
 from nodes.citation_graph import citation_graph_node
 from nodes.final_report import final_report_node
 from nodes.error_handler import error_handler_node
+from nodes.answer_followup import answer_followup_node
 
 
 # --- CONDITIONAL ROUTING LOGIC ---
@@ -23,6 +24,8 @@ def route_after_router(state: ResearchState) -> str:
     """CE1: route supplied papers directly; all text-only requests search."""
     if state.get("status") == "error":
         return "error_handler"
+    if state.get("intent") == "followup" and state.get("followup_context"):
+        return "answer_followup"
     if state.get("intent") == "direct_read" and state.get("selected_papers"):
         return "read_paper"
     return "search_papers"
@@ -77,6 +80,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     workflow.add_node("citation_graph", citation_graph_node)
     workflow.add_node("final_report", final_report_node)
     workflow.add_node("error_handler", error_handler_node)
+    workflow.add_node("answer_followup", answer_followup_node)
 
     # 2. Build Edges & Conditional Edges
     workflow.add_edge(START, "router")
@@ -88,6 +92,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
         {
             "read_paper": "read_paper",
             "search_papers": "search_papers",
+            "answer_followup": "answer_followup",
             "error_handler": "error_handler",
         },
     )
@@ -124,6 +129,7 @@ def build_research_graph(checkpointer: MemorySaver | None = None):
     workflow.add_edge(PARALLEL_BRANCHES, "final_report")
     workflow.add_edge("final_report", END)
     workflow.add_edge("error_handler", END)
+    workflow.add_edge("answer_followup", END)
 
     # 3. Compile with Checkpointer
     saver = checkpointer or MemorySaver()

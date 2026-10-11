@@ -197,8 +197,8 @@ def test_new_variant_runs_through_builders(variants_dir: Path, tmp_path: Path, m
     )
     assert summary["unavailable"] == {}
     assert summary["meta"]["calls"] == 10 * 3 * 2 and summary["meta"]["failed"] == 0
-    assert len(sent) == 4 * 3  # pmrl, 4 cases, 3 reps
-    assert {s[1] for s in sent} == {"SYS-P"}
+    assert len(sent) == 6 * 3  # pmrl (4 cases) + overview (2 cases), 3 reps
+    assert {s[1] for s in sent} == {"SYS-P", "SYS-O"}
     for entry in summary["stages"].values():
         assert entry["delta_vs_v0"]["new"]["pct"]["output_tokens"]["median"] is not None
     assert "new vs v0" in (tmp_path / "out" / "summary.md").read_text("utf-8")

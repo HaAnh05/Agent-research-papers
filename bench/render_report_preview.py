@@ -32,7 +32,7 @@ if str(ROOT) not in sys.path:      # works under ``python -I``, which drops the 
 from config import config  # noqa: E402
 from nodes import final_report as fr  # noqa: E402
 from nodes.write_notes import PMRLCoreGeneration, analyze_paper_notes  # noqa: E402
-from state import PaperItem  # noqa: E402
+from state import OverviewMulti, OverviewSingle, PaperItem  # noqa: E402
 from text_utils import detect_response_language  # noqa: E402
 from tools.bibtex_generator import generate_bibtex  # noqa: E402
 from tools.html_extractor import extract_html  # noqa: E402
@@ -56,6 +56,7 @@ FAKE_PMRL: Dict[str, Dict[str, Any]] = {
         "result": "Diffuser scores above 100 on all Maze2D sizes, beats prior baselines in multi-task Multi2D and block stacking, and is competitive with the best offline RL methods on D4RL locomotion.",
         "limitation": "Planning needs many denoising steps per plan, so it is slower than a feed-forward policy. Plans are executed open-loop in the maze experiments.",
         "method_name": "Diffuser",
+        "intuition": "Diffuser treats planning as denoising a whole trajectory at once. One-step errors do not compound over the horizon, because every step of the plan is refined together.",
         "insights": [
             {"finding": "Planning is treated as denoising a whole trajectory at once instead of rolling a one-step model forward, so one-step prediction errors do not compound over the horizon.",
              "why_it_matters": "This is what lets it keep working where model-free credit assignment breaks down, as in sparse-reward mazes."},
@@ -96,6 +97,7 @@ FAKE_PMRL: Dict[str, Dict[str, Any]] = {
         "result": "Evaluated with CLIP R-Precision on 153 COCO prompts; the geometry (textureless) variant shows large gaps to reimplemented baselines.",
         "limitation": "Uses a 64x64 diffusion model, so details are coarse. Score distillation tends to give over-saturated, mode-seeking results.",
         "method_name": "DreamFusion",
+        "intuition": "A frozen 2D diffusion model scores renders of a 3D scene from random views. The scene is optimized until every view looks like a sample for the text prompt.",
         "insights": [
             {"finding": "A pretrained 2D diffusion model can act as a differentiable prior for a 3D representation, so no 3D training data is needed.",
              "why_it_matters": "It moves the data bottleneck from 3D assets to the much larger 2D image-text corpora."},
@@ -123,6 +125,7 @@ FAKE_PMRL: Dict[str, Dict[str, Any]] = {
         "result": "Across 15 tasks from 4 benchmarks it outperforms prior behavior cloning methods, with an average success-rate improvement of 46.9%.",
         "limitation": "Inherits behavior cloning limits: it needs demonstrations and is less effective with little data. Inference is slower than a single forward pass.",
         "method_name": "Diffusion Policy",
+        "intuition": "The policy denoises a short action sequence conditioned on observations. A multi-modal action distribution stays intact, because denoising does not average the modes.",
         "insights": [
             {"finding": "Predicting a short sequence of actions and executing part of it (receding horizon) gives smooth, temporally consistent behavior that single-step policies lack.",
              "why_it_matters": "Action-sequence prediction, not only the diffusion formulation, is part of why it works on real robots."},
@@ -155,6 +158,7 @@ FAKE_SECTIONS: Dict[str, str] = {
     "2205.09991": """### Planning with Diffusion for Flexible Behavior Synthesis (arXiv 2205.09991)
 - **Vấn đề**: Các planner học được thường ghép một mô hình động lực học với một bộ tối ưu quỹ đạo riêng. Bộ tối ưu khai thác lỗi của mô hình, và cách này hỏng khi tầm nhìn dài, phần thưởng thưa.
 - **Phương pháp**: Diffuser là mô hình khuếch tán trên toàn bộ quỹ đạo (trạng thái và hành động). Lập kế hoạch là khử nhiễu lặp cả quỹ đạo; một bộ dự đoán return dẫn hướng quá trình, còn inpainting cố định trạng thái đầu hoặc đích.
+  - **Ý tưởng cốt lõi**: Lập kế hoạch là khử nhiễu cả quỹ đạo cùng lúc. Sai số một bước không cộng dồn, vì mọi bước của kế hoạch được tinh chỉnh chung.
 - **Kết quả chính**:
   - **Insight**:
     1. Diffuser khử nhiễu cả quỹ đạo một lần thay vì cuốn chiếu mô hình một bước, nên sai số một bước không cộng dồn theo tầm nhìn. Vì vậy nó vẫn chạy được ở nơi gán công trạng của model-free thất bại, như mê cung phần thưởng thưa.
@@ -170,6 +174,7 @@ FAKE_SECTIONS: Dict[str, str] = {
     "2209.14988": """### DreamFusion: Text-to-3D using 2D Diffusion (arXiv 2209.14988)
 - **Vấn đề**: Tổng hợp text-to-3D cần tập dữ liệu 3D gán nhãn lớn, vốn chưa tồn tại, trong khi mô hình khuếch tán text-to-image rất sẵn.
 - **Phương pháp**: DreamFusion tối ưu một NeRF sao cho ảnh render từ các góc nhìn ngẫu nhiên giống mẫu của mô hình khuếch tán 2D đóng băng. Hàm mất mát score distillation biến mô hình 2D thành prior mà không lan truyền ngược qua nó.
+  - **Ý tưởng cốt lõi**: Một mô hình khuếch tán 2D đóng băng chấm điểm ảnh render của cảnh 3D từ góc ngẫu nhiên. Cảnh 3D được tối ưu đến khi mọi góc nhìn giống một mẫu của prompt.
 - **Kết quả chính**:
   - **Insight**:
     1. Mô hình khuếch tán 2D đã huấn luyện có thể làm prior khả vi cho biểu diễn 3D, nên không cần dữ liệu 3D. Nút thắt dữ liệu chuyển từ tài sản 3D sang kho ảnh-văn bản 2D lớn hơn nhiều.
@@ -183,6 +188,7 @@ FAKE_SECTIONS: Dict[str, str] = {
     "2303.04137": """### Diffusion Policy: Visuomotor Policy Learning via Action Diffusion (arXiv 2303.04137)
 - **Vấn đề**: Behavior cloning khó biểu diễn phân phối hành động đa mode và chuỗi hành động nhiều chiều.
 - **Phương pháp**: Diffusion Policy mô hình hoá policy thị giác-vận động như quá trình khử nhiễu có điều kiện trên một chuỗi hành động ngắn, điều kiện theo quan sát. Bài so sánh denoiser CNN và Transformer, thực thi theo receding horizon.
+  - **Ý tưởng cốt lõi**: Policy khử nhiễu một chuỗi hành động ngắn theo quan sát. Khử nhiễu không lấy trung bình các mode, nên mọi mode hành động đều còn.
 - **Kết quả chính**:
   - **Insight**:
     1. Dự đoán cả chuỗi hành động rồi chỉ thực thi một phần (receding horizon) cho hành vi mượt, nhất quán theo thời gian mà policy một bước không có. Vì vậy phần thành công trên robot thật một phần đến từ dự đoán chuỗi hành động, không chỉ từ khuếch tán.
@@ -196,14 +202,49 @@ FAKE_SECTIONS: Dict[str, str] = {
 """,
 }
 
-FAKE_OVERVIEW = """## 1. Tóm tắt
-- Cả ba bài đều dùng khuếch tán như một cách tinh chỉnh lặp: Diffuser khử nhiễu cả quỹ đạo, Diffusion Policy khử nhiễu một chuỗi hành động, DreamFusion khử nhiễu qua gradient của một prior 2D. Cái chung là sai số một bước không cộng dồn và đầu ra không bị ép về một mode.
-- Chỗ khác nhau là điều kiện nằm ở đâu: Diffuser đưa đích vào lúc test bằng inpainting và guidance, Diffusion Policy điều kiện theo quan sát lúc huấn luyện, DreamFusion không có dữ liệu 3D mà mượn prior 2D. Vì chỉ số, bộ dữ liệu và đơn vị khác nhau, không xếp hạng ba bài với nhau.
-
-## 3. Kết luận
-- Chọn Diffuser khi cần planning tầm dài hoặc đổi đích lúc test, Diffusion Policy khi có demonstration và cần hành vi mượt trên robot thật.
-- Còn mở: chi phí suy luận của nhiều bước khử nhiễu và đánh giá closed-loop trên robot thật.
-"""
+# FAKE overview JSON (what the structured overview call would plausibly return).
+FAKE_OVERVIEW_MULTI: Dict[str, Any] = {
+    "tldr": "Cả ba bài dùng khuếch tán như một cách tinh chỉnh lặp. Chỗ khác nhau là điều kiện nằm ở đâu: lúc test, lúc huấn luyện hay qua một mô hình 2D đóng băng.",
+    "insights": [
+        {"finding": "Khuếch tán khử nhiễu cả một cấu trúc cùng lúc, không cuốn chiếu từng bước.",
+         "why": "Diffuser khử nhiễu cả quỹ đạo và Diffusion Policy khử nhiễu một chuỗi hành động, nên sai số một bước không cộng dồn."},
+        {"finding": "Điều kiện nằm ở thời điểm khác nhau trong mỗi bài.",
+         "why": "Diffuser đưa đích vào lúc test bằng inpainting; Diffusion Policy điều kiện theo quan sát lúc huấn luyện; DreamFusion dùng gradient từ mô hình 2D đóng băng."},
+    ],
+    "papers": [
+        {"paperId": "arxiv_2205.09991", "intuition": "Lập kế hoạch là khử nhiễu cả quỹ đạo cùng lúc.",
+         "keyResult": "Diffuser vượt 100 điểm trên mọi cỡ Maze2D."},
+        {"paperId": "arxiv_2209.14988", "intuition": "Tối ưu một NeRF sao cho mọi góc nhìn giống mẫu của mô hình khuếch tán 2D.",
+         "keyResult": "Không cần dữ liệu 3D; R-Precision màu cao nhưng hình học cần thước đo riêng."},
+        {"paperId": "arxiv_2303.04137", "intuition": "Khử nhiễu một chuỗi hành động ngắn theo quan sát.",
+         "keyResult": "Push-T thật đạt 0,95 so với 0,20 của LSTM-GMM."},
+    ],
+    "takeaway": "Chọn Diffuser khi cần planning tầm dài. Chọn Diffusion Policy khi có demonstration và cần hành vi mượt trên robot thật.",
+}
+FAKE_OVERVIEW_SINGLE: Dict[str, Any] = {
+    "tldr": "Diffusion Policy mô hình hoá policy robot như quá trình khử nhiễu một chuỗi hành động. Nhờ vậy policy giữ được nhiều mode hành động mà behavior cloning thường làm mất.",
+    "problem": "Behavior cloning khó biểu diễn phân phối hành động đa mode và chuỗi hành động nhiều chiều.",
+    "intuition": "Policy khử nhiễu một chuỗi hành động ngắn theo quan sát. Khử nhiễu không lấy trung bình các mode, nên mọi mode đều còn.",
+    "keyResults": [
+        "Push-T thật: Diffusion Policy đạt success 0,95, LSTM-GMM đạt 0,20.",
+        "Push-T thật: IoU đạt 0,80, LSTM-GMM đạt 0,25.",
+        "Robomimic ToolHang: success max/trung bình 1,00/0,87, LSTM-GMM đạt 0,67/0,31.",
+    ],
+    "metrics": [
+        {"name": "Success rate", "meaning": "Tỷ lệ episode hoàn thành tác vụ.", "higherIsBetter": True},
+        {"name": "IoU", "meaning": "Mức chồng lấp giữa khối T cuối cùng và vị trí đích.", "higherIsBetter": True},
+    ],
+    "setup": [
+        "Datasets: Robomimic, Push-T, Block Push, Franka Kitchen và ba tác vụ robot thật.",
+        "Huấn luyện: batch 256 (state) và 64 (ảnh), DDIM 16 bước trên robot thật.",
+        "Hardware: Nvidia 3080 GPU.",
+    ],
+    "caveats": [
+        "Bảng 1 lấy số baseline từ nhiều nguồn, chạy lại hoặc từ bài gốc.",
+        "Một số đánh giá robomimic chỉ dùng 22 lần khởi tạo do lỗi mã đánh giá.",
+    ],
+    "takeaway": "Thử CNN backbone trước. Chuyển sang Transformer khi hành động đổi đột ngột.",
+}
 
 
 class _Message:
@@ -216,8 +257,13 @@ class _Structured:
         self._llm, self._schema = llm, schema
 
     def invoke(self, payload: Any) -> Any:
-        assert self._schema is PMRLCoreGeneration, "the preview only fakes the PMRL structured call"
-        return PMRLCoreGeneration.model_validate(self._llm.pmrl_for(_user_text(payload)))
+        if self._schema is PMRLCoreGeneration:
+            return PMRLCoreGeneration.model_validate(self._llm.pmrl_for(_user_text(payload)))
+        if self._schema is OverviewMulti:
+            return OverviewMulti.model_validate(FAKE_OVERVIEW_MULTI)
+        if self._schema is OverviewSingle:
+            return OverviewSingle.model_validate(FAKE_OVERVIEW_SINGLE)
+        raise AssertionError("the preview only fakes the PMRL and overview structured calls")
 
 
 def _user_text(payload: Any) -> str:
@@ -241,8 +287,6 @@ class FakeLLM:
         user = _user_text(payload)
         if "Write the analysis block for this paper now." in user:
             return _Message(FAKE_SECTIONS[self._arxiv_id(user)])
-        if "Write these two sections:" in user:
-            return _Message(FAKE_OVERVIEW)
         raise AssertionError("unexpected fake LLM call")
 
 
@@ -279,8 +323,23 @@ def render(out: Path) -> str:
 
     title = fr.report_title(QUERY, papers)
     blocks = [fr._write_paper_section(llm, paper, i, QUERY, language)[0] for i, paper in enumerate(papers, 1)]
-    overview, _ = fr._write_overview(llm, QUERY, title, language, papers)
+    overview_data, _ = fr._write_overview(llm, QUERY, title, language, papers)
+    overview = fr.render_overview_sections(overview_data, papers, language)
     report = fr._assemble_parallel_report(title, language, papers, blocks, overview)
+    # answerSummary: several papers, then one paper (Diffusion Policy)
+    graph = {"nodes": [], "edges": [], "similarity": {"nodes": [{"id": "W1"}] * 12, "prior_works": [
+        {"id": "W9", "title": "Denoising Diffusion Probabilistic Models"}, {"id": "W8", "title": "Score-Based Generative Modeling through SDEs"}]}}
+    timings = {"read_paper": {"durationMs": 9000}, "write_notes": {"durationMs": 60000}, "final_report": {"durationMs": 90000}}
+    multi = fr.build_answer_summary(papers, overview_data, language, citation_graph=graph, node_timings=timings, report_id="report_preview.md")
+    single_paper = next(p for p in papers if p.arxiv_id == "2303.04137")
+    single_overview, _ = fr._write_overview(llm, QUERY, title, language, [single_paper])
+    single = fr.build_answer_summary([single_paper], single_overview, language, citation_graph=graph, node_timings=timings, report_id="report_preview.md")
+    print("answerSummary (multi):", json.dumps(multi, ensure_ascii=False, indent=2))
+    print("answerSummary (single):", json.dumps(single, ensure_ascii=False, indent=2))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.with_suffix(".answer_summary.json").write_text(
+        json.dumps({"multi": multi, "single": single}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     banner = "<!-- PREVIEW: PMRL output and section text are FAKE (hand-written); tables, hardware line and layout come from the real code. -->\n\n"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(banner + report, encoding="utf-8")

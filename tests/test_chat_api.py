@@ -64,7 +64,7 @@ class V2Graph:
         yield {"type": "messages", "data": (SimpleNamespace(content="safe answer"), {"langgraph_node": "internal_node"})}
         yield {"type": "messages", "data": (SimpleNamespace(content="safe answer"), {"langgraph_node": "final_report"})}
         yield {"type": "tasks", "data": {"id": "t1", "name": "final_report", "result": {"private": "RAW_TASK_RESULT"}}}
-        yield {"type": "updates", "data": {"final_report": {"final_report": "# Safe report", "status": "success"}}}
+        yield {"type": "updates", "data": {"final_report": {"final_report": "# Safe report", "status": "success", "answer_summary": {"kind": "single", "lead": "safe answer", "blocks": []}}}}
 
 
 @pytest.mark.asyncio
