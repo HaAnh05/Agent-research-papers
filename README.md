@@ -70,13 +70,15 @@ uvicorn api:app --port 8000
 
 ## UI
 
-- `/` — Landing tối giản với một composer nhận topic, ArXiv ID/URL và PDF hợp lệ.
-- `/run/:id` — Pipeline semantic khi run đang chạy; chỉ sau snapshot hoàn tất mới thay bằng PMRL Results.
-- `/library` và `/library/:reportId` — route tương thích cũ, redirect về Landing vì UI hiện tại không có dashboard/library shell.
+Một màn hình chat duy nhất (spec ngắn trong [`DESIGN.md`](DESIGN.md)):
+
+- Landing "Bạn muốn hiểu điều gì?" với một composer nhận topic, ArXiv ID/URL hoặc PDF; khi gửi, composer chuyển xuống thanh chat.
+- Mỗi run có một dòng tiến độ mở rộng được: 5 stage với mô tả, facts đo thật và thời gian; ba stage phân tích chạy "song song".
+- Câu trả lời dựng từ `result.answerSummary` (các block); có nút Tải `report.md`, Sao chép BibTeX, Bản đồ liên quan.
+- Panel bên phải hiện đồ thị bài liên quan (`citationGraph.similarity`) với tab Tương tự / Nền tảng / Kế thừa; từ một bài có thể "Hỏi về bài này" hoặc "Phân tích bài này".
+- Xem UI không cần backend: `cd frontend && npm run dev`, mở <http://localhost:5173/?mock=1> (dữ liệu mẫu, chỉ có ở dev server).
 
 Trace chỉ chứa operational metadata và summary đã có trong state; API không trả raw prompt, credential, local PDF path, extracted PDF text hoặc chain-of-thought.
-
-Pipeline dùng Task Rows, Activity disclosure và factual count chips lấy từ trace thật; không hiển thị Thinking/agent shell hay progress giả. Bản đồ các primitive được dùng nằm trong [`docs/beautiful-ui-component-map.md`](docs/beautiful-ui-component-map.md); copyright notice và license nằm trong `frontend/NOTICE`.
 
 ## API
 
@@ -120,12 +122,10 @@ python main.py --inputs "1706.03762" "2005.14165"
 
 cd frontend
 npm run typecheck
-npm test
 npm run build
-npm run test:e2e
 ```
 
-Backend tests dùng fake graph để kiểm event order/reconnect, single-run gate, upload validation, DTO masking, report traversal và Z.AI JSON validation. Frontend tests kiểm navigation, composer validation, SSE reconciliation, trace, Markdown/GFM/KaTeX, result states và mocked desktop/mobile workflow.
+Backend tests dùng fake graph để kiểm event order/reconnect, single-run gate, upload validation, DTO masking, report traversal và Z.AI JSON validation.
 
 ## Cấu trúc chính
 
