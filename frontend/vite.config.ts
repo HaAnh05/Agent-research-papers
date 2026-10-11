@@ -19,6 +19,8 @@ export default defineConfig({
   // package tree. The production build still bundles all dependencies.
   optimizeDeps: {
     noDiscovery: true,
+    // CommonJS packages below react-markdown (style-to-js, ...) must be pre-bundled for the dev server.
+    include: ['react', 'react-dom/client', 'react/jsx-dev-runtime', 'react-markdown', 'remark-gfm'],
   },
   build: {
     outDir: 'dist',
