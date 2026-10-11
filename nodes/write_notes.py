@@ -385,33 +385,16 @@ def _run_notes_in_parallel(
 
 
 def write_notes_node(state: ResearchState) -> Dict[str, Any]:
-    """Create or finalize detailed PMRL notes."""
+    """Create detailed PMRL notes (one LLM call per paper, run in parallel).
+
+    This node runs next to ``citation_graph`` and ``web_enrich`` after
+    ``read_paper``.  It does not return ``selected_papers``: the notes go to
+    ``paper_notes`` (keyed by paper id) and ``final_report`` joins them.
+    """
 
     papers = list(state.get("selected_papers", []) or [])
     started = time.perf_counter()
     logs = [f"[write_notes] Tạo PMRL cho {len(papers)} bài"]
-
-    # web_enrich performs independent GitHub + PMRL work in its bounded pool;
-    # retain this node in the graph and consume those prepared notes.
-    precomputed = [
-        paper
-        for paper in papers
-        if paper.notes is not None and paper.processing_metadata.get("pmrl_precomputed")
-    ]
-    if len(precomputed) == len(papers):
-        analyzed = [copy.deepcopy(paper) for paper in papers]
-        for paper in analyzed:
-            if paper.notes_quality == "invalid":
-                logs.append(f"[write_notes] {paper.paper_id}: PMRL fallback")
-            else:
-                logs.append(f"[write_notes] {paper.paper_id}: PMRL ready")
-        timing = {
-            "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
-            "llmMs": 0,
-            "reused": True,
-            "papers": {paper.paper_id: paper.processing_metadata.get("pmrl", {}) for paper in analyzed},
-        }
-        return {"selected_papers": analyzed, "trace_logs": logs, "node_timings": {"write_notes": timing}}
 
     llm: Any | None = None
     try:
@@ -427,8 +410,18 @@ def write_notes_node(state: ResearchState) -> Dict[str, Any]:
         "llmMs": total_llm_ms,
         "papers": paper_timings,
     }
+    paper_notes: Dict[str, Dict[str, Any]] = {}
+    for paper in analyzed:
+        metadata = paper.processing_metadata or {}
+        paper_notes[paper.paper_id] = {
+            "notes": paper.notes,
+            "notes_quality": paper.notes_quality,
+            "processing_metadata": {
+                key: metadata[key] for key in ("pmrl", "evalSettings") if key in metadata
+            },
+        }
     return {
-        "selected_papers": analyzed,
+        "paper_notes": paper_notes,
         "trace_logs": logs,
         "error_logs": errors,
         "node_timings": {"write_notes": timing},

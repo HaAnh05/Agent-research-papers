@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import TypedDict
 
 from config import config, provider_is_configured, resolved_provider
@@ -69,6 +69,26 @@ class TraceFacts(TypedDict, total=False):
     noteFallbackPaperIds: list[str]
     reportAvailable: bool
     reportId: str
+    # Stage facts (chat UI).  ``paperFacts`` holds one allowlisted dict per
+    # paper; the scalar keys are totals over those papers.
+    paperFacts: list[dict[str, Any]]
+    source: str                # read_paper: ar5iv | arxiv_html | pdf | mixed | unknown
+    tableCount: int            # read_paper
+    referenceCount: int        # read_paper
+    hardwareFoundCount: int    # read_paper: papers whose text names GPU/TPU hardware
+    insightCount: int          # write_notes
+    evalSettings: dict[str, int]  # write_notes: proposed / kept / dropped
+    hardwareStatedCount: int   # write_notes: papers with grounded hardware
+    seeds: int                 # citation_graph
+    pool: int
+    nodeCount: int
+    edgeCount: int
+    graphStatus: str
+    refsTotal: int
+    refsResolved: int
+    durationMs: int
+    repoSource: str            # web_enrich: html | github_search | none | mixed
+    sectionCount: int          # final_report: "## " headings in the report
     # Numeric measurements emitted by nodes/tools.  Keys are an allowlisted
     # timing name (for example ``llm`` or ``github.search``), never a prompt,
     # URL, cache path, or provider payload.
@@ -92,6 +112,11 @@ class TraceEvent(APIModel):
     node: str
     label: str
     kind: str = "workflow"
+    # Filled from ``node`` when omitted: a one-line description, the chat-UI
+    # stage number (1-5, ``None`` for topic-run nodes) and the parallel group.
+    description: str | None = None
+    stage: int | None = None
+    parallel_group: str | None = Field(default=None, alias="parallelGroup")
     status: str = "running"
     summary: str = ""
     details: str | None = None
@@ -108,7 +133,18 @@ class TraceEvent(APIModel):
     duration_ms: int | None = Field(default=None, alias="durationMs", ge=0)
     timings: dict[str, int] = Field(default_factory=dict)
     timestamp: datetime
+
     progress: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _fill_stage_fields(self) -> "TraceEvent":
+        if self.description is None:
+            self.description = NODE_DESCRIPTIONS.get(self.node)
+        if self.stage is None:
+            self.stage = NODE_STAGES.get(self.node)
+        if self.parallel_group is None:
+            self.parallel_group = NODE_PARALLEL_GROUPS.get(self.node)
+        return self
 
 
 class RunInput(APIModel):
@@ -274,16 +310,48 @@ class ThreadSnapshot(ThreadSummary):
 
 
 NODE_LABELS: dict[str, str] = {
-    "router": "Router",
-    "search_papers": "ArXiv search",
-    "eval_search": "Relevance evaluation",
-    "refine_query": "Refined query",
-    "read_paper": "PDF parsing",
-    "web_enrich": "GitHub and BibTeX enrichment",
-    "write_notes": "PMRL notes",
-    "citation_graph": "Citation graph",
-    "final_report": "Final report",
-    "error_handler": "Error handler",
+    "router": "Phân tích yêu cầu",
+    "search_papers": "Tìm bài trên arXiv",
+    "eval_search": "Đánh giá độ liên quan",
+    "refine_query": "Tinh chỉnh truy vấn",
+    "read_paper": "Đọc toàn văn",
+    "write_notes": "Ghi chú có cấu trúc",
+    "citation_graph": "Dựng bản đồ liên quan",
+    "web_enrich": "Tìm mã nguồn và BibTeX",
+    "final_report": "Viết báo cáo",
+    "error_handler": "Xử lý lỗi",
+}
+
+# One short description line per node, shown under the label.
+NODE_DESCRIPTIONS: dict[str, str] = {
+    "router": "Xác định đầu vào là bài báo hay chủ đề",
+    "search_papers": "Tìm ứng viên trên arXiv",
+    "eval_search": "Chọn bài phù hợp nhất",
+    "refine_query": "Viết lại truy vấn khi kết quả chưa đạt",
+    "read_paper": "Trích xuất bảng và tài liệu tham khảo",
+    "write_notes": "Rút vấn đề, phương pháp, kết quả, hạn chế",
+    "citation_graph": "Tìm bài nền tảng và bài kế thừa",
+    "web_enrich": "Tìm repository chính thức và tạo BibTeX",
+    "final_report": "Tổng hợp báo cáo Markdown",
+    "error_handler": "Dừng run và báo lỗi",
+}
+
+# The five chat-UI progress stages.  One node = one stage ("Đọc toàn văn" and
+# "Trích xuất bảng và tài liệu tham khảo" are the label and description of the
+# single ``read_paper`` stage; its facts carry the table/reference counts).
+# Nodes absent here (router, search, eval, refine, error_handler) are not stages.
+# ``parallelGroup`` marks the three stages that run at the same time.
+NODE_STAGES: dict[str, int] = {
+    "read_paper": 1,
+    "write_notes": 2,
+    "citation_graph": 3,
+    "web_enrich": 4,
+    "final_report": 5,
+}
+NODE_PARALLEL_GROUPS: dict[str, str] = {
+    "write_notes": "analysis",
+    "citation_graph": "analysis",
+    "web_enrich": "analysis",
 }
 
 NODE_KINDS: dict[str, str] = {
@@ -1286,6 +1354,11 @@ def _merge_state(target: dict[str, Any], update: Mapping[str, Any]) -> None:
                 target[key] = list(value)
             else:
                 target[key] = current + list(value)
+        elif key in {"paper_notes", "paper_enrichment"} and isinstance(value, Mapping):
+            # Parallel branches write per-paper dicts under their own keys
+            # (``operator.or_`` in ResearchState).
+            current = target.get(key)
+            target[key] = {**(current if isinstance(current, Mapping) else {}), **value}
         elif key == "node_timings" and isinstance(value, Mapping):
             current = target.get(key)
             merged_timings = dict(current) if isinstance(current, Mapping) else {}
@@ -1316,7 +1389,7 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
     if node == "read_paper":
         return f"Parsed {len(state.get('selected_papers') or [])} paper(s)"
     if node == "web_enrich":
-        return f"Enriched {len(state.get('selected_papers') or [])} paper(s)"
+        return f"Looked up repositories and BibTeX for {len(state.get('selected_papers') or [])} paper(s)"
     if node == "write_notes":
         return f"Created PMRL notes for {len(state.get('selected_papers') or [])} paper(s)"
     if node == "citation_graph":
@@ -1357,13 +1430,12 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
     if node == "read_paper":
         return {"paperCount": len(state.get("selected_papers") or [])}
     if node == "web_enrich":
-        papers = state.get("selected_papers") or []
-        repo_count = 0
-        for paper in papers:
-            raw = _model_dump(paper)
-            if isinstance(raw, Mapping):
-                repo_count += len(raw.get("github_repos") or [])
-        return {"paperCount": len(papers), "repositoryCount": repo_count}
+        enrichment = update.get("paper_enrichment")
+        enrichment = enrichment if isinstance(enrichment, Mapping) else {}
+        repo_count = sum(
+            int(entry.get("repo_count") or 0) for entry in map(_model_dump, enrichment.values()) if isinstance(entry, Mapping)
+        )
+        return {"paperCount": len(state.get("selected_papers") or []), "repositoryCount": repo_count}
     if node == "write_notes":
         return {"paperCount": len(state.get("selected_papers") or [])}
     if node == "citation_graph":
@@ -1385,6 +1457,162 @@ def _step_details(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
     if node == "error_handler":
         return {"message": _safe_text(state.get("error_message"), 800)}
     return {}
+
+
+_SOURCE_VALUES = frozenset({"ar5iv", "arxiv_html", "pdf", "mixed", "unknown"})
+_SECTION_FACT_KEYS = ("abstract", "methodology", "setup", "experiments", "limitations")
+_HARDWARE_RE = re.compile(
+    r"(?:\b\d+\s*[x×]\s*)?(?:NVIDIA\s+)?\b(?:A100|H100|H200|V100|A6000|RTX\s?\d{4}|TPU\s?v?\d\w*|GPUs?|TPUs?)\b",
+    re.IGNORECASE,
+)
+
+
+def _hardware_mention(sections: Any) -> str:
+    """First GPU/TPU mention in the setup/experiments text (<= 60 chars), else empty."""
+
+    if not isinstance(sections, Mapping):
+        return ""
+    for key in ("setup", "experiments", "methodology"):
+        text = str(sections.get(key) or "")
+        match = _HARDWARE_RE.search(text)
+        if match:
+            start = max(0, match.start() - 12)
+            return " ".join(text[start:match.end() + 24].split())[:60]
+    return ""
+
+
+def _combined_source(values: list[str]) -> str:
+    unique = {value for value in values if value in _SOURCE_VALUES}
+    if not unique:
+        return "unknown"
+    return next(iter(unique)) if len(unique) == 1 else "mixed"
+
+
+def _read_paper_facts(papers: Any) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for paper in _sequence_items(papers):
+        raw = _model_dump(paper)
+        if not isinstance(raw, Mapping):
+            continue
+        quality = raw.get("source_quality") if isinstance(raw.get("source_quality"), Mapping) else {}
+        source = str(quality.get("source") or "unknown")
+        sections = raw.get("sections") if isinstance(raw.get("sections"), Mapping) else {}
+        hardware = _hardware_mention(sections)
+        items.append({
+            "paperId": _public_identifier(raw.get("paper_id")) or "",
+            "source": source if source in _SOURCE_VALUES else "unknown",
+            "sectionChars": {key: len(str(sections.get(key) or "")) for key in _SECTION_FACT_KEYS},
+            "tableCount": len(_sequence_items(raw.get("tables"))),
+            "referenceCount": len(_sequence_items(raw.get("references"))),
+            "hardwareFound": bool(hardware),
+            "hardware": hardware,
+        })
+    if not items:
+        return {}
+    return {
+        "paperFacts": items,
+        "source": _combined_source([item["source"] for item in items]),
+        "tableCount": sum(item["tableCount"] for item in items),
+        "referenceCount": sum(item["referenceCount"] for item in items),
+        "hardwareFoundCount": sum(1 for item in items if item["hardwareFound"]),
+    }
+
+
+def _write_notes_facts(paper_notes: Any) -> dict[str, Any]:
+    if not isinstance(paper_notes, Mapping):
+        return {}
+    items: list[dict[str, Any]] = []
+    totals = {"proposed": 0, "kept": 0, "dropped": 0}
+    insight_total = 0
+    for paper_id, entry in list(paper_notes.items())[:64]:
+        data = _model_dump(entry)
+        if not isinstance(data, Mapping):
+            continue
+        notes = data.get("notes") if isinstance(data.get("notes"), Mapping) else {}
+        metadata = data.get("processing_metadata") if isinstance(data.get("processing_metadata"), Mapping) else {}
+        stats = metadata.get("evalSettings") if isinstance(metadata.get("evalSettings"), Mapping) else {}
+        setup = notes.get("setup") if isinstance(notes.get("setup"), Mapping) else {}
+        insights = len([item for item in _sequence_items(notes.get("insights")) if isinstance(item, Mapping) and str(item.get("finding") or "").strip()])
+        counts = {name: _nonnegative_int(stats.get(name)) or 0 for name in totals}
+        hardware = bool(str(setup.get("hardware") or "").strip())
+        items.append({
+            "paperId": _public_identifier(paper_id) or "",
+            "insightCount": insights,
+            "evalSettings": counts,
+            "hardwareStated": hardware,
+        })
+        insight_total += insights
+        for name in totals:
+            totals[name] += counts[name]
+    if not items:
+        return {}
+    return {
+        "paperFacts": items,
+        "insightCount": insight_total,
+        "evalSettings": totals,
+        "hardwareStatedCount": sum(1 for item in items if item["hardwareStated"]),
+    }
+
+
+def _citation_graph_facts(update: Mapping[str, Any]) -> dict[str, Any]:
+    graph = _model_dump(update.get("citation_graph"))
+    if not isinstance(graph, Mapping):
+        return {}
+    stats = graph.get("stats") if isinstance(graph.get("stats"), Mapping) else {}
+    similarity = graph.get("similarity") if isinstance(graph.get("similarity"), Mapping) else None
+    sim_stats = similarity.get("stats") if similarity and isinstance(similarity.get("stats"), Mapping) else {}
+    # The related-papers map is the similarity graph when it was built; the
+    # citation graph (references/followers) is the fallback.
+    shown = similarity if similarity is not None else graph
+    facts: dict[str, Any] = {
+        "nodeCount": len(_sequence_items(shown.get("nodes"))),
+        "edgeCount": len(_sequence_items(shown.get("edges"))),
+        "graphStatus": _safe_text(sim_stats.get("status") or stats.get("openalex") or "unknown", 24),
+    }
+    for fact, source, key in (
+        ("seeds", sim_stats, "seeds"),
+        ("pool", sim_stats, "pool"),
+        ("refsTotal", stats, "refs_total"),
+        ("refsResolved", stats, "refs_resolved"),
+    ):
+        number = _nonnegative_int(source.get(key))
+        if number is not None:
+            facts[fact] = number
+    timing = _model_dump(update.get("node_timings"))
+    node_timing = timing.get("citation_graph") if isinstance(timing, Mapping) else None
+    duration = _duration_ms(node_timing.get("durationMs")) if isinstance(node_timing, Mapping) else None
+    if duration is not None:
+        facts["durationMs"] = duration
+    return facts
+
+
+_REPO_SOURCES = frozenset({"html", "github_search", "none"})
+
+
+def _web_enrich_facts(enrichment: Any) -> dict[str, Any]:
+    if not isinstance(enrichment, Mapping):
+        return {}
+    items: list[dict[str, Any]] = []
+    for paper_id, entry in list(enrichment.items())[:64]:
+        data = _model_dump(entry)
+        if not isinstance(data, Mapping):
+            continue
+        source = str(data.get("repo_source") or "none")
+        items.append({
+            "paperId": _public_identifier(paper_id) or "",
+            "repoSource": source if source in _REPO_SOURCES else "none",
+            "repositoryCount": _nonnegative_int(data.get("repo_count")) or 0,
+            "bibtex": bool(data.get("bibtex")),
+        })
+    if not items:
+        return {}
+    sources = {item["repoSource"] for item in items}
+    return {
+        "paperFacts": items,
+        "repoSource": next(iter(sources)) if len(sources) == 1 else "mixed",
+        "repositoryCount": sum(item["repositoryCount"] for item in items),
+        "bibtexCount": sum(1 for item in items if item["bibtex"]),
+    }
 
 
 def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) -> dict[str, Any]:
@@ -1426,31 +1654,26 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
         # than leaking the pre-read candidate count from merged state.
         facts["paperCount"] = len(_sequence_items(update.get("selected_papers")))
         facts["failedPdfCount"] = _failed_pdf_count(update)
+        facts.update(_read_paper_facts(update.get("selected_papers")))
 
-    elif node == "web_enrich" and "selected_papers" in update:
-        papers = _sequence_items(update.get("selected_papers"))
-        repository_count = 0
-        bibtex_count = 0
-        for paper in papers:
-            raw = _model_dump(paper)
-            if not isinstance(raw, Mapping):
-                continue
-            repository_count += len(_sequence_items(raw.get("github_repos") or raw.get("githubRepos")))
-            if raw.get("bibtex"):
-                bibtex_count += 1
-        facts["repositoryCount"] = repository_count
-        facts["bibtexCount"] = bibtex_count
+    elif node == "web_enrich" and "paper_enrichment" in update:
+        facts.update(_web_enrich_facts(update.get("paper_enrichment")))
 
-    elif node == "write_notes" and "trace_logs" in update:
+    elif node == "write_notes" and ("paper_notes" in update or "trace_logs" in update):
         fallback_ids = _fallback_note_ids(update)
         if fallback_ids:
             facts["noteFallbackPaperIds"] = fallback_ids
+        facts.update(_write_notes_facts(update.get("paper_notes")))
+
+    elif node == "citation_graph" and "citation_graph" in update:
+        facts.update(_citation_graph_facts(update))
 
     elif node == "final_report" and "final_report" in update:
         status = str(update.get("status") or state.get("status") or "").lower()
         report_available = _valid_report(update.get("final_report")) and status not in {"error", "failed"}
         facts["reportAvailable"] = report_available
         if report_available:
+            facts["sectionCount"] = len(re.findall(r"(?m)^## \S", str(update.get("final_report") or "")))
             # The report ID is sourced from the append-only save log and is
             # returned only after the file has been verified within REPORTS_DIR.
             report_id = _report_id_from_state(state)
@@ -1461,6 +1684,70 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
     if measured_timings:
         facts["timings"] = measured_timings
     return facts
+
+
+_STAGE_COUNT_KEYS = (
+    "tableCount", "referenceCount", "hardwareFoundCount", "insightCount", "hardwareStatedCount",
+    "seeds", "pool", "nodeCount", "edgeCount", "refsTotal", "refsResolved", "durationMs", "sectionCount",
+)
+
+
+def _sanitize_paper_fact(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, Mapping):
+        return None
+    out: dict[str, Any] = {}
+    paper_id = _public_identifier(item.get("paperId"))
+    if paper_id:
+        out["paperId"] = paper_id
+    if item.get("source") in _SOURCE_VALUES:
+        out["source"] = item["source"]
+    if item.get("repoSource") in _REPO_SOURCES:
+        out["repoSource"] = item["repoSource"]
+    for key in ("tableCount", "referenceCount", "insightCount", "repositoryCount"):
+        if key in item:
+            number = _nonnegative_int(item.get(key))
+            if number is not None:
+                out[key] = number
+    for key in ("hardwareFound", "hardwareStated", "bibtex"):
+        if isinstance(item.get(key), bool):
+            out[key] = item[key]
+    if isinstance(item.get("hardware"), str):
+        out["hardware"] = _safe_text(item["hardware"], 60)
+    for key in ("sectionChars", "evalSettings"):
+        raw = item.get(key)
+        if isinstance(raw, Mapping):
+            allowed = _SECTION_FACT_KEYS if key == "sectionChars" else ("proposed", "kept", "dropped")
+            counts = {name: _nonnegative_int(raw.get(name)) for name in allowed if name in raw}
+            out[key] = {name: number for name, number in counts.items() if number is not None}
+    return out
+
+
+def _sanitize_stage_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
+    """Allowlist the stage facts added for the chat UI progress line."""
+
+    clean: dict[str, Any] = {}
+    for key in _STAGE_COUNT_KEYS:
+        if key in facts:
+            number = _nonnegative_int(facts.get(key))
+            if number is not None:
+                clean[key] = number
+    if facts.get("source") in _SOURCE_VALUES:
+        clean["source"] = facts["source"]
+    if facts.get("repoSource") in _REPO_SOURCES | {"mixed"}:
+        clean["repoSource"] = facts["repoSource"]
+    if isinstance(facts.get("graphStatus"), str):
+        clean["graphStatus"] = _safe_text(facts["graphStatus"], 24)
+    eval_settings = facts.get("evalSettings")
+    if isinstance(eval_settings, Mapping):
+        counts = {name: _nonnegative_int(eval_settings.get(name)) for name in ("proposed", "kept", "dropped") if name in eval_settings}
+        counts = {name: number for name, number in counts.items() if number is not None}
+        if counts:
+            clean["evalSettings"] = counts
+    items = [_sanitize_paper_fact(item) for item in _sequence_items(facts.get("paperFacts"))[:64]]
+    items = [item for item in items if item]
+    if items:
+        clean["paperFacts"] = items
+    return clean
 
 
 def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
@@ -1505,6 +1792,8 @@ def _sanitize_facts(facts: Mapping[str, Any] | None) -> TraceFacts | None:
 
     if isinstance(facts.get("reportAvailable"), bool):
         clean["reportAvailable"] = facts["reportAvailable"]
+
+    clean.update(_sanitize_stage_facts(facts))
 
     timings = _numeric_timings(facts.get("timings")) if isinstance(facts.get("timings"), Mapping) else {}
     if timings:

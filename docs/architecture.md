@@ -25,14 +25,14 @@ flowchart TD
     EvalSearch -->|CE2: max_retry_reached — degraded| ReadPaper
     EvalSearch -->|CE2: error| ErrorHandler
 
-    %% Core Processing Pipeline
-    ReadPaper --> WebEnrich["web_enrich (Multi-tier GitHub Finder + BibTeX)"]
-    WebEnrich --> WriteNotes["write_notes (PMRL Generator - Pydantic Output)"]
-
-    %% CE3 Routing
-    WriteNotes -->|CE3: ok| CitationGraph["citation_graph (code only: references + OpenAlex)"]
-    WriteNotes -->|CE3: error| ErrorHandler
-    CitationGraph --> FinalReport["final_report (Comprehensive Report Generator)"]
+    %% CE3 Routing: fan out to 3 parallel branches, join at final_report
+    ReadPaper -->|CE3: ok — song song| WriteNotes["write_notes (PMRL LLM - Pydantic Output)"]
+    ReadPaper -->|CE3: ok — song song| CitationGraph["citation_graph (code only: references + OpenAlex + similarity)"]
+    ReadPaper -->|CE3: ok — song song| WebEnrich["web_enrich (repo: HTML link hoặc GitHub 3 tầng + BibTeX)"]
+    ReadPaper -->|CE3: error| ErrorHandler
+    WriteNotes --> FinalReport["final_report (Section + Overview LLM, join kết quả 3 nhánh)"]
+    CitationGraph --> FinalReport
+    WebEnrich --> FinalReport
 
     FinalReport --> End([End: Research Report])
     ErrorHandler --> End
@@ -58,10 +58,10 @@ flowchart TD
 |   3   | `eval_search`       | LLM chấm điểm relevance, chọn top-K bài tốt nhất hoặc yêu cầu refine                  |
 |   4   | `refine_query`      | LLM tối ưu lại từ khóa tìm kiếm dựa trên feedback → quay lại bước 2                |
 |   5   | `read_paper`        | Đọc HTML trước (ar5iv → arxiv.org/html), PDF là phương án dự phòng; bóc tách sections, bảng, tài liệu tham khảo, link repo |
-|   6   | `web_enrich`        | Tìm repo GitHub 3 tầng + tạo BibTeX citation                                                 |
-|   7   | `write_notes`       | LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)                                 |
-|   8   | `citation_graph`    | Code, không LLM: dựng đồ thị trích dẫn quanh các bài đã chọn (JSON `citation_graph`)       |
-|   9   | `final_report`      | LLM tổng hợp báo cáo nghiên cứu chuyên sâu, lưu file Markdown                          |
+|  6a  | `write_notes`       | **Song song.** LLM tổng hợp ghi chú PMRL (Problem-Method-Result-Limitation)               |
+|  6b  | `citation_graph`    | **Song song.** Code, không LLM: dựng đồ thị trích dẫn và đồ thị bài liên quan (JSON `citation_graph`) |
+|  6c  | `web_enrich`        | **Song song.** Không LLM: repo (link HTML của bài, nếu không có thì GitHub 3 tầng) + BibTeX |
+|   7   | `final_report`      | Chờ 3 nhánh, ghép kết quả vào `PaperItem`, LLM viết báo cáo, lưu file Markdown            |
 |   —   | `error_handler`     | Xử lý graceful fallback khi bất kỳ node nào gặp lỗi                                      |
 
 ---
@@ -190,19 +190,64 @@ def route_after_eval_search(state) -> str:
     #       retry_count < MAX_RETRIES → refine_query (loop)
     #       hết retry → read_paper (graceful degradation)
 
-def route_after_write_notes(state) -> str:
+def route_after_read_paper(state) -> str | list[str]:
     # CE3: error → error_handler
-    #       còn lại → citation_graph (rồi citation_graph → final_report)
+    #       còn lại → ["write_notes", "citation_graph", "web_enrich"] (chạy song song)
+    #       3 nhánh cùng nối vào final_report: add_edge([...], "final_report") chờ cả 3
 ```
 
 #### `build_research_graph()`
 
 1. **Tạo `StateGraph(ResearchState)`** — khai báo kiểu state
-2. **Thêm 9 node** bằng `workflow.add_node(name, function)`
-3. **Nối cạnh**: 4 cạnh cố định + 3 conditional edges (CE1, CE2, CE3) + 1 vòng lặp `refine_query → search_papers`
+2. **Thêm 10 node** bằng `workflow.add_node(name, function)`
+3. **Nối cạnh**: cạnh cố định + 3 conditional edges (CE1, CE2, CE3; CE3 trả list 3 node để chạy song song) + 1 cạnh join `[write_notes, citation_graph, web_enrich] → final_report` + 1 vòng lặp `refine_query → search_papers`
 4. **Compile** với `MemorySaver` checkpointer (lưu snapshot state theo `thread_id`)
 
 Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` hoặc `.invoke()`.
+
+#### Topology (sau P2)
+
+```text
+START -> router --direct_read--> read_paper --+--> write_notes ----+
+          |                          ^        +--> citation_graph -+--> final_report -> END
+          +--search--> search_papers |        +--> web_enrich -----+
+                         |           |        (lỗi read_paper -> error_handler -> END)
+                         v           |
+                     eval_search --pass/max_retry
+                         +--low--> refine_query -> search_papers
+```
+
+#### Ghép trạng thái an toàn giữa 3 nhánh song song
+
+- Cả 3 nhánh **đọc** `selected_papers` (do `read_paper` ghi) và **không ghi** `selected_papers`.
+- `write_notes` ghi `paper_notes`, `web_enrich` ghi `paper_enrichment`, `citation_graph` ghi `citation_graph`. Hai key đầu có reducer `operator.or_` (merge dict theo `paper_id`).
+- `trace_logs`, `error_logs`, `node_timings` đã có reducer từ trước. Không nhánh nào ghi `status`.
+- `final_report` gọi `merge_branch_results()` để copy từng `PaperItem`, gắn notes, `github_repos`, `bibtex`, metadata, rồi trả `selected_papers` đã ghép. API và CLI đọc `selected_papers` sau bước này.
+- Mất 1 nhánh (ví dụ PMRL lỗi) không chặn các nhánh còn lại: `write_notes` tự tạo notes dự phòng; `citation_graph` và `web_enrich` không raise.
+
+#### 5 giai đoạn tiến trình trong UI chat (`api.py`)
+
+Mỗi node tương ứng 1 giai đoạn; `TraceEvent` có thêm `label` tiếng Việt, `description`, `stage` (1-5) và `parallelGroup`. Router, search, eval, refine, error_handler có nhãn tiếng Việt nhưng không có `stage`. "Đọc toàn văn" và "Trích xuất bảng và tài liệu tham khảo" là nhãn và mô tả của cùng giai đoạn `read_paper` (một node = một giai đoạn).
+
+| stage | node             | label                  | description                                  | parallelGroup |
+| :---: | :--------------- | :--------------------- | :------------------------------------------- | :------------ |
+|   1   | `read_paper`     | Đọc toàn văn           | Trích xuất bảng và tài liệu tham khảo        | —             |
+|   2   | `write_notes`    | Ghi chú có cấu trúc    | Rút vấn đề, phương pháp, kết quả, hạn chế    | `analysis`    |
+|   3   | `citation_graph` | Dựng bản đồ liên quan  | Tìm bài nền tảng và bài kế thừa              | `analysis`    |
+|   4   | `web_enrich`     | Tìm mã nguồn và BibTeX | Tìm repository chính thức và tạo BibTeX      | `analysis`    |
+|   5   | `final_report`   | Viết báo cáo           | Tổng hợp báo cáo Markdown                    | —             |
+
+Facts theo giai đoạn (`TraceFacts`, chỉ phát khi update của node có dữ liệu; `paperFacts` = 1 dict mỗi bài):
+
+| node             | facts                                                                                                                     |
+| :--------------- | :------------------------------------------------------------------------------------------------------------------------ |
+| `read_paper`     | `source` (ar5iv / arxiv_html / pdf / mixed), `tableCount`, `referenceCount`, `hardwareFoundCount`; mỗi bài: `sectionChars` (số ký tự theo section), `hardware` (đoạn ≤60 ký tự nếu text nêu GPU/TPU) |
+| `write_notes`    | `insightCount`, `evalSettings {proposed, kept, dropped}`, `hardwareStatedCount` (hardware đã grounding); mỗi bài: `hardwareStated` |
+| `citation_graph` | `seeds`, `pool`, `nodeCount`, `edgeCount` (đồ thị bài liên quan; dùng đồ thị trích dẫn nếu không có), `graphStatus`, `refsTotal`, `refsResolved` (số mục tham khảo đã xác định arXiv id), `durationMs` |
+| `web_enrich`     | `repoSource` (html / github_search / none / mixed), `repositoryCount`, `bibtexCount`                                      |
+| `final_report`   | `sectionCount` (số heading `## `), `reportId`, `reportAvailable`                                                          |
+
+`refsResolved` nằm ở `citation_graph` vì việc xác định id chạy trong node đó, không phải trong `read_paper`.
 
 ---
 
@@ -307,9 +352,13 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 
 ### 3.9. Node: `web_enrich` (`nodes/web_enrich.py`)
 
-**Chức năng**: Làm giàu mỗi bài báo với mã nguồn GitHub và BibTeX citation, đồng thời chạy PMRL (kết quả dùng lại ở `write_notes`).
+**Chức năng**: Tìm repo mã nguồn và tạo BibTeX cho mỗi bài. Không gọi LLM. Chạy **song song** với `write_notes` và `citation_graph`.
 
-**Concurrency**: hai pool riêng — GitHub `min(n, GITHUB_MAX_CONCURRENCY)` và PMRL `min(n, LLM_MAX_CONCURRENCY)`. Các lệnh gọi PMRL chạy 1 đợt, không xếp hàng sau GitHub. `node_timings.web_enrich.workerCount` = số worker PMRL. `_run_notes_in_parallel` (fallback của `write_notes`) dùng cùng giới hạn LLM.
+**Nguồn repo** (`repo_source`): nếu HTML của bài đã có link GitHub chính (`paper.repo_links` với `is_primary_candidate`, hoặc `source_quality.codeUrls`) → `html`, bỏ qua tìm kiếm GitHub (`github_repos` rỗng; link nằm ở `source_quality.codeUrls` và báo cáo dùng link đó). Ngược lại chạy tìm kiếm 3 tầng → `github_search` (có repo) hoặc `none`.
+
+**Kết quả**: node không trả `selected_papers`. Nó trả `paper_enrichment[paper_id] = {github_repos, bibtex, repo_source, repo_count, processing_metadata}`; `final_report` ghép vào `PaperItem`.
+
+**Concurrency**: một pool GitHub `min(n, GITHUB_MAX_CONCURRENCY)` worker. `node_timings.web_enrich.workerCount` = số worker.
 
 #### GitHub Multi-tier Search (`tools/github_enricher.py`)
 
@@ -331,7 +380,7 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 ### 3.10. Node: `write_notes` (`nodes/write_notes.py`)
 
-**Chức năng**: LLM tổng hợp ghi chú PMRL từ nội dung section đã trích xuất.
+**Chức năng**: LLM tổng hợp ghi chú PMRL từ nội dung section đã trích xuất. Chạy **song song** với `citation_graph` và `web_enrich` (cả 3 đọc `selected_papers` do `read_paper` ghi). Node không trả `selected_papers`; nó trả `paper_notes[paper_id] = {notes, notes_quality, processing_metadata}` và `final_report` ghép vào `PaperItem`. Số lệnh PMRL chạy song song `min(n, LLM_MAX_CONCURRENCY)`.
 
 **Cơ chế**:
 

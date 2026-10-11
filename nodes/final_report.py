@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import re
 import time
@@ -35,6 +36,38 @@ _INTERNAL_REPORT_LINE_RE = re.compile(
     r"delivered in .* per language mode|agent (?:status|self-review))\b",
     re.IGNORECASE,
 )
+
+
+def merge_branch_results(
+    papers: List[PaperItem],
+    paper_notes: Any,
+    paper_enrichment: Any,
+) -> List[PaperItem]:
+    """Join the parallel branches' per-paper results into copies of ``papers``.
+
+    ``write_notes`` and ``web_enrich`` run in parallel with ``citation_graph``
+    and write to separate state keys instead of ``selected_papers``, so no two
+    branches overwrite each other.  A paper with no entry keeps its fields.
+    """
+
+    notes_map = paper_notes if isinstance(paper_notes, dict) else {}
+    enrich_map = paper_enrichment if isinstance(paper_enrichment, dict) else {}
+    merged: List[PaperItem] = []
+    for paper in papers:
+        result = copy.deepcopy(paper)
+        result.processing_metadata = dict(result.processing_metadata or {})
+        notes_entry = notes_map.get(paper.paper_id)
+        if isinstance(notes_entry, dict):
+            result.notes = notes_entry.get("notes", result.notes)
+            result.notes_quality = notes_entry.get("notes_quality", result.notes_quality)
+            result.processing_metadata.update(notes_entry.get("processing_metadata") or {})
+        enrich_entry = enrich_map.get(paper.paper_id)
+        if isinstance(enrich_entry, dict):
+            result.github_repos = list(enrich_entry.get("github_repos") or [])
+            result.bibtex = enrich_entry.get("bibtex", result.bibtex)
+            result.processing_metadata.update(enrich_entry.get("processing_metadata") or {})
+        merged.append(result)
+    return merged
 
 
 def _is_internal_report_line(line: str) -> bool:
@@ -1079,7 +1112,11 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
 
     started = time.perf_counter()
     user_query = state.get("user_query") or "Research Analysis"
-    papers = list(state.get("selected_papers", []) or [])
+    papers = merge_branch_results(
+        list(state.get("selected_papers", []) or []),
+        state.get("paper_notes"),
+        state.get("paper_enrichment"),
+    )
     language_mode = detect_response_language(user_query)
     title = report_title(user_query, papers)
     logs = [f"[final_report] Tổng hợp báo cáo cho '{user_query}'"]
@@ -1125,6 +1162,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
                 }
                 return {
                     "final_report": cached_report,
+                    "selected_papers": papers,
                     "status": "degraded" if incomplete_sources else "success",
                     "trace_logs": logs,
                     "node_timings": {"final_report": timing},
@@ -1161,6 +1199,7 @@ def final_report_node(state: ResearchState) -> Dict[str, Any]:
         }
         return {
             "final_report": report_text,
+            "selected_papers": papers,
             "status": "degraded" if incomplete_sources or report_degraded else "success",
             "trace_logs": logs,
             "node_timings": {"final_report": timing},

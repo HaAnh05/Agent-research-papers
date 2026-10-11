@@ -172,26 +172,6 @@ def test_write_notes_fallback_runs_more_than_two_papers_concurrently(monkeypatch
     assert [p.paper_id for p in analyzed] == [f"p{i}" for i in range(5)]
 
 
-def test_web_enrich_runs_all_pmrl_jobs_in_one_wave(monkeypatch):
-    barrier = threading.Barrier(3)
-
-    def fake_pmrl(paper, *, llm=None):
-        barrier.wait(timeout=3)
-        return _pmrl_ok(paper)
-
-    def fake_github(paper):
-        return [], {"durationMs": 1, "tiers": {}}, False
-
-    monkeypatch.setattr(web_enrich_module, "get_llm", lambda: object())
-    monkeypatch.setattr(web_enrich_module, "_github_one", fake_github)
-    monkeypatch.setattr(web_enrich_module, "analyze_paper_notes", fake_pmrl)
-    papers = [PaperItem(paper_id=f"p{i}", title=f"Paper {i}") for i in range(3)]
-    result = web_enrich_module.web_enrich_node({"selected_papers": papers})
-    assert [p.paper_id for p in result["selected_papers"]] == ["p0", "p1", "p2"]
-    assert result["error_logs"] == []
-    assert result["node_timings"]["web_enrich"]["workerCount"] == 3
-
-
 # --- parallel report ----------------------------------------------------------
 
 def _paper(pid: str, title: str, arxiv_id: str, repo: str | None = None) -> PaperItem:
