@@ -502,15 +502,19 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
     assert api._step_facts("search_papers", {}, {"search_results": [paper_one, paper_two]}) == {"resultCount": 2}
     assert api._step_facts("eval_search", {}, {"selected_papers": [paper_one]}) == {"selectedCount": 1}
     assert api._step_facts("refine_query", {}, {"retry_count": 2}) == {"retryCount": 2}
-    assert api._step_facts(
+    read_facts = api._step_facts(
         "read_paper",
         {},
         {"selected_papers": [paper_one], "error_logs": ["Lỗi đọc bài báo 'Two': provider detail"]},
-    ) == {"paperCount": 1, "failedPdfCount": 1}
-    assert api._step_facts("web_enrich", {}, {"selected_papers": [paper_one, paper_two]}) == {
-        "repositoryCount": 1,
-        "bibtexCount": 1,
-    }
+    )
+    assert read_facts["paperCount"] == 1 and read_facts["failedPdfCount"] == 1
+    assert read_facts["source"] == "unknown" and read_facts["tableCount"] == 0
+    enrich_facts = api._step_facts("web_enrich", {}, {"paper_enrichment": {
+        "arxiv_1706.03762": {"repo_source": "github_search", "repo_count": 1, "bibtex": "@article{one}"},
+        "arxiv_2005.14165": {"repo_source": "none", "repo_count": 0, "bibtex": ""},
+    }})
+    assert enrich_facts["repositoryCount"] == 1 and enrich_facts["bibtexCount"] == 1
+    assert enrich_facts["repoSource"] == "mixed" and len(enrich_facts["paperFacts"]) == 2
     assert api._step_facts(
         "write_notes",
         {},
@@ -527,7 +531,7 @@ def test_step_facts_are_sparse_allowlisted_and_task_events_stay_factless(tmp_pat
         "final_report",
         {"status": "success", "trace_logs": ["[final_report] saved: run.md"]},
         {"final_report": "# Run", "status": "success"},
-    ) == {"reportAvailable": True, "reportId": "run.md"}
+    ) == {"reportAvailable": True, "reportId": "run.md", "sectionCount": 0}
     assert api._valid_report("# Findings\n\nThe report explains an error in the final report.") is True
     assert api._valid_report("# Error Generating Final Report\n\nProvider unavailable.") is False
 

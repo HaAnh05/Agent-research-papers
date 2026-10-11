@@ -206,6 +206,15 @@ class ResearchState(TypedDict):
     # {"nodes": [...], "edges": [...], "stats": {...}}; None before that node ran.
     citation_graph: Optional[Dict[str, Any]]
 
+    # Per-paper partial results of the parallel branches that follow
+    # ``read_paper``.  Each branch writes only its own key (merged by paper id
+    # with ``operator.or_``), never ``selected_papers``; ``final_report`` joins
+    # them into the papers (nodes.final_report.merge_branch_results).
+    #   paper_notes[pid]      = {"notes", "notes_quality", "processing_metadata"}   (write_notes)
+    #   paper_enrichment[pid] = {"github_repos", "bibtex", "processing_metadata"}   (web_enrich)
+    paper_notes: Annotated[Dict[str, Dict[str, Any]], operator.or_]
+    paper_enrichment: Annotated[Dict[str, Dict[str, Any]], operator.or_]
+
     # Output Synthesis
     final_report: Optional[str]              # Comprehensive research report (Markdown)
 

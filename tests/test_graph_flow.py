@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from graph import build_research_graph, route_after_router, route_after_eval_search, route_after_write_notes
+from graph import build_research_graph, route_after_router, route_after_eval_search, route_after_read_paper
 from state import ResearchState, PaperItem
 from config import config
 from text_utils import compact_message
@@ -60,9 +60,9 @@ def test_routing_logic():
         "status": "running",
     }) == "error_handler"
 
-    # Test route_after_write_notes
+    # Test route_after_read_paper: fan out to the three parallel branches
     dummy_paper = PaperItem(paper_id="p1", title="Test Paper 1")
-    assert route_after_write_notes({"selected_papers": [dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "direct_read", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"
+    assert set(route_after_read_paper({"selected_papers": [dummy_paper], "status": "running"})) == {
+        "write_notes", "citation_graph", "web_enrich",
+    }
+    assert route_after_read_paper({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"

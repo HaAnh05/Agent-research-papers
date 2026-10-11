@@ -227,11 +227,11 @@ def test_write_notes_two_workers_preserve_order_and_isolate_failure(monkeypatch)
     elapsed = time.perf_counter() - started
 
     assert elapsed < 0.19
-    output = result["selected_papers"]
-    assert [paper.paper_id for paper in output] == ["p1", "p2"]
-    assert output[0].notes_quality == "complete"
-    assert output[1].notes_quality == "invalid"
-    assert output[1].notes.method.startswith("Not extracted")
+    output = result["paper_notes"]
+    assert list(output) == ["p1", "p2"]
+    assert output["p1"]["notes_quality"] == "complete"
+    assert output["p2"]["notes_quality"] == "invalid"
+    assert output["p2"]["notes"].method.startswith("Not extracted")
     assert any("p2" in error for error in result["error_logs"])
 
 
@@ -267,57 +267,28 @@ def test_pmrl_cache_hit_skips_llm_call(monkeypatch, tmp_path):
     assert second_paper.notes_quality == "complete"
 
 
-def test_web_enrich_uses_separate_github_and_pmrl_pools_and_keeps_order(monkeypatch):
-    papers = [
-        PaperItem(paper_id="p1", title="Paper one"),
-        PaperItem(paper_id="p2", title="Paper two"),
-    ]
-    lock = threading.Lock()
-    active = 0
-    max_active = 0
-
-    def enter_job():
-        nonlocal active, max_active
-        with lock:
-            active += 1
-            max_active = max(max_active, active)
-
-    def leave_job():
-        nonlocal active
-        with lock:
-            active -= 1
+def test_web_enrich_runs_github_in_parallel_skips_html_repos_and_keeps_order(monkeypatch):
+    html_paper = PaperItem(
+        paper_id="p0", title="Paper zero", source_quality={"codeUrls": ["https://github.com/example/own"]},
+    )
+    papers = [html_paper, PaperItem(paper_id="p1", title="Paper one"), PaperItem(paper_id="p2", title="Paper two")]
+    searched: list[str] = []
 
     def fake_github(paper):
-        enter_job()
-        try:
-            time.sleep(0.1)
-            return [GitHubRepoInfo(name=f"{paper.paper_id}/repo", url="https://github.com/example/repo")], {"durationMs": 100, "tiers": {"title_keywords": {"status": "ok"}}}, False
-        finally:
-            leave_job()
+        searched.append(paper.paper_id)
+        time.sleep(0.1)
+        return [GitHubRepoInfo(name=f"{paper.paper_id}/repo", url="https://github.com/example/repo")], {"durationMs": 100, "tiers": {"title_keywords": {"status": "ok"}}}, False
 
-    def fake_pmrl(paper, *, llm=None):
-        enter_job()
-        try:
-            time.sleep(0.1)
-            result = copy.deepcopy(paper)
-            result.notes = PMRLNotes(problem="p", method="m", result="r", limitation="l")
-            result.notes_quality = "complete" if paper.paper_id == "p1" else "invalid"
-            return result, "ok" if paper.paper_id == "p1" else "fallback:RuntimeError", {"durationMs": 100, "llmMs": 100}
-        finally:
-            leave_job()
-
-    monkeypatch.setattr(web_enrich_module, "get_llm", lambda: object())
     monkeypatch.setattr(web_enrich_module, "_github_one", fake_github)
-    monkeypatch.setattr(web_enrich_module, "analyze_paper_notes", fake_pmrl)
     started = time.perf_counter()
     result = web_enrich_module.web_enrich_node({"selected_papers": papers})
     elapsed = time.perf_counter() - started
 
-    # GitHub and PMRL use separate pools, so the two jobs of both papers
-    # (4 in total) overlap instead of queueing behind a shared 2-worker cap.
-    assert elapsed < 0.19
-    assert max_active >= 3
-    assert [paper.paper_id for paper in result["selected_papers"]] == ["p1", "p2"]
-    assert result["selected_papers"][0].notes_quality == "complete"
-    assert result["selected_papers"][1].notes_quality == "invalid"
-    assert any("p2" in error for error in result["error_logs"])
+    assert elapsed < 0.19  # the two searches overlap
+    assert sorted(searched) == ["p1", "p2"]  # p0 already has a repo link in its HTML
+    enrichment = result["paper_enrichment"]
+    assert list(enrichment) == ["p0", "p1", "p2"]
+    assert "selected_papers" not in result
+    assert enrichment["p0"]["repo_source"] == "html" and enrichment["p0"]["github_repos"] == []
+    assert enrichment["p1"]["repo_source"] == "github_search" and len(enrichment["p1"]["github_repos"]) == 1
+    assert all(item["bibtex"] for item in enrichment.values())
