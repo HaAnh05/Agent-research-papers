@@ -6,7 +6,7 @@
                 similarity, role: "origin"|"similar", url}],
      "edges": [{source, target, weight}],            # undirected, each pair once
      "prior_works": [node + support], "derivative_works": [node + support],
-     "stats": {seeds, pool, requests, cache_hits, duration_ms, status}}
+     "stats": {seeds, pool, requests, cache_hits, openalex_mismatch, openalex_title_fallback, duration_ms, status}}
 
 ``status`` is ``ok``, ``no_key``, ``error`` (nothing usable) or ``partial``
 (wall-clock budget reached or some request failed; the graph uses what exists).
@@ -45,7 +45,7 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 from config import config
 from state import PaperItem
 from tools.openalex import OpenAlexClient, arxiv_id_of_work, short_id
-from tools.ref_resolver import RefResolver, clean_arxiv_id
+from tools.ref_resolver import RefResolver, clean_arxiv_id, title_jaccard
 
 EDGE_MIN_WEIGHT = 0.05
 LIST_SIZE = 10
@@ -262,6 +262,9 @@ def build_similarity_graph(
     scored.sort(key=lambda t: (-t[0], -(_count(details[t[2]]) or 0), t[2]))
     top = scored[:max(0, max_nodes)]
 
+    stats_fallback: set = set()                           # mismatches repaired by a title search
+    stats_mismatch: set = set()                           # OpenAlex ids whose record is a different paper
+
     # --- 5. nodes ----------------------------------------------------------------------------
     def node_dict(wid: str, work: Dict[str, Any], role: str, similarity: float,
                   paper: Optional[PaperItem] = None, arxiv_hint: Optional[str] = None) -> Dict[str, Any]:
@@ -275,8 +278,18 @@ def build_similarity_graph(
             title, title_source = paper.title, "paper"
         else:
             title, title_source = openalex_title or wid, "openalex"
+        # A wrong OpenAlex record (title differs from the index title) gives no count and no year.
+        wrong = bool(record and record["title"] and openalex_title
+                     and title_jaccard(record["title"], openalex_title) < 0.5)
+        count = None if wrong else _count(work)
+        if wrong:
+            stats_mismatch.add(wid)
+            found = budget.call(lambda: client.work_by_title(record["title"]))     # type: ignore[index]
+            if found:
+                count = _count(found)
+                stats_fallback.add(wid)
         year = int(record["year"]) if record and record["year"].isdigit() else None
-        year = year or _year(work)
+        year = year or (None if wrong else _year(work))
         if year is None and paper and paper.published[:4].isdigit():
             year = int(paper.published[:4])
         if arxiv:
@@ -284,7 +297,8 @@ def build_similarity_graph(
         else:
             url = str(work.get("doi") or "") or (f"https://openalex.org/{wid}" if wid.startswith("W") else "")
         return {
-            "id": wid, "arxiv_id": arxiv, "title": title, "title_source": title_source, "year": year, "cited_by_count": _count(work),
+            "id": wid, "arxiv_id": arxiv, "title": title, "title_source": title_source, "year": year,
+            "cited_by_count": count,
             "first_author": _first_author(work) or (paper.authors[0] if paper and paper.authors else ""),
             "abstract": (record["abstract"] if record else "") or (paper.summary if paper else ""),
             "similarity": round(similarity, 4), "role": role, "url": url,
@@ -378,6 +392,8 @@ def build_similarity_graph(
         "nodes": nodes, "edges": edges, "prior_works": prior_works, "derivative_works": derivative_works,
         "stats": {
             "seeds": len(seeds), "pool": len(pool_ids), "requests": budget.calls, "unverified_dropped": dropped,
+            "openalex_mismatch": len(stats_mismatch),
+            "openalex_title_fallback": len(stats_fallback),
             "cache_hits": getattr(client, "cache_hits", 0) - hits_before,
             "duration_ms": max(0, int((time.perf_counter() - started) * 1000)), "status": status,
         },

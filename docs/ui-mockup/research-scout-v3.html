@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Research Scout — mockup v3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#FAFAF8; --surface:#FFFFFF; --subtle:#F3F3EF; --hover:#EEEEE9;
+  --ink:#1B1B19; --ink-2:#5F5F59; --ink-3:#8F8F88;
+  --rule:#E6E6E0; --rule-2:#D6D6CF;
+  --accent:#3D63B5; --accent-ink:#2F4F96; --accent-wash:#EEF2FA;
+  --ok:#4F7F62; --ok-wash:#EAF2EC; --absent:#9A5531; --absent-wash:#F6EDE7;
+  --serif:"Newsreader",Georgia,serif; --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --panel:520px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:400 15px/1.55 var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.tnum{font-variant-numeric:tabular-nums}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---------- frame ---------- */
+.frame{display:grid;grid-template-columns:minmax(0,1fr) 0;height:100vh;transition:grid-template-columns .45s var(--ease)}
+.frame.panel-open{grid-template-columns:minmax(0,1fr) var(--panel)}
+.main{position:relative;display:flex;flex-direction:column;min-width:0;height:100vh}
+.top{height:52px;flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;color:var(--ink-2);font-size:14px}
+.top .brand{font-weight:500;color:var(--ink)}
+.top .conv{opacity:0;transition:opacity .3s}
+.chat .top .conv{opacity:1}
+.top .spacer{flex:1}
+.ghost{border:0;background:transparent;border-radius:8px;padding:6px 10px;color:var(--ink-2);font-size:14px}
+.ghost:hover{background:var(--hover);color:var(--ink)}
+.top .mapbtn{display:none}
+.chat.has-result .top .mapbtn{display:inline-flex;align-items:center;gap:6px}
+
+/* ---------- landing ---------- */
+.stage{flex:1;min-height:0;position:relative}
+.hero{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 24px 120px;transition:opacity .25s,transform .35s var(--ease)}
+.hero small{font-size:14px;color:var(--ink-2);margin-bottom:14px}
+.hero h1{font:400 clamp(44px,5.4vw,76px)/1.04 var(--serif);letter-spacing:-.025em;margin:0;text-align:center;max-width:12ch}
+.hero p{margin:22px 0 0;color:var(--ink-2);font-size:16px}
+.chat .hero{opacity:0;transform:translateY(-24px);pointer-events:none}
+
+/* ---------- composer ---------- */
+.dock{position:absolute;left:0;right:0;display:flex;flex-direction:column;align-items:center;padding:0 24px;z-index:5}
+.landing .dock{top:calc(50% + 70px)}
+.chat .dock{bottom:0;padding-bottom:18px;padding-top:10px;background:var(--bg)}
+.chat .dock::before{content:'';position:absolute;left:0;right:0;top:-36px;height:36px;background:linear-gradient(to top,var(--bg),rgba(250,250,248,0));pointer-events:none}
+.composer{width:min(760px,100%);background:var(--surface);border:1px solid var(--rule-2);border-radius:18px;box-shadow:0 10px 32px rgba(27,27,25,.05);padding:14px 14px 10px 18px}
+.composer:focus-within{border-color:#B9C6E3}
+.composer textarea{width:100%;border:0;outline:0;resize:none;font:400 16px/1.5 var(--sans);color:var(--ink);background:transparent;min-height:26px;max-height:160px}
+.landing .composer textarea{min-height:76px}
+.composer .row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.icon-btn{width:34px;height:34px;border-radius:10px;border:0;background:transparent;display:grid;place-items:center;color:var(--ink-2)}
+.icon-btn:hover{background:var(--hover);color:var(--ink)}
+.icon-btn svg{width:18px;height:18px}
+.send{margin-left:auto;width:36px;height:36px;border-radius:12px;border:0;background:var(--ink);color:#fff;display:grid;place-items:center}
+.send:disabled{background:#BDBDB6;cursor:default}
+.send svg{width:16px;height:16px}
+.hint{width:min(760px,100%);display:flex;gap:8px;margin-top:14px;justify-content:center}
+.chip{border:1px solid var(--rule);background:var(--bg);border-radius:999px;padding:7px 14px;font-size:14px;color:var(--ink-2)}
+.chip:hover{border-color:var(--rule-2);background:var(--surface);color:var(--ink)}
+.chat .hint.modes{display:none}
+.follow{display:none;width:min(760px,100%);gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.chat.has-result .follow{display:flex}
+.note{width:min(760px,100%);text-align:center;color:var(--ink-3);font-size:12px;margin-top:8px;display:none}
+.chat .note{display:block}
+
+/* ---------- thread ---------- */
+.thread{position:absolute;inset:0;overflow-y:auto;padding:12px 24px 270px;opacity:0;transition:opacity .3s .15s}
+.chat .thread{opacity:1}
+.col{width:min(760px,100%);margin:0 auto}
+.msg-user{display:flex;justify-content:flex-end;margin:18px 0 26px}
+.msg-user div{background:var(--subtle);border-radius:18px;padding:11px 16px;max-width:80%;font-size:15.5px}
+.msg-user .att{display:block;font-size:13px;color:var(--ink-3);margin-top:2px}
+.turn{margin-bottom:36px}
+
+/* progress line, expandable like "Searched the web" */
+.prog{margin:0 0 18px}
+.prog > button{border:0;background:transparent;padding:4px 0;display:inline-flex;align-items:center;gap:8px;color:var(--ink-2);font-size:14.5px}
+.prog > button:hover{color:var(--ink)}
+.prog .chev{width:14px;height:14px;transition:transform .2s}
+.prog.open .chev{transform:rotate(90deg)}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+.prog .tick{width:15px;height:15px;color:var(--ok)}
+.steps{display:none;margin-top:8px;border:1px solid var(--rule);border-radius:12px;background:var(--surface);overflow:hidden}
+.prog.open .steps{display:block}
+.step{display:grid;grid-template-columns:18px 1fr auto;gap:12px;padding:11px 16px;border-top:1px solid var(--rule);align-items:start;font-size:14px}
+.step:first-child{border-top:0}
+.step .s-ico{width:14px;height:14px;margin-top:3px;border-radius:50%;border:1.5px solid var(--rule-2)}
+.step.done .s-ico{border:0;background:var(--ok);-webkit-mask:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8"/></svg>')}
+.step.now .s-ico{border-color:var(--accent);animation:pulse 1.2s infinite}
+.step b{font-weight:500}
+.step .d{color:var(--ink-2)}
+.step .facts{color:var(--ink-3);font-size:13px;margin-top:2px}
+.step.wait{color:var(--ink-3)}
+.step.wait .d{color:var(--ink-3)}
+.step .t{color:var(--ink-3);font-size:13px}
+
+/* answer */
+.answer{opacity:0;transform:translateY(6px);transition:opacity .45s,transform .45s var(--ease)}
+.answer.in{opacity:1;transform:none}
+.answer .lead{font:400 21px/1.55 var(--serif);margin:0 0 22px;letter-spacing:-.005em}
+.answer h3{font:600 14.5px var(--sans);margin:26px 0 10px;color:var(--ink)}
+.answer p,.answer li{font:400 17.5px/1.7 var(--serif)}
+.answer p{margin:0 0 12px}
+.answer ul{margin:0 0 12px;padding-left:20px}
+.answer li{margin-bottom:8px}
+.answer li strong{font-weight:500}
+.paper-ref{font:500 14px var(--sans);color:var(--ink-2);margin-bottom:6px}
+.paper-ref a{color:inherit}
+.defs{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:0 0 6px}
+.defs dt{font:500 14.5px/1.9 var(--sans)}
+.defs dd{margin:0;font:400 17px/1.65 var(--serif);color:var(--ink-2)}
+.absent{font:500 12.5px var(--sans);color:var(--absent);background:var(--absent-wash);border-radius:6px;padding:2px 7px;white-space:nowrap}
+table.res{width:100%;border-collapse:collapse;font:400 14px var(--sans);font-variant-numeric:tabular-nums;margin:6px 0 8px}
+table.res th,table.res td{padding:9px 10px;border-bottom:1px solid var(--rule);text-align:right}
+table.res th:first-child,table.res td:first-child{text-align:left;padding-left:0}
+table.res thead th{font-weight:500;color:var(--ink-3);font-size:13px;border-bottom:1px solid var(--rule-2)}
+table.res td.m{font-weight:600}
+table.res td.up{color:var(--ok)}
+.prov{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--ink-3);margin-bottom:14px}
+.ok{display:inline-flex;gap:5px;align-items:center;color:var(--ok);background:var(--ok-wash);padding:2px 8px;border-radius:6px;font-weight:500}
+.ok svg{width:12px;height:12px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px;padding-top:16px;border-top:1px solid var(--rule)}
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule-2);background:var(--surface);border-radius:10px;padding:8px 13px;font-size:14px;color:var(--ink)}
+.btn:hover{background:var(--subtle)}
+.btn svg{width:15px;height:15px;color:var(--ink-2)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.primary svg{color:#fff}
+.meta-line{margin-left:auto;align-self:center;font-size:13px;color:var(--ink-3)}
+.toast{position:fixed;left:50%;bottom:110px;transform:translateX(-50%) translateY(10px);background:var(--ink);color:#fff;font-size:14px;padding:8px 14px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;z-index:30}
+.toast.on{opacity:1;transform:translateX(-50%)}
+
+/* multi-paper cards */
+.cards{display:flex;flex-direction:column;gap:10px;margin:8px 0 6px}
+.card{border:1px solid var(--rule);background:var(--surface);border-radius:14px}
+.card > button{width:100%;text-align:left;border:0;background:transparent;padding:14px 16px;display:grid;grid-template-columns:1fr auto;gap:4px 16px}
+.card .ct{font:500 15px/1.4 var(--sans)}
+.card .cy{font-size:13px;color:var(--ink-3);white-space:nowrap}
+.card .cs{grid-column:1/-1;font:400 16px/1.55 var(--serif);color:var(--ink-2)}
+.card .more{display:none;padding:0 16px 16px;border-top:1px solid var(--rule)}
+.card.open .more{display:block}
+.card.open > button .cs{color:var(--ink)}
+
+/* ---------- graph panel ---------- */
+.panel{position:relative;height:100vh;background:var(--surface);border-left:1px solid var(--rule);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.panel-inner{width:var(--panel);display:flex;flex-direction:column;height:100%}
+.ph{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 6px}
+.ph h2{margin:0;font:400 24px/1.2 var(--serif);letter-spacing:-.01em}
+.ph p{margin:4px 0 0;color:var(--ink-2);font-size:13.5px;max-width:42ch}
+.ph .icon-btn{margin-left:auto}
+.gwrap{position:relative;height:46%;min-height:300px;flex:none;border-bottom:1px solid var(--rule)}
+.gwrap svg{width:100%;height:100%;display:block}
+.edge{stroke:#7F95BF;stroke-linecap:round}
+.node circle{stroke:#fff;stroke-width:1.25;cursor:pointer;transition:opacity .15s}
+.lbl{font:500 10.5px var(--sans);fill:var(--ink-2);pointer-events:none;paint-order:stroke;stroke:#fff;stroke-width:3px}
+.gwrap.focus .lbl{opacity:.25}
+.node.origin circle{stroke:var(--ink);stroke-width:2.5}
+.node.sel circle{stroke:var(--accent);stroke-width:3}
+.gwrap.focus .edge{opacity:.05!important}
+.gwrap.focus .edge.hl{opacity:.8!important}
+.gwrap.focus .node circle{opacity:.2}
+.gwrap.focus .node.hl circle{opacity:1}
+.legend{position:absolute;left:14px;bottom:10px;display:flex;gap:16px;font-size:12px;color:var(--ink-3);align-items:center}
+.ramp{display:inline-block;width:70px;height:7px;border-radius:4px;background:linear-gradient(90deg,#D9DCE0,#3D63B5);vertical-align:middle;margin:0 5px}
+.dots i{display:inline-block;border-radius:50%;background:#AAB7CF;margin-right:3px;vertical-align:middle}
+.tabs{display:flex;gap:2px;padding:12px 18px 4px}
+.tabs button{border:0;background:transparent;border-radius:8px;padding:6px 10px;font-size:13.5px;color:var(--ink-2)}
+.tabs button[aria-selected="true"]{background:var(--subtle);color:var(--ink);font-weight:500}
+.tabs .count{color:var(--ink-3);margin-left:4px}
+.plist{flex:1;overflow:auto;padding:0 18px 18px}
+.plist ol{list-style:none;margin:0;padding:0}
+.plist li{border-bottom:1px solid var(--rule)}
+.plist li button{width:100%;border:0;background:transparent;text-align:left;padding:10px 4px;display:grid;grid-template-columns:1fr auto;gap:2px 12px}
+.plist li button:hover .pt{color:var(--accent-ink)}
+.pt{font:500 14px/1.4 var(--sans)}
+.pm{font-size:12.5px;color:var(--ink-3);grid-column:1}
+.pc{font-size:12.5px;color:var(--ink-3);text-align:right;white-space:nowrap}
+.detail{margin:4px 0 12px;padding:14px 16px;background:var(--subtle);border-radius:12px}
+.detail h4{margin:0 0 4px;font:500 15px/1.4 var(--sans)}
+.detail .dm{font-size:12.5px;color:var(--ink-3);margin-bottom:8px}
+.detail p{margin:0 0 12px;font:400 15px/1.55 var(--serif);color:var(--ink-2)}
+.detail .acts{display:flex;gap:8px;flex-wrap:wrap}
+.empty{padding:18px 4px;font-size:14px;color:var(--ink-2);max-width:44ch}
+.empty b{display:block;color:var(--ink);font-weight:500;margin-bottom:4px}
+
+/* ---------- mockup controls (not product) ---------- */
+.mock{position:fixed;left:14px;bottom:14px;z-index:40;display:flex;gap:6px;align-items:center;background:var(--ink);color:#E8E8E3;border-radius:12px;padding:6px 6px 6px 12px;font-size:12.5px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.mock button{border:0;background:#33332F;color:#E8E8E3;border-radius:8px;padding:5px 9px;font-size:12.5px}
+.mock button:hover{background:#4A4A45}
+
+@media (max-width:1100px){
+  :root{--panel:440px}
+}
+@media (max-width:820px){
+  .frame.panel-open{grid-template-columns:minmax(0,1fr) 0}
+  .panel{position:fixed;inset:auto 0 0 0;height:78vh;border-left:0;border-top:1px solid var(--rule);border-radius:18px 18px 0 0;transform:translateY(100%);transition:transform .4s var(--ease);z-index:20;box-shadow:0 -12px 40px rgba(0,0,0,.08)}
+  .frame.panel-open .panel{transform:none}
+  .panel-inner{width:100%}
+  .hero h1{font-size:44px}
+  .mock span{display:none}
+  .hint{flex-wrap:wrap}
+  .top .conv{display:none}
+  .follow{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+  .follow .chip{white-space:nowrap}
+  .top .mapbtn svg{display:none}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="frame" id="frame">
+  <div class="main landing" id="main">
+    <header class="top">
+      <span class="brand">Research Scout</span>
+      <span class="conv" id="conv">ReFlect: harness cho suy luận dài hạn</span>
+      <span class="spacer"></span>
+      <button class="ghost mapbtn" id="mapToggle" aria-controls="panel" aria-expanded="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="4" cy="11" r="2"/><circle cx="11.5" cy="4.5" r="2.5"/><circle cx="12" cy="12" r="1.5"/><path d="M5.6 9.8 9.6 6M5.9 11.3l4.6.6"/></svg>
+        Bản đồ liên quan</button>
+    </header>
+
+    <div class="stage">
+      <section class="hero" id="hero" aria-labelledby="h">
+        <small>Research Scout</small>
+        <h1 id="h">Bạn muốn hiểu điều gì?</h1>
+        <p>Đưa tôi một bài báo, một chủ đề hoặc một file PDF.</p>
+      </section>
+
+      <div class="thread" id="thread" aria-live="polite"><div class="col" id="col"></div></div>
+
+      <div class="dock" id="dock">
+        <div class="follow" id="follow">
+          <button class="chip" data-follow="quick">Vì sao tự phê bình bằng prompt thất bại?</button>
+          <button class="chip" data-follow="run">Phân tích ChatCoT</button>
+          <button class="chip" data-follow="table">Table 17 đo compute thế nào?</button>
+        </div>
+        <form class="composer" id="composer">
+          <label for="q" class="sr">Hỏi về một bài báo hoặc chủ đề</label>
+          <textarea id="q" rows="1" placeholder="Hỏi về một bài báo hoặc chủ đề…">https://arxiv.org/abs/2605.05737</textarea>
+          <div class="row">
+            <button class="icon-btn" type="button" aria-label="Đính kèm PDF"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13.5 6.5 7.6 12.4a1.8 1.8 0 0 0 2.5 2.6l6-6a3.4 3.4 0 0 0-4.8-4.8l-6 6a5 5 0 0 0 7.1 7.1l4.4-4.4"/></svg></button>
+            <button class="send" id="send" type="submit" aria-label="Gửi"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg></button>
+          </div>
+        </form>
+        <div class="hint modes">
+          <button class="chip" data-fill="https://arxiv.org/abs/2605.05737">Phân tích một bài</button>
+          <button class="chip" data-fill="harness cho suy luận LLM dài hạn">Tìm theo chủ đề</button>
+        </div>
+        <div class="note">Số liệu trong báo cáo được kiểm tra với bảng của paper. Phần diễn giải do AI viết và có thể sai.</div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="panel" id="panel" aria-label="Bản đồ liên quan" hidden>
+    <div class="panel-inner">
+      <div class="ph">
+        <div>
+          <h2>Bản đồ liên quan</h2>
+          <p id="psub">40 bài dùng chung nhiều tài liệu tham khảo nhất với ReFlect. Bài càng gần, nền tảng càng giống.</p>
+        </div>
+        <button class="icon-btn" id="closePanel" aria-label="Đóng bản đồ"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 5l10 10M15 5 5 15"/></svg></button>
+      </div>
+      <div class="gwrap" id="gwrap">
+        <svg id="g" role="group" aria-label="Đồ thị bài liên quan. Dùng phím Tab để duyệt từng bài."></svg>
+        <div class="legend" aria-hidden="true"><span class="dots"><i style="width:5px;height:5px"></i><i style="width:9px;height:9px"></i><i style="width:14px;height:14px"></i>số trích dẫn</span><span>2022<span class="ramp"></span>2026</span></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="sim">Tương tự<span class="count">40</span></button>
+        <button role="tab" aria-selected="false" data-tab="prior">Nền tảng<span class="count">10</span></button>
+        <button role="tab" aria-selected="false" data-tab="deriv">Kế thừa<span class="count">10</span></button>
+      </div>
+      <div class="plist" id="plist"></div>
+    </div>
+  </aside>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<div class="mock" aria-label="Điều khiển mockup">
+  <span>Mockup</span>
+  <button id="mReplay">Phát lại</button>
+  <button id="mMulti">Kết quả nhiều bài</button>
+  <button id="mSkip">Bỏ qua chờ</button>
+</div>
+
+<script>
+const D = {"nodes":[{"id":"W7160616492","a":"2605.05737","t":"ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning","y":2026,"c":0,"s":1.0,"au":"Fan Huang","ab":"Current reasoning paradigms for LLMs include chain-of-thought, ReAct, and post-hoc self-critique. These paradigms rely on two assumptions that fail on long-horizon, multi-stage tasks. As a result, errors accumulate silently across reasoning steps, leaving an open question: can a reasoning system effectively detect and recover from its own failures? We present ReFlect, a \\emph{harness} system for LLM reasoning that cr","o":true},{"id":"W4389520676","a":"2310.12426","t":"MAF: Multi-Aspect Feedback for Improving Reasoning in Large Language Models","y":2023,"c":6,"s":0.306,"au":"Deepak Nathani","ab":"Language Models (LMs) have shown impressive performance in various natural language tasks. However, when it comes to natural language reasoning, LMs still face challenges such as hallucination, generating incorrect intermediate reasoning steps, and making mathematical errors. Recent research has focused on enhancing LMs through self-improvement using feedback. Nevertheless, existing approaches relying on a single gen","o":false},{"id":"W4389518771","a":"2305.14323","t":"ChatCoT: Tool-Augmented Chain-of-Thought Reasoning on Chat-based Large Language Models","y":2023,"c":26,"s":0.296,"au":"Zhipeng Chen","ab":"Although large language models (LLMs) have achieved excellent performance in a variety of evaluation benchmarks, they still struggle in complex reasoning tasks which require specific knowledge and multi-hop reasoning. To improve the reasoning abilities, we propose ChatCoT, a tool-augmented chain-of-thought reasoning framework for chat-based LLMs (e.g., ChatGPT). In ChatCoT, we model the chain-of-thought (CoT) reasoni","o":false},{"id":"W4389523807","a":"2304.13007","t":"Answering Questions by Meta-Reasoning over Multiple Chains of Thought","y":2023,"c":35,"s":0.264,"au":"Ori Yoran","ab":"Modern systems for multi-hop question answering (QA) typically break questions into a sequence of reasoning steps, termed chain-of-thought (CoT), before arriving at a final answer. Often, multiple chains are sampled and aggregated through a voting mechanism over the final answers, but the intermediate steps themselves are discarded. While such approaches improve performance, they do not consider the relations between","o":false},{"id":"W4385571050","a":"2305.18153","t":"Do Large Language Models Know What They Don't Know?","y":2023,"c":64,"s":0.238,"au":"Zhangyue Yin","ab":"Large language models (LLMs) have a wealth of knowledge that allows them to excel in various Natural Language Processing (NLP) tasks. Current research focuses on enhancing their performance within their existing knowledge. Despite their vast knowledge, LLMs are still limited by the amount of information they can accommodate and comprehend. Therefore, the ability to understand their own limitations on the unknows, ref","o":false},{"id":"W4385569882","a":"2305.03268","t":"Verify-and-Edit: A Knowledge-Enhanced Chain-of-Thought Framework","y":2023,"c":54,"s":0.222,"au":"Ruochen Zhao","ab":"As large language models (LLMs) have become the norm in NLP, demonstrating good performance in generation and reasoning tasks, one of its most fatal disadvantages is the lack of factual correctness. Generating unfactual texts not only leads to lower performances but also degrades the trust and validity of their applications. Chain-of-Thought (CoT) prompting improves trust and model performance on complex reasoning ta","o":false},{"id":"W4399531538","a":null,"t":"Intelligent Digital Agents in the Era of Large Language Models","y":2024,"c":0,"s":0.287,"au":"Benjamin Faught","ab":"","o":false},{"id":"W4389520003","a":"2305.14333","t":"Automatic Model Selection with Large Language Models for Reasoning","y":2023,"c":11,"s":0.202,"au":"James Zhao","ab":"Chain-of-Thought (CoT) and Program-Aided Language Models (PAL) represent two distinct reasoning methods, each with its own strengths. CoT employs natural language, offering flexibility and interpretability, while PAL utilizes programming language, yielding more structured and rigorous logic. We introduce a model selection method to combine the best of both worlds by employing a large language model (LLM) to dynamical","o":false},{"id":"W4389518606","a":null,"t":"CRT-QA: A Dataset of Complex Reasoning Question Answering over Tabular Data","y":2023,"c":5,"s":0.273,"au":"Zhehao Zhang","ab":"","o":false},{"id":"W4389523853","a":"2310.14799","t":"Cross-lingual Prompting: Improving Zero-shot Chain-of-Thought Reasoning across Languages","y":2023,"c":31,"s":0.185,"au":"Libo Qin","ab":"Chain-of-thought (CoT) is capable of eliciting models to explicitly generate reasoning paths, thus promoting reasoning accuracy and attracting increasing attention. Specifically, zero-shot CoT achieves remarkable improvements in a wide range of reasoning tasks by simply instructing the LLM with the prompt \"Let's think step by step!\". Despite the success of zero-shot CoT, the existing zero-shot prompting techniques re","o":false},{"id":"W4389518896","a":"2310.07611","t":"Democratizing LLMs: An Exploration of Cost-Performance Trade-offs in Self-Refined Open-Source Models","y":2023,"c":9,"s":0.182,"au":"Sumuk Shashidhar","ab":"The dominance of proprietary LLMs has led to restricted access and raised information privacy concerns. High-performing open-source alternatives are crucial for information-sensitive and high-volume applications but often lag behind in performance. To address this gap, we propose (1) A untargeted variant of iterative self-critique and self-refinement devoid of external influence. (2) A novel ranking metric - Performa","o":false},{"id":"W4389520747","a":"2305.14992","t":"Reasoning with Language Model is Planning with World Model","y":2023,"c":147,"s":0.176,"au":"Shibo Hao","ab":"Large language models (LLMs) have shown remarkable reasoning capabilities, especially when prompted to generate intermediate reasoning steps (e.g., Chain-of-Thought, CoT). However, LLMs can still struggle with problems that are easy for humans, such as generating action plans for executing tasks in a given environment, or performing complex math, logical, and commonsense reasoning. The deficiency stems from the key f","o":false},{"id":"W4393160302","a":"2308.09687","t":"Graph of Thoughts: Solving Elaborate Problems with Large Language Models","y":2023,"c":524,"s":0.175,"au":"Maciej Besta","ab":"We introduce Graph of Thoughts (GoT): a framework that advances prompting capabilities in large language models (LLMs) beyond those offered by paradigms such as Chain-of-Thought or Tree of Thoughts (ToT). The key idea and primary advantage of GoT is the ability to model the information generated by an LLM as an arbitrary graph, where units of information (\"LLM thoughts\") are vertices, and edges correspond to dependen","o":false},{"id":"W4389524566","a":"2312.01823","t":"Exchange-of-Thought: Enhancing Large Language Model Capabilities through Cross-Model Communication","y":2023,"c":20,"s":0.174,"au":"Zhangyue Yin","ab":"Large Language Models (LLMs) have recently made significant strides in complex reasoning tasks through the Chain-of-Thought technique. Despite this progress, their reasoning is often constrained by their intrinsic understanding, lacking external insights. To address this, we propose Exchange-of-Thought (EoT), a novel framework that enables cross-model communication during problem-solving. Drawing inspiration from net","o":false},{"id":"W4389523957","a":"2302.06476","t":"Is ChatGPT a General-Purpose Natural Language Processing Task Solver?","y":2023,"c":462,"s":0.171,"au":"Chengwei Qin","ab":"Spurred by advancements in scale, large language models (LLMs) have demonstrated the ability to perform a variety of natural language processing (NLP) tasks zero-shot -- i.e., without adaptation on downstream data. Recently, the debut of ChatGPT has drawn a great deal of attention from the natural language processing (NLP) community due to the fact that it can generate high-quality responses to human input and self-c","o":false},{"id":"W4389518608","a":"2304.08244","t":"API-Bank: A Comprehensive Benchmark for Tool-Augmented LLMs","y":2023,"c":108,"s":0.164,"au":"Minghao Li","ab":"Recent research has demonstrated that Large Language Models (LLMs) can enhance their capabilities by utilizing external tools. However, three pivotal questions remain unanswered: (1) How effective are current LLMs in utilizing tools? (2) How can we enhance LLMs' ability to utilize tools? (3) What obstacles need to be overcome to leverage tools? To address these questions, we introduce API-Bank, a groundbreaking bench","o":false},{"id":"W4405432725","a":null,"t":"Generative AI Agents for Knowledge Work Augmentation in Finance","y":2024,"c":9,"s":0.243,"au":"Sumitra Ganesh","ab":"","o":false},{"id":"W4385570088","a":"2305.04091","t":"Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models","y":2023,"c":332,"s":0.163,"au":"Lei Wang","ab":"Large language models (LLMs) have recently been shown to deliver impressive performance in various NLP tasks. To tackle multi-step reasoning tasks, few-shot chain-of-thought (CoT) prompting includes a few manually crafted step-by-step reasoning demonstrations which enable LLMs to explicitly generate reasoning steps and improve their reasoning task accuracy. To eliminate the manual effort, Zero-shot-CoT concatenates t","o":false},{"id":"W4401719266","a":"2311.13148","t":"Towards Responsible Generative AI: A Reference Architecture for Designing Foundation Model based Agents","y":2023,"c":18,"s":0.159,"au":"Qinghua Lu","ab":"Foundation models, such as large language models (LLMs), have been widely recognised as transformative AI technologies due to their capabilities to understand and generate content, including plans with reasoning capabilities. Foundation model based agents derive their autonomy from the capabilities of foundation models, which enable them to autonomously break down a given goal into a set of manageable tasks and orche","o":false},{"id":"W4389524052","a":"2310.13332","t":"Democratizing Reasoning Ability: Tailored Learning from Large Language Model","y":2023,"c":8,"s":0.154,"au":"Zhaoyang Wang","ab":"Large language models (LLMs) exhibit impressive emergent abilities in natural language processing, but their democratization is hindered due to huge computation requirements and closed-source nature. Recent research on advancing open-source smaller LMs by distilling knowledge from black-box LLMs has obtained promising results in the instruction-following ability. However, the reasoning ability which is more challengi","o":false},{"id":"W4413014960","a":"2506.12270","t":"Cloud Infrastructure Management in the Age of AI Agents","y":2025,"c":12,"s":0.148,"au":"Zhenning Yang","ab":"Cloud infrastructure is the cornerstone of the modern IT industry. However, managing this infrastructure effectively requires considerable manual effort from the DevOps engineering team. We make a case for developing AI agents powered by large language models (LLMs) to automate cloud infrastructure management tasks. In a preliminary study, we investigate the potential for AI agents to use different cloud/user interfa","o":false},{"id":"W4400491795","a":null,"t":"Enhancing AI Systems with Agentic Workflows Patterns in Large Language Model","y":2024,"c":61,"s":0.227,"au":"Aditi Singh","ab":"","o":false},{"id":"W4389518737","a":"2305.13160","t":"Can ChatGPT Defend its Belief in Truth? Evaluating LLM Reasoning via Debate","y":2023,"c":47,"s":0.144,"au":"Boshi Wang","ab":"Large language models (LLMs) such as ChatGPT and GPT-4 have shown impressive performance in complex reasoning tasks. However, it is difficult to know whether the models are reasoning based on deep understandings of truth and logic, or leveraging their memorized patterns in a relatively superficial way. In this work, we explore testing LLMs' reasoning by engaging with them in a debate-like conversation, where given a ","o":false},{"id":"W4389519108","a":"2305.15074","t":"Have LLMs Advanced Enough? A Challenging Problem Solving Benchmark For Large Language Models","y":2023,"c":42,"s":0.143,"au":"Daman Arora","ab":"The performance of large language models (LLMs) on existing reasoning benchmarks has significantly improved over the past years. In response, we present JEEBench, a considerably more challenging benchmark dataset for evaluating the problem solving abilities of LLMs. We curate 515 challenging pre-engineering mathematics, physics and chemistry problems from the highly competitive IIT JEE-Advanced exam. Long-horizon rea","o":false},{"id":"W4393147219","a":"2308.11339","t":"ProAgent: Building Proactive Cooperative Agents with Large Language Models","y":2023,"c":64,"s":0.142,"au":"Ceyao Zhang","ab":"Building agents with adaptive behavior in cooperative tasks stands as a paramount goal in the realm of multi-agent systems. Current approaches to developing cooperative agents rely primarily on learning-based methods, whose policy generalization depends heavily on the diversity of teammates they interact with during the training phase. Such reliance, however, constrains the agents' capacity for strategic adaptation w","o":false},{"id":"W4362656036","a":"2304.01904","t":"REFINER: Reasoning Feedback on Intermediate Representations","y":2023,"c":29,"s":0.139,"au":"Debjit Paul","ab":"Language models (LMs) have recently shown remarkable performance on reasoning tasks by explicitly generating intermediate inferences, e.g., chain-of-thought prompting. However, these intermediate inference steps may be inappropriate deductions from the initial context and lead to incorrect final predictions. Here we introduce REFINER, a framework for finetuning LMs to explicitly generate intermediate reasoning steps ","o":false},{"id":"W4393160113","a":"2308.14034","t":"Confucius: Iterative Tool Learning from Introspection Feedback by Easy-to-Difficult Curriculum","y":2023,"c":16,"s":0.138,"au":"Shen Gao","ab":"Augmenting large language models (LLMs) with external tools has emerged as a promising approach to extending the capability of LLMs. Although some works employ open-source LLMs for the tool learning task, most of them are trained in a controlled environment in which LLMs only learn to execute the human-provided tools. However, selecting proper tools from the large toolset is also a crucial ability for the tool learni","o":false},{"id":"W4389520397","a":"2310.15372","t":"EpiK-Eval: Evaluation for Language Models as Epistemic Models","y":2023,"c":0,"s":0.132,"au":"Gabriele Prato","ab":"In the age of artificial intelligence, the role of large language models (LLMs) is becoming increasingly central. Despite their growing prevalence, their capacity to consolidate knowledge from different training documents - a crucial ability in numerous applications - remains unexplored. This paper presents the first study examining the capability of LLMs to effectively combine such information within their parameter","o":false},{"id":"W4388626886","a":"2303.16434","t":"TaskMatrix.AI: Completing Tasks by Connecting Foundation Models with Millions of APIs","y":2023,"c":101,"s":0.131,"au":"Yaobo Liang","ab":"Artificial Intelligence (AI) has made incredible progress recently. On the one hand, advanced foundation models like ChatGPT can offer powerful conversation, in-context learning and code generation abilities on a broad range of open-domain tasks. They can also generate high-level solution outlines for domain-specific tasks based on the common sense knowledge they have acquired. However, they still face difficulties w","o":false},{"id":"W4402727291","a":"2312.04547","t":"Digital Life Project: Autonomous 3D Characters with Social Intelligence","y":2023,"c":28,"s":0.128,"au":"Zhongang Cai","ab":"In this work, we present Digital Life Project, a framework utilizing language as the universal medium to build autonomous 3D characters, who are capable of engaging in social interactions and expressing with articulated body motions, thereby simulating life in a digital environment. Our framework comprises two primary components: 1) SocioMind: a meticulously crafted digital brain that models personalities with system","o":false},{"id":"W4385569771","a":"2212.09597","t":"Reasoning with Language Model Prompting: A Survey","y":2022,"c":137,"s":0.126,"au":"Shuofei Qiao","ab":"Reasoning, as an essential ability for complex problem-solving, can provide back-end support for various real-world applications, such as medical diagnosis, negotiation, etc. This paper provides a comprehensive survey of cutting-edge research on reasoning with language model prompting. We introduce research works with comparisons and summaries and provide systematic resources to help beginners. We also discuss the po","o":false},{"id":"W4391116688","a":"2308.09830","t":"Synergistic Integration of Large Language Models and Cognitive Architectures for Robust AI: An Exploratory Analysis","y":2023,"c":40,"s":0.126,"au":"Oscar J. Romero","ab":"This paper explores the integration of two AI subdisciplines employed in the development of artificial agents that exhibit intelligent behavior: Large Language Models (LLMs) and Cognitive Architectures (CAs). We present three integration approaches, each grounded in theoretical models and supported by preliminary empirical evidence. The modular approach, which introduces four models with varying degrees of integratio","o":false},{"id":"W4389519446","a":"2305.14045","t":"The CoT Collection: Improving Zero-shot and Few-shot Learning of Language Models via Chain-of-Thought Fine-Tuning","y":2023,"c":49,"s":0.126,"au":"Seungone Kim","ab":"Language models (LMs) with less than 100B parameters are known to perform poorly on chain-of-thought (CoT) reasoning in contrast to large LMs when solving unseen tasks. In this work, we aim to equip smaller LMs with the step-by-step reasoning capability by instruction tuning with CoT rationales. In order to achieve this goal, we first introduce a new instruction-tuning dataset called the CoT Collection, which augment","o":false},{"id":"W4403760933","a":"2403.10517","t":"VideoAgent: Long-form Video Understanding with Large Language Model as Agent","y":2024,"c":78,"s":0.124,"au":"Xiaohan Wang","ab":"Long-form video understanding represents a significant challenge within computer vision, demanding a model capable of reasoning over long multi-modal sequences. Motivated by the human cognitive process for long-form video understanding, we emphasize interactive reasoning and planning over the ability to process lengthy visual inputs. We introduce a novel agent-based system, VideoAgent, that employs a large language m","o":false},{"id":"W4389519586","a":"2305.14795","t":"MQuAKE: Assessing Knowledge Editing in Language Models via Multi-Hop Questions","y":2023,"c":47,"s":0.123,"au":"Zexuan Zhong","ab":"The information stored in large language models (LLMs) falls out of date quickly, and retraining from scratch is often not an option. This has recently given rise to a range of techniques for injecting new facts through updating model weights. Current evaluation paradigms are extremely limited, mainly validating the recall of edited facts, but changing one fact should cause rippling changes to the model's related bel","o":false},{"id":"W4411800160","a":null,"t":"Agentic AI for Medicare Annual Wellness Visits: Improving Preventive Care","y":2025,"c":6,"s":0.201,"au":"Vijaykumar Viradia","ab":"","o":false},{"id":"W4400582623","a":"2308.05487","t":"A Quantitative and Qualitative Evaluation of LLM-Based Explainable Fault Localization","y":2023,"c":125,"s":0.121,"au":"Sungmin Kang","ab":"Fault Localization (FL), in which a developer seeks to identify which part of the code is malfunctioning and needs to be fixed, is a recurring challenge in debugging. To reduce developer burden, many automated FL techniques have been proposed. However, prior work has noted that existing techniques fail to provide rationales for the suggested locations, hindering developer adoption of these techniques. With this in mi","o":false},{"id":"W4412759774","a":"2404.18021","t":"CRISPR-GPT for Agentic Automation of Gene-editing Experiments","y":2024,"c":129,"s":0.119,"au":"Yuanhao Qu","ab":"The introduction of genome engineering technology has transformed biomedical research, making it possible to make precise changes to genetic information. However, creating an efficient gene-editing system requires a deep understanding of CRISPR technology, and the complex experimental systems under investigation. While Large Language Models (LLMs) have shown promise in various tasks, they often lack specific knowledg","o":false},{"id":"W4401416853","a":"2309.12311","t":"LLM-Grounder: Open-Vocabulary 3D Visual Grounding with Large Language Model as an Agent","y":2023,"c":82,"s":0.119,"au":"Jianing Yang","ab":"3D visual grounding is a critical skill for household robots, enabling them to navigate, manipulate objects, and answer questions based on their environment. While existing approaches often rely on extensive labeled data or exhibit limitations in handling complex language queries, we propose LLM-Grounder, a novel zero-shot, open-vocabulary, Large Language Model (LLM)-based 3D visual grounding pipeline. LLM-Grounder u","o":false},{"id":"W4385571452","a":"2305.11255","t":"Reasoning Implicit Sentiment with Chain-of-Thought Prompting","y":2023,"c":110,"s":0.119,"au":"Hao Fei","ab":"While sentiment analysis systems try to determine the sentiment polarities of given targets based on the key opinion expressions in input texts, in implicit sentiment analysis (ISA) the opinion cues come in an implicit and obscure manner. Thus detecting implicit sentiment requires the common-sense and multi-hop reasoning ability to infer the latent intent of opinion. Inspired by the recent chain-of-thought (CoT) idea","o":false},{"id":"W4393161007","a":"2308.12033","t":"PREFER: Prompt Ensemble Learning via Feedback-Reflect-Refine","y":2023,"c":18,"s":0.117,"au":"Chenrui Zhang","ab":"As an effective tool for eliciting the power of Large Language Models (LLMs), prompting has recently demonstrated unprecedented abilities across a variety of complex tasks. To further improve the performance, prompt ensemble has attracted substantial interest for tackling the hallucination and instability of LLMs. However, existing methods usually adopt a two-stage paradigm, which requires a pre-prepared set of promp","o":false}],"edges":[["W4389518771","W4389520676",0.36],["W4385571050","W4389523807",0.356],["W4385570088","W4389520003",0.338],["W4385570088","W4389524566",0.332],["W4385569882","W4389523807",0.332],["W4385571050","W4389520676",0.321],["W4385571050","W4389520003",0.318],["W4389520003","W4389520676",0.312],["W4389518608","W4393160113",0.312],["W4385571050","W4389518771",0.31],["W4389518896","W4389524052",0.308],["W4389520676","W7160616492",0.306],["W4400491795","W4411800160",0.301],["W4389520003","W4389524052",0.297],["W4389518606","W4389518771",0.296],["W4389518771","W7160616492",0.296],["W4399531538","W7160616492",0.287],["W4385569882","W4385571050",0.28],["W4389520003","W4389523807",0.28],["W4389518606","W7160616492",0.273],["W4389520676","W4389520747",0.271],["W4385570088","W4389523807",0.27],["W4389518608","W4389518771",0.267],["W4385569882","W4389520676",0.262],["W4385570088","W4389518771",0.259],["W4389518606","W4389520676",0.259],["W4385569771","W4385570088",0.259],["W4385569882","W4389518771",0.257],["W4385571050","W4389518606",0.251],["W4385571050","W4385571452",0.249],["W4389523807","W4393160302",0.248],["W4405432725","W7160616492",0.243],["W4389518737","W4389520676",0.242],["W4385569882","W4389519586",0.241],["W4385569882","W4389523853",0.241],["W4389520003","W4389520747",0.239],["W4388626886","W4389518608",0.236],["W4389520676","W4389524052",0.233],["W4388626886","W4393160113",0.232],["W4385570088","W4389520747",0.23],["W4389523807","W4389523853",0.23],["W4400491795","W7160616492",0.227],["W4385570088","W4385571452",0.227],["W4389520003","W4393160302",0.222],["W4389520747","W4393147219",0.22],["W4385571050","W4389519586",0.215],["W4385571050","W4389524566",0.213],["W4389519108","W4389520003",0.212],["W4389520676","W4411800160",0.212],["W4389518737","W4389519108",0.211],["W4385569771","W4389520003",0.21],["W4389518771","W4399531538",0.208],["W4389518606","W4393160113",0.208],["W4389518608","W4389520676",0.207],["W4389520003","W4389523853",0.205],["W4389523807","W4389524052",0.204],["W4389519446","W4389524052",0.204],["W4389519586","W4389523807",0.204],["W4389520676","W4393160113",0.204],["W4389523853","W4393160302",0.203],["W4411800160","W7160616492",0.201],["W4389519108","W4389520676",0.201],["W4385569771","W4389524566",0.201],["W4389524052","W4389524566",0.196],["W4388626886","W4389518606",0.196],["W4389519108","W4389524052",0.194],["W4385569882","W4385571452",0.194],["W4389520747","W4393160302",0.193],["W4389520676","W4393147219",0.192],["W4389518737","W4389520003",0.192],["W4389520676","W4400491795",0.192],["W4389518896","W4389519108",0.191],["W4385569771","W4389520676",0.185],["W4389518606","W4399531538",0.185],["W4389518737","W4389524566",0.183],["W4388626886","W4389520676",0.183],["W4389518896","W4400491795",0.182],["W4389518896","W7160616492",0.182],["W4399531538","W4411800160",0.181],["W4385570088","W4389519446",0.18],["W4385571050","W4393147219",0.179],["W4389518771","W4389519586",0.178],["W4385571452","W4389520003",0.176],["W4389520003","W4393161007",0.173],["W4389518606","W4389523957",0.171],["W4389523957","W7160616492",0.171],["W4389519446","W4389520676",0.169],["W4389520003","W4393147219",0.169],["W4401416853","W4402727291",0.168],["W4389520676","W4405432725",0.168],["W4399531538","W4413014960",0.168],["W4401719266","W4405432725",0.167],["W4399531538","W4401719266",0.167],["W4389518606","W4391116688",0.165],["W4362656036","W4389520003",0.165],["W4362656036","W4389520676",0.164],["W4362656036","W4385569882",0.163],["W4389520676","W4401416853",0.161],["W4389518771","W4405432725",0.16],["W4362656036","W4389524566",0.159],["W4389518771","W4391116688",0.159],["W4401719266","W7160616492",0.159],["W4385571050","W4389519446",0.158],["W4389524052","W4393161007",0.158],["W4389519446","W4389523957",0.158],["W4399531538","W4402727291",0.154],["W4399531538","W4401416853",0.151],["W4399531538","W4412759774",0.151],["W4388626886","W4391116688",0.15],["W4385571050","W4401416853",0.15],["W4385571452","W4389523957",0.149],["W4413014960","W7160616492",0.148],["W4389518608","W4391116688",0.142],["W4389520676","W4412759774",0.141],["W4389518606","W4403760933",0.14],["W4389518771","W4412759774",0.138],["W4389520397","W4389520676",0.134],["W4389520397","W7160616492",0.132],["W4400491795","W4401719266",0.132],["W4389520676","W4393161007",0.131],["W4389520676","W4403760933",0.131],["W4385571050","W4403760933",0.131],["W4400491795","W4402727291",0.128],["W4402727291","W7160616492",0.128],["W4389520676","W4400582623",0.127],["W4403760933","W7160616492",0.124],["W4389524566","W4393161007",0.124],["W4411800160","W4413014960",0.123],["W4389523853","W4400582623",0.122],["W4400582623","W7160616492",0.121],["W4389518608","W4389520397",0.119],["W4389520397","W4389520747",0.119],["W4412759774","W7160616492",0.119],["W4385571050","W4413014960",0.117],["W4389518606","W4400582623",0.113]],"prior":[{"t":"Chain-of-Thought Prompting Elicits Reasoning in Large Language Models","y":2022,"c":4226,"a":"2201.11903","k":36},{"t":"Self-Consistency Improves Chain of Thought Reasoning in Language Models","y":2022,"c":701,"a":"2203.11171","k":24},{"t":"Reflexion: Language Agents with Verbal Reinforcement Learning","y":2023,"c":286,"a":"2303.11366","k":24},{"t":"ReAct: Synergizing Reasoning and Acting in Language Models","y":2022,"c":596,"a":"2210.03629","k":23},{"t":"Least-to-Most Prompting Enables Complex Reasoning in Large Language Models","y":2022,"c":316,"a":"2205.10625","k":20},{"t":"Tree of Thoughts: Deliberate Problem Solving with Large Language Models","y":2023,"c":565,"a":"2305.10601","k":18},{"t":"Toolformer: Language Models Can Teach Themselves to Use Tools","y":2023,"c":405,"a":"2302.04761","k":17},{"t":"Self-Refine: Iterative Refinement with Self-Feedback","y":2023,"c":219,"a":"2303.17651","k":17},{"t":"Large Language Models are Zero-Shot Reasoners","y":2022,"c":1072,"a":"2205.11916","k":15},{"t":"Training language models to follow instructions with human feedback","y":2022,"c":4240,"a":"2203.02155","k":14}],"deriv":[{"t":"A Survey of Reasoning with Foundation Models","y":2023,"c":16,"a":"2312.11562","k":9},{"t":"How Do Large Language Models Capture the Ever-changing World Knowledge? A Review of Recent Advances","y":2023,"c":25,"a":"2310.07343","k":5},{"t":"A survey on LLM-based multi-agent systems: workflow, infrastructure, and challenges","y":2024,"c":382,"a":null,"k":4},{"t":"Tool Learning with Large Language Models: A Survey","y":2024,"c":99,"a":"2405.17935","k":4},{"t":"Automatically Correcting Large Language Models: Surveying the Landscape of Diverse Automated Correction Strategies","y":2024,"c":83,"a":null,"k":4},{"t":"A Comprehensive Overview of Large Language Models","y":2023,"c":735,"a":"2307.06435","k":3},{"t":"On the Prospects of Incorporating Large Language Models (LLMs) in Automated Planning and Scheduling (APS)","y":2024,"c":53,"a":"2401.02500","k":3},{"t":"Large Language Model Instruction Following: A Survey of Progresses and Challenges","y":2023,"c":45,"a":"2303.10475","k":3},{"t":"Igniting Language Intelligence: The Hitchhiker's Guide From Chain-of-Thought Reasoning to Language Agents","y":2023,"c":41,"a":"2311.11797","k":3},{"t":"A Survey on Hallucination in Large Language Models: Principles, Taxonomy, Challenges, and Open Questions","y":2023,"c":2370,"a":"2311.05232","k":2}]};
+const $ = s => document.querySelector(s);
+const main = $('#main'), frame = $('#frame'), col = $('#col'), thread = $('#thread');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let speed = 1, skip = false;
+const wait = ms => skip || reduce ? Promise.resolve() : new Promise(r => setTimeout(r, ms * speed));
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ICON = {
+  chev:'<svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 4 4 4-4 4"/></svg>',
+  tick:'<svg class="tick" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m3.5 8.5 3 3 6-7"/></svg>',
+  dl:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>',
+  copy:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8.5" height="8.5" rx="1.5"/><path d="M10.5 5V3.5A1 1 0 0 0 9.5 2.5h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1H5"/></svg>',
+  map:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="11" r="2"/><circle cx="11.5" cy="4.5" r="2.5"/><circle cx="12" cy="12" r="1.5"/><path d="M5.6 9.8 9.6 6M5.9 11.3l4.6.6"/></svg>',
+  ok:'<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 6.5 5 9l5-6"/></svg>'
+};
+
+/* ---------- progress block ---------- */
+const STEPS_MAIN = [
+  ['Đọc toàn văn', 'Đọc bản HTML trên ar5iv; không cần tải PDF.', 'methodology 8.000 ký tự, setup 6.000, experiments 12.000', '0:04'],
+  ['Trích xuất bảng và tài liệu tham khảo', '17 bảng; 27/29 tài liệu tham khảo khớp được với arXiv.', 'Table 3: success rate, 6 domain × 6 model. Hardware: 4 GPU.', '0:01'],
+  ['Ghi chú có cấu trúc', '3 insight và 4 hàng kết quả; code kiểm tra từng con số.', '4/4 hàng khớp nguồn, 0 hàng bị loại', '0:58'],
+  ['Dựng bản đồ liên quan', 'Tìm các bài dùng chung tài liệu tham khảo trên OpenAlex.', '22 bài gốc, 300 ứng viên, giữ 40 bài', '0:05'],
+  ['Viết báo cáo', 'Viết bản tóm tắt và báo cáo đầy đủ.', 'report.md, 5 mục', '2:33']
+];
+const STEPS_CHATCOT = [
+  ['Đọc toàn văn', 'Đọc bản HTML trên ar5iv.', '', '0:04'],
+  ['Trích xuất bảng và tài liệu tham khảo', 'Bảng kết quả và danh sách tham khảo.', '', '0:01'],
+  ['Ghi chú có cấu trúc', 'Insight, đại lượng đo và thiết lập.', '', '0:51'],
+  ['Dựng bản đồ liên quan', 'Cập nhật bản đồ cho ChatCoT.', '', '0:06'],
+  ['Viết báo cáo', 'Viết bản tóm tắt.', '', '2:10']
+];
+function progressBlock(steps, doneLabel){
+  const el = document.createElement('div'); el.className = 'prog';
+  el.innerHTML = `<button aria-expanded="false"><span class="pulse"></span><span class="pl">${esc(steps[0][0])}…</span>${ICON.chev}</button>
+    <div class="steps">${steps.map(s => `<div class="step wait"><span class="s-ico"></span><div><b>${esc(s[0])}</b><div class="d">${esc(s[1])}</div>${s[2]?`<div class="facts">${esc(s[2])}</div>`:''}</div><span class="t tnum">—</span></div>`).join('')}</div>`;
+  const btn = el.querySelector('button');
+  btn.onclick = () => { const o = el.classList.toggle('open'); btn.setAttribute('aria-expanded', o); };
+  el.run = async () => {
+    const rows = el.querySelectorAll('.step');
+    for (let i = 0; i < steps.length; i++){
+      rows[i].className = 'step now'; el.querySelector('.pl').textContent = steps[i][0] + '…';
+      await wait(i === 2 || i === 4 ? 1100 : 750);
+      rows[i].className = 'step done'; rows[i].querySelector('.t').textContent = steps[i][3];
+    }
+    el.querySelector('.pulse').outerHTML = ICON.tick;
+    el.querySelector('.pl').textContent = doneLabel;
+  };
+  return el;
+}
+
+/* ---------- answers ---------- */
+const ANSWER_MAIN = `
+<div class="paper-ref"><a href="https://arxiv.org/abs/2605.05737">ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning</a>, arXiv 2605.05737, 05/2026</div>
+<p class="lead">ReFlect chuyển việc phát hiện và sửa lỗi ra khỏi prompt, sang một lớp code bao quanh model. Nhờ vậy, model nhỏ có harness vượt model lớn không có harness, mà dùng ít token hơn.</p>
+<h3>Insight</h3>
+<ul>
+  <li><strong>Tự phê bình bằng prompt gần như không bắt được lỗi.</strong> 90/100 khối reflection không nêu vấn đề nào, và model chấp nhận đáp án sai ít nhất 76% số lần. Việc phát hiện lỗi cần nằm ngoài model.</li>
+  <li><strong>Harness quan trọng hơn kích thước model.</strong> Claude Haiku 4.5 có ReFlect đạt trung bình 48,0%; Claude Sonnet 4.5 không có harness chỉ đạt 27,1%.</li>
+  <li><strong>Lợi ích không đến từ việc tiêu nhiều token hơn.</strong> Trên tập 70B, Full ReFlect dùng 1.993 token mỗi bài và đạt 48,8%; Reflexion dùng 32.062 token và đạt 27,8%.</li>
+</ul>
+<h3>Đại lượng đo</h3>
+<dl class="defs">
+  <dt>Success rate</dt><dd>Tỉ lệ bài giải đúng trên 50 bài mỗi domain, tính bằng %. Cao hơn là tốt hơn.</dd>
+  <dt>Acc / 1K tokens</dt><dd>Độ chính xác chia cho số nghìn token đã dùng; đo hiệu quả chi phí. Cao hơn là tốt hơn.</dd>
+</dl>
+<h3>Thiết lập</h3>
+<p>6 domain (SWE-bench, QASPER, Proof, AIME, ALFWorld, FinQA), 50 bài mỗi domain, 6 model ở 3 tầng năng lực. Model 70B chạy trên vLLM, bf16, tensor-parallel 4 GPU. <span class="absent">Loại GPU: paper không nêu</span></p>
+<h3>Kết quả chính</h3>
+<table class="res">
+  <thead><tr><th>Thiết lập</th><th>Metric</th><th>ReFlect</th><th>Đối chứng</th><th>Chênh lệch</th></tr></thead>
+  <tbody>
+    <tr><td>Claude Haiku 4.5, TB 6 domain</td><td>Success %</td><td class="m">48.0</td><td>25.5 Direct CoT</td><td class="up">+22.5</td></tr>
+    <tr><td>Claude Sonnet 4.5, TB 6 domain</td><td>Success %</td><td class="m">56.4</td><td>27.1 Direct CoT</td><td class="up">+29.3</td></tr>
+    <tr><td>Qwen2.5-72B, TB 6 domain</td><td>Success %</td><td class="m">41.8</td><td>35.2 Direct CoT</td><td class="up">+6.6</td></tr>
+    <tr><td>Tập 70B, cùng ngân sách</td><td>Acc / 1K tok</td><td class="m">24.5</td><td>0.9 Reflexion</td><td class="up">×27</td></tr>
+  </tbody>
+</table>
+<div class="prov"><span class="ok">${ICON.ok} Mọi số khớp nguồn</span><span>Nguồn: Table 3 và Table 17 trong paper</span></div>
+<h3>Cần lưu ý</h3>
+<p>SWE-bench dùng bộ chấm cấu trúc riêng (Appendix L), nên điểm SWE không so trực tiếp được với bài khác. QASPER gần như không cải thiện (6,3–13,0). Bản harness không phụ thuộc domain chỉ đạt 17,0%, thấp hơn cả Direct CoT.</p>
+<h3>Nền tảng</h3>
+<p>Bài dựa trên hai dòng nghiên cứu: suy luận nhiều bước (Chain-of-Thought, Self-Consistency, Tree of Thoughts) và tự sửa lỗi (Reflexion, Self-Refine, ReAct). Bản đồ bên phải cho thấy 40 bài gần nhất.</p>
+<div class="actions">
+  <button class="btn primary" data-act="md">${ICON.dl} Tải report.md</button>
+  <button class="btn" data-act="bib">${ICON.copy} Sao chép BibTeX</button>
+  <button class="btn" data-act="map">${ICON.map} Bản đồ liên quan</button>
+  <span class="meta-line tnum">3 phút 41 giây</span>
+</div>`;
+
+const ANSWER_QUICK = `<p class="lead" style="font-size:19px">Vì model đánh giá lại chính lập luận của mình bằng cùng một cách nghĩ, nên nó thường không thấy lỗi.</p>
+<p>Trong 100 khối reflection mà tác giả kiểm tra, 90 khối không nêu vấn đề nào; chúng là các mẫu câu lặp lại. Các model được thử chấp nhận đáp án sai ít nhất 76% số lần. ReFlect thay bước này bằng cơ chế CHECK độc lập, và chỉ gọi REFLECT khi CHECK thất bại.</p>
+<div class="prov"><span>Từ báo cáo ReFlect, mục Insight và Table 15–16</span></div>`;
+
+const ANSWER_TABLE = `<p>Table 17 so các phương pháp trên tập 70B (Llama-3.3-70B và Qwen2.5-72B, 300 bài mỗi model) theo 3 đại lượng: số token mỗi bài, độ chính xác, và độ chính xác trên mỗi 1.000 token.</p>
+<table class="res"><thead><tr><th>Phương pháp</th><th>Token / bài</th><th>Accuracy %</th><th>Acc / 1K tok</th></tr></thead><tbody>
+<tr><td>Direct (1 run)</td><td>2,001</td><td>26.9</td><td>13.4</td></tr>
+<tr><td>ReAct (1 run)</td><td>4,087</td><td>26.5</td><td>6.5</td></tr>
+<tr><td>Self-Refine (3 vòng)</td><td>8,361</td><td>27.2</td><td>3.2</td></tr>
+<tr><td>Reflexion (3 episode)</td><td>32,062</td><td>27.8</td><td>0.9</td></tr>
+<tr><td>Full ReFlect</td><td>1,993</td><td class="m">48.8</td><td class="m">24.5</td></tr>
+</tbody></table>
+<div class="prov"><span class="ok">${ICON.ok} Mọi số khớp nguồn</span><span>Nguồn: Table 17</span></div>`;
+
+const ANSWER_CHATCOT = `
+<div class="paper-ref"><a href="https://arxiv.org/abs/2305.14323">ChatCoT: Tool-Augmented Chain-of-Thought Reasoning on Chat-based Large Language Models</a>, arXiv 2305.14323, 2023</div>
+<p class="lead">ChatCoT biến chain-of-thought thành một cuộc hội thoại nhiều lượt; ở mỗi lượt, model chọn giữa suy luận tiếp hoặc gọi công cụ.</p>
+<p>So với ReFlect: cả hai đều đưa công cụ vào quá trình suy luận, nhưng ChatCoT để model tự quyết khi nào kiểm tra, còn ReFlect đặt việc kiểm tra vào code bên ngoài model.</p>
+<div class="actions">
+  <button class="btn primary" data-act="md">${ICON.dl} Tải report.md</button>
+  <button class="btn" data-act="bib">${ICON.copy} Sao chép BibTeX</button>
+  <span class="meta-line tnum">3 phút 12 giây</span>
+</div>`;
+
+const MULTI = [
+  ['ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning','2026','Đặt việc phát hiện và sửa lỗi vào code quanh model; Haiku 4.5 có harness đạt 48,0% so với 25,5% khi không có.'],
+  ['MAF: Multi-Aspect Feedback for Improving Reasoning in Large Language Models','2023','Gộp nhiều nguồn phản hồi, mỗi nguồn chuyên một loại lỗi, thay cho một bộ phản hồi chung.'],
+  ['ChatCoT: Tool-Augmented Chain-of-Thought Reasoning on Chat-based Large Language Models','2023','Chuỗi suy luận thành hội thoại nhiều lượt; model chọn suy luận tiếp hoặc gọi công cụ.'],
+  ['Answering Questions by Meta-Reasoning over Multiple Chains of Thought','2023','Suy luận trên nhiều chuỗi CoT cùng lúc thay vì chỉ bỏ phiếu đáp án cuối.'],
+  ['Verify-and-Edit: A Knowledge-Enhanced Chain-of-Thought Framework','2023','Sửa các bước suy luận theo tri thức bên ngoài để tăng độ đúng sự thật.']
+];
+const ANSWER_MULTI = `
+<p class="lead">Năm bài chọn ra cùng trả lời một câu hỏi: làm sao để model không tin vào lỗi của chính nó. Hướng mới nhất chuyển việc kiểm tra từ prompt sang công cụ và code bên ngoài.</p>
+<h3>Insight chung</h3>
+<ul>
+  <li><strong>Phản hồi từ chính model là điểm yếu chung.</strong> MAF và Verify-and-Edit lấy phản hồi từ nguồn ngoài; ReFlect cho thấy tự phê bình bằng prompt bỏ sót phần lớn lỗi.</li>
+  <li><strong>Công cụ dần trở thành một phần của chuỗi suy luận.</strong> ChatCoT gọi công cụ trong từng lượt; ReFlect định tuyến bài toán theo dạng tính toán.</li>
+</ul>
+<h3>5 bài</h3>
+<div class="cards">${MULTI.map((m,i)=>`<div class="card"><button aria-expanded="false"><span class="ct">${esc(m[0])}</span><span class="cy">${m[1]}</span><span class="cs">${esc(m[2])}</span></button><div class="more"><p style="margin-top:12px">Phân tích đầy đủ của bài hiện ở đây với cùng cấu trúc: insight, đại lượng đo, thiết lập, bảng kết quả, cần lưu ý.</p></div></div>`).join('')}</div>
+<div class="actions">
+  <button class="btn primary" data-act="md">${ICON.dl} Tải report.md</button>
+  <button class="btn" data-act="bib">${ICON.copy} Sao chép BibTeX (5)</button>
+  <button class="btn" data-act="map">${ICON.map} Bản đồ liên quan</button>
+  <span class="meta-line tnum">7 phút 05 giây</span>
+</div>`;
+
+function addUser(text, att){
+  const u = document.createElement('div'); u.className = 'msg-user';
+  u.innerHTML = `<div>${esc(text)}${att?`<span class="att">${esc(att)}</span>`:''}</div>`;
+  col.appendChild(u); return u;
+}
+function addTurn(){ const t = document.createElement('div'); t.className = 'turn'; col.appendChild(t); return t; }
+function addAnswer(turn, html){
+  const a = document.createElement('div'); a.className = 'answer'; a.innerHTML = html; turn.appendChild(a);
+  requestAnimationFrame(() => requestAnimationFrame(() => a.classList.add('in')));
+  a.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+    if (b.dataset.act === 'map') openPanel(true);
+    if (b.dataset.act === 'bib') toast('Đã sao chép BibTeX');
+    if (b.dataset.act === 'md') toast('Đã tải report.md');
+  });
+  a.querySelectorAll('.card > button').forEach(b => b.onclick = () => { const c = b.parentElement; const o = c.classList.toggle('open'); b.setAttribute('aria-expanded', o); });
+  return a;
+}
+const scrollEnd = () => thread.scrollTo({top: thread.scrollHeight, behavior: reduce ? 'auto' : 'smooth'});
+function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.h); toast.h = setTimeout(() => el.classList.remove('on'), 1600); }
+
+/* ---------- landing -> chat motion (FLIP on the composer) ---------- */
+function toChat(){
+  const comp = $('#composer'), first = comp.getBoundingClientRect();
+  main.classList.remove('landing'); main.classList.add('chat');
+  const last = comp.getBoundingClientRect();
+  if (!reduce){
+    comp.animate([{transform:`translate(${first.left-last.left}px, ${first.top-last.top}px)`, height:first.height+'px'},{transform:'none', height:last.height+'px'}],{duration:520, easing:'cubic-bezier(.2,.8,.2,1)'});
+  }
+}
+
+let busy = false;
+async function runMain(input){
+  busy = true; toChat();
+  addUser(input);
+  $('#q').value = ''; autosize();
+  const turn = addTurn();
+  await wait(420);
+  const p = progressBlock(STEPS_MAIN, 'Đã phân tích bài trong 3 phút 41 giây'); turn.appendChild(p);
+  await p.run();
+  addAnswer(turn, ANSWER_MAIN);
+  main.classList.add('has-result');
+  await wait(300);
+  if (innerWidth > 820) openPanel(true);
+  busy = false;
+}
+async function runMulti(){
+  reset(); q.value = ''; autosize(); busy = true; toChat(); $('#conv').textContent = 'Harness cho suy luận LLM dài hạn';
+  addUser('harness cho suy luận LLM dài hạn');
+  const turn = addTurn();
+  const p = progressBlock([['Tìm bài trong index local','Tìm trên 1 triệu bài cs.* và arXiv API.','40 ứng viên, giữ 5','0:02'],...STEPS_MAIN], 'Đã phân tích 5 bài trong 7 phút 05 giây');
+  turn.appendChild(p); await p.run();
+  addAnswer(turn, ANSWER_MULTI); main.classList.add('has-result'); await wait(300); openPanel(true); busy = false;
+}
+async function follow(kind){
+  if (busy) return; busy = true;
+  if (kind === 'quick'){ addUser('Vì sao tự phê bình bằng prompt thất bại?'); const t = addTurn(); scrollEnd(); await wait(700); addAnswer(t, ANSWER_QUICK); }
+  if (kind === 'table'){ addUser('Table 17 đo compute thế nào?'); const t = addTurn(); scrollEnd(); await wait(700); addAnswer(t, ANSWER_TABLE); }
+  if (kind === 'run'){
+    addUser('Phân tích ChatCoT'); const t = addTurn(); scrollEnd(); await wait(300);
+    const p = progressBlock(STEPS_CHATCOT, 'Đã phân tích ChatCoT trong 3 phút 12 giây'); t.appendChild(p); scrollEnd();
+    await p.run(); addAnswer(t, ANSWER_CHATCOT);
+  }
+  setTimeout(scrollEnd, 60); busy = false;
+}
+document.querySelectorAll('[data-follow]').forEach(b => b.onclick = () => follow(b.dataset.follow));
+
+/* composer */
+const q = $('#q');
+function autosize(){ q.style.height = 'auto'; q.style.height = Math.min(q.scrollHeight, 160) + 'px'; $('#send').disabled = !q.value.trim(); }
+q.addEventListener('input', autosize);
+q.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('#composer').requestSubmit(); } });
+$('#composer').onsubmit = e => {
+  e.preventDefault(); const v = q.value.trim(); if (!v || busy) return;
+  if (main.classList.contains('landing')) runMain(v);
+  else if (/chatcot/i.test(v)){ q.value=''; autosize(); follow('run'); }
+  else if (/table\s*17/i.test(v)){ q.value=''; autosize(); follow('table'); }
+  else { q.value=''; autosize(); follow('quick'); }
+};
+document.querySelectorAll('[data-fill]').forEach(b => b.onclick = () => { q.value = b.dataset.fill; autosize(); q.focus(); });
+
+/* ---------- graph panel ---------- */
+const panel = $('#panel');
+function openPanel(open){
+  panel.hidden = false;
+  requestAnimationFrame(() => {
+    frame.classList.toggle('panel-open', open);
+    $('#mapToggle').setAttribute('aria-expanded', open);
+    if (open) setTimeout(draw, reduce ? 0 : 460);
+  });
+}
+$('#closePanel').onclick = () => openPanel(false);
+$('#mapToggle').onclick = () => openPanel(!frame.classList.contains('panel-open'));
+
+const N = D.nodes, idx = new Map(N.map((n,i) => [n.id,i]));
+const E = D.edges.map(e => ({a:idx.get(e[0]), b:idx.get(e[1]), w:e[2]})).filter(e => e.a != null && e.b != null);
+const ORIGIN = N.findIndex(n => n.o);
+const yearColor = y => { const t = Math.max(0, Math.min(1, ((y||2022) - 2022) / 4)); const a=[0xD9,0xDC,0xE0], b=[0x3D,0x63,0xB5]; return `rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*t)).join(',')})`; };
+const radius = n => n.o ? 11 : 3.5 + Math.sqrt(Math.log10((n.c||0)+1)) * 6.5;
+const short = n => { const m = n.t.match(/^([^:]{2,26}):/); return m ? m[1] : n.t.split(' ').slice(0,3).join(' '); };
+function rng(s){ return () => ((s = Math.imul(s ^ s >>> 15, s | 1) ^ (s + Math.imul(s ^ s >>> 7, s | 61))) >>> 0) / 4294967296; }
+function layout(W,H){
+  const r = rng(5), cx = W/2, cy = H/2, kd = Math.sqrt(W*H/N.length) * .8;
+  N.forEach(n => { const a = r()*6.283, d = (1 - Math.min(n.s,1)) * Math.min(W,H) * .5; n.px = cx + Math.cos(a)*d; n.py = cy + Math.sin(a)*d; });
+  let temp = Math.min(W,H) / 8;
+  for (let it = 0; it < 500; it++){
+    N.forEach(n => { n.vx = 0; n.vy = 0; });
+    for (let i = 0; i < N.length; i++) for (let j = i+1; j < N.length; j++){
+      const dx = N[i].px - N[j].px, dy = N[i].py - N[j].py, d = Math.hypot(dx,dy) || .1, f = kd*kd/d;
+      N[i].vx += dx/d*f; N[i].vy += dy/d*f; N[j].vx -= dx/d*f; N[j].vy -= dy/d*f;
+    }
+    for (const e of E){ const A = N[e.a], B = N[e.b], dx = A.px - B.px, dy = A.py - B.py, d = Math.hypot(dx,dy) || .1, f = d*d/kd * (.35 + e.w*2);
+      A.vx -= dx/d*f; A.vy -= dy/d*f; B.vx += dx/d*f; B.vy += dy/d*f; }
+    for (const n of N){
+      if (n.o){ n.px = cx; n.py = cy; continue; }
+      n.vx += (cx - n.px) * .01 * kd/10; n.vy += (cy - n.py) * .01 * kd/10;
+      const d = Math.hypot(n.vx, n.vy) || 1; n.px += n.vx/d * Math.min(d, temp); n.py += n.vy/d * Math.min(d, temp);
+      n.px = Math.max(22, Math.min(W-22, n.px)); n.py = Math.max(20, Math.min(H-34, n.py));
+    }
+    temp *= .985;
+  }
+}
+let drawnW = 0, selected = ORIGIN;
+function draw(){
+  const svg = $('#g'), box = svg.getBoundingClientRect(); if (!box.width || Math.abs(box.width - drawnW) < 2) return;
+  drawnW = box.width; const W = box.width, H = box.height, ns = 'http://www.w3.org/2000/svg';
+  svg.innerHTML = ''; svg.setAttribute('viewBox', `0 0 ${W} ${H}`); layout(W,H);
+  const LABELS = new Set(N.filter(n => !n.o).sort((a,b) => (b.c||0)*b.s - (a.c||0)*a.s).slice(0,8).map(n => n.id));
+  const g = document.createElementNS(ns,'g'); svg.appendChild(g); const placed = [], lbls = [];
+  E.forEach(e => { const l = document.createElementNS(ns,'line'); l.setAttribute('class','edge');
+    l.setAttribute('x1',N[e.a].px); l.setAttribute('y1',N[e.a].py); l.setAttribute('x2',N[e.b].px); l.setAttribute('y2',N[e.b].py);
+    l.setAttribute('stroke-width', .5 + e.w*4); l.style.opacity = .1 + e.w; l.dataset.a = e.a; l.dataset.b = e.b; g.appendChild(l); });
+  N.map((n,i) => i).sort((a,b) => (N[b].o - N[a].o) || (radius(N[b]) - radius(N[a]))).forEach(i => {
+    const n = N[i], ng = document.createElementNS(ns,'g');
+    ng.setAttribute('class', 'node' + (n.o ? ' origin' : '')); ng.setAttribute('tabindex','0'); ng.setAttribute('role','button');
+    ng.setAttribute('aria-label', `${n.t}, ${n.y}, ${n.c} trích dẫn`); ng.dataset.i = i;
+    const c = document.createElementNS(ns,'circle'); c.setAttribute('cx',n.px); c.setAttribute('cy',n.py); c.setAttribute('r',radius(n)); c.setAttribute('fill', n.o ? '#1B1B19' : yearColor(n.y)); ng.appendChild(c);
+    const txt = n.o ? 'ReFlect' : `${short(n)}, ${n.y}`, lw = txt.length*5.9, left = n.px > W*.62;
+    const bx = left ? n.px - radius(n) - 4 - lw : n.px + radius(n) + 4, box = [bx, n.py - 8, bx + lw, n.py + 6];
+    const hits = q => !(box[2] < q[0] || box[0] > q[2] || box[3] < q[1] || box[1] > q[3]);
+    const free = n.o || (LABELS.has(n.id) && bx > 2 && box[2] < W - 2 && !placed.some(hits) && !N.some(m => m !== n && hits([m.px - radius(m), m.py - radius(m), m.px + radius(m), m.py + radius(m)])));
+    if (free){ placed.push(box); const t = document.createElementNS(ns,'text'); t.setAttribute('class','lbl'); if (n.o) t.style.cssText = 'fill:#1B1B19;font-weight:600';
+      t.setAttribute('x', left ? n.px - radius(n) - 4 : n.px + radius(n) + 4); t.setAttribute('y', n.py + 3.5); if (left) t.setAttribute('text-anchor','end');
+      t.textContent = txt; lbls.push(t); }
+    ng.onclick = () => pick(i); ng.onkeydown = ev => { if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); pick(i); } };
+    ng.onmouseenter = ng.onfocus = () => hl(i); ng.onmouseleave = ng.onblur = () => hl(null);
+    g.appendChild(ng);
+  });
+  const og = g.querySelector('.node.origin'); if (og) g.appendChild(og);
+  const lg = document.createElementNS(ns,'g'); lbls.forEach(t => lg.appendChild(t)); svg.appendChild(lg);
+  markSel();
+}
+function hl(i){
+  $('#gwrap').classList.toggle('focus', i != null); const nb = new Set([i]);
+  document.querySelectorAll('.edge').forEach(l => { const on = i != null && (+l.dataset.a === i || +l.dataset.b === i); l.classList.toggle('hl', on); if (on){ nb.add(+l.dataset.a); nb.add(+l.dataset.b); } });
+  document.querySelectorAll('.node').forEach(n => n.classList.toggle('hl', nb.has(+n.dataset.i)));
+}
+function markSel(){ document.querySelectorAll('.node').forEach(n => n.classList.toggle('sel', +n.dataset.i === selected && selected !== ORIGIN)); }
+function pick(i){ selected = i; markSel(); setTab('sim'); }
+let tab = 'sim';
+function setTab(t){
+  tab = t; document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
+  const L = $('#plist'); const n = N[selected];
+  const detail = (selected !== ORIGIN && t === 'sim') ? `<div class="detail"><h4>${esc(n.t)}</h4><div class="dm tnum">${esc(n.au)}${n.au?', ':''}${n.y}, ${n.c} trích dẫn, tương đồng ${n.s.toFixed(2)}</div>${n.ab?`<p>${esc(n.ab.slice(0,260))}…</p>`:''}<div class="acts"><button class="btn" data-ask="${i18nAsk(n)}">Hỏi về bài này</button><button class="btn primary" data-run="${esc(short(n))}">Phân tích bài này</button></div></div>` : '';
+  const row = (x,i,meta,right) => `<li><button ${i!=null?`data-i="${i}"`:''}><span class="pt">${esc(x.t)}</span><span class="pc tnum">${right}</span><span class="pm">${meta}</span></button></li>`;
+  if (t === 'sim'){
+    const rows = N.map((x,i) => [x,i]).filter(([x]) => !x.o).sort((a,b) => b[0].s - a[0].s);
+    L.innerHTML = detail + '<ol>' + rows.map(([x,i]) => row(x, i, `${esc(x.au)}${x.au?', ':''}${x.y}`, `${x.c} tr.d.`)).join('') + '</ol>';
+  } else if (t === 'prior'){
+    L.innerHTML = '<p class="empty" style="padding-top:6px">Các bài mà nhiều bài trên bản đồ cùng trích dẫn. Đây thường là nền tảng của hướng nghiên cứu.</p><ol>' + D.prior.map(x => row(x, null, `${x.y}, ${x.k} bài trên bản đồ trích dẫn`, `${x.c.toLocaleString('vi-VN')} tr.d.`)).join('') + '</ol>';
+  } else {
+    L.innerHTML = '<p class="empty" style="padding-top:6px"><b>Chưa có bài nào trích dẫn ReFlect.</b>Bài đăng tháng 05/2026; OpenAlex ghi nhận 0 trích dẫn. Danh sách dưới đây là các bài trích dẫn nhiều bài trên bản đồ, gồm nhiều survey của hướng này.</p><ol>' + D.deriv.map(x => row(x, null, `${x.y}, trích dẫn ${x.k} bài trên bản đồ`, `${x.c.toLocaleString('vi-VN')} tr.d.`)).join('') + '</ol>';
+  }
+  L.querySelectorAll('button[data-i]').forEach(b => { b.onclick = () => pick(+b.dataset.i); b.onmouseenter = () => hl(+b.dataset.i); b.onmouseleave = () => hl(null); });
+  L.querySelectorAll('[data-run]').forEach(b => b.onclick = () => { if (/chatcot/i.test(b.dataset.run)) follow('run'); else toast('Mockup: lượt phân tích mới sẽ chạy trong cuộc chat'); });
+  L.querySelectorAll('[data-ask]').forEach(b => b.onclick = () => { q.value = b.dataset.ask; autosize(); q.focus(); });
+}
+const i18nAsk = n => esc(`So sánh ${short(n)} với ReFlect`);
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+addEventListener('resize', () => { if (frame.classList.contains('panel-open')){ drawnW = 0; draw(); } });
+
+/* ---------- reset + mockup controls ---------- */
+function reset(){
+  col.innerHTML = ''; main.className = 'main landing'; frame.classList.remove('panel-open'); panel.hidden = true; drawnW = 0; selected = ORIGIN;
+  $('#conv').textContent = 'ReFlect: harness cho suy luận dài hạn'; q.value = 'https://arxiv.org/abs/2605.05737'; autosize(); busy = false; skip = false;
+}
+$('#mReplay').onclick = () => reset();
+$('#mMulti').onclick = () => runMulti();
+$('#mSkip').onclick = () => { skip = true; };
+setTab('sim'); autosize();
+</script>
+</body>
+</html>

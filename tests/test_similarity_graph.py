@@ -43,6 +43,9 @@ class FakeOpenAlex:
     def citer_ids(self, work_id: str, per_page: int = 100) -> List[str]:
         return list(self.citers.get(short_id(work_id), []))
 
+    def work_by_title(self, title: str, min_jaccard: float = 0.8) -> None:
+        return None
+
 
 def _fixture():
     works = [_work(w, [], arxiv=a) for w, a in SEEDS.items()]

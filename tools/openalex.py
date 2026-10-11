@@ -106,6 +106,23 @@ class OpenAlexClient:
         data = self._get(f"/works/doi:10.48550/arXiv.{arxiv_id}", {"select": _WORK_FIELDS})
         return data if isinstance(data, dict) and data.get("id") else None
 
+    def work_by_title(self, title: str, min_jaccard: float = 0.8) -> Optional[Dict[str, Any]]:
+        """One title search; the accepted result (normalized-title Jaccard >= ``min_jaccard``)
+        with the highest ``cited_by_count`` (OpenAlex may split preprint/published versions)."""
+
+        from tools.ref_resolver import normalize_title, title_jaccard
+
+        text = normalize_title(str(title or ""))       # no punctuation: "?" and "*" are wildcards (HTTP 400)
+        if not text:
+            return None
+        data = self._get("/works", {"search": text, "per_page": "5", "select": _WORK_FIELDS})
+        results = data.get("results") if isinstance(data, dict) else None
+        accepted = [
+            item for item in results or []
+            if isinstance(item, dict) and title_jaccard(text, str(item.get("title") or "")) >= min_jaccard
+        ]
+        return max(accepted, key=lambda w: w.get("cited_by_count") or 0, default=None)
+
     def citing_works(self, work_id: str, per_page: int = 50) -> Optional[List[Dict[str, Any]]]:
         """Top citing works by citation count; ``None`` when the call did not work."""
 
