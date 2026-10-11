@@ -271,6 +271,12 @@ class ResearchState(TypedDict):
     # Structured chat answer built by code from the overview JSON and grounded
     # notes (nodes.final_report.build_answer_summary); None when not built.
     answer_summary: Optional[Dict[str, Any]]              # Comprehensive research report (Markdown)
+    # Overview JSON (``OverviewSingle`` / ``OverviewMulti`` dump) made by
+    # ``summarize``: ``None`` before that node ran, ``{}`` when its call failed.
+    # ``summarize`` writes ``overview`` and ``answer_summary`` first;
+    # ``final_report`` reads the overview and patches ``answer_summary`` later
+    # (the two nodes never run in the same superstep).
+    overview: Optional[Dict[str, Any]]
 
     # Append-only measured timings.  Each node writes its own key, preserving
     # the existing LangGraph topology while making timing visible to API

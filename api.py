@@ -30,7 +30,8 @@ from typing_extensions import TypedDict
 
 from config import config, provider_is_configured, resolved_provider
 from graph import build_research_graph
-from state import PaperItem
+from nodes.final_report import merge_branch_results, patch_answer_summary
+from state import GitHubRepoInfo, PaperItem, PMRLNotes
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ TraceType = Literal[
     "step.completed",
     "assistant.delta",
     "assistant.completed",
+    "answer.summary",
     "run.completed",
     "run.failed",
 ]
@@ -91,6 +93,11 @@ class TraceFacts(TypedDict, total=False):
     durationMs: int
     repoSource: str            # web_enrich: html | github_search | none | mixed
     sectionCount: int          # final_report: "## " headings in the report
+    keyResultCount: int        # summarize: key results (single) or cross-paper insights (several papers)
+    resultRowCount: int        # summarize: grounded rows of the results table
+    # Every LLM call of the node: {kind, ms, inputTokens?, outputTokens?, reasoningTokens?, paperId?}.
+    # Token fields are present only when the provider returned them.
+    llmCalls: list[dict[str, Any]]
     # Numeric measurements emitted by nodes/tools.  Keys are an allowlisted
     # timing name (for example ``llm`` or ``github.search``), never a prompt,
     # URL, cache path, or provider payload.
@@ -129,6 +136,13 @@ class TraceEvent(APIModel):
     # Present only for ``assistant.delta``.  It is the newly generated plain
     # text segment, never a task input/result or tool-call payload.
     delta: str | None = None
+    # Present only for ``answer.summary`` (early summary, sent again when the
+    # graph or BibTeX arrives later) and ``run.completed`` (final values).
+    # ``report_ready`` is false until final_report has written report.md.
+    answer_summary: dict[str, Any] | None = Field(default=None, alias="answerSummary")
+    report_ready: bool | None = Field(default=None, alias="reportReady")
+    citation_graph: dict[str, Any] | None = Field(default=None, alias="citationGraph")
+    bibtex: str | None = None
     links: list[dict[str, str]] = Field(default_factory=list)
     # A numeric field keeps the UI from having to parse the human-readable
     # ``details`` string.  Older events omit it and remain valid.
@@ -263,9 +277,14 @@ class RunResult(APIModel):
     papers: list[PaperDTO] = Field(default_factory=list)
     report: str | None = None
     report_id: str | None = Field(default=None, alias="reportId")
+    # False while final_report is still writing report.md (the quick summary,
+    # ``answerSummary``, is already available); true once ``report`` and ``reportId`` are set.
+    report_ready: bool = Field(default=False, alias="reportReady")
     bibtex: str | None = None
     answer: str | None = None
-    # Structured chat answer built by final_report (blocks the UI renders).
+    # Structured chat answer.  ``summarize`` builds it early (partial: no prior
+    # works until the graph is ready, no ``actions.reportId`` until the report
+    # exists); ``final_report`` completes it.
     answer_summary: dict[str, Any] | None = Field(default=None, alias="answerSummary")
     # Citation graph for a future UI: {"nodes": [...], "edges": [...], "stats": {...}}
     # (same JSON as the ``citation_graph`` state channel); ``null`` when not built.
@@ -359,9 +378,10 @@ NODE_LABELS: dict[str, str] = {
     "refine_query": "Tinh chỉnh truy vấn",
     "read_paper": "Đọc toàn văn",
     "write_notes": "Ghi chú có cấu trúc",
+    "summarize": "Tóm tắt nhanh",
     "citation_graph": "Dựng bản đồ liên quan",
     "web_enrich": "Tìm mã nguồn và BibTeX",
-    "final_report": "Viết báo cáo",
+    "final_report": "Viết báo cáo đầy đủ",
     "error_handler": "Xử lý lỗi",
     "answer_followup": "Trả lời từ báo cáo đã có",
 }
@@ -374,14 +394,15 @@ NODE_DESCRIPTIONS: dict[str, str] = {
     "refine_query": "Viết lại truy vấn khi kết quả chưa đạt",
     "read_paper": "Trích xuất bảng và tài liệu tham khảo",
     "write_notes": "Rút vấn đề, phương pháp, kết quả, hạn chế",
+    "summarize": "Viết câu trả lời ngắn từ ghi chú, không chờ bản đồ",
     "citation_graph": "Tìm bài nền tảng và bài kế thừa",
     "web_enrich": "Tìm repository chính thức và tạo BibTeX",
-    "final_report": "Tổng hợp báo cáo Markdown",
+    "final_report": "Viết các mục và ghép report.md, chạy nền",
     "error_handler": "Dừng run và báo lỗi",
     "answer_followup": "Trả lời câu hỏi tiếp theo bằng báo cáo và ghi chú đã có",
 }
 
-# The five chat-UI progress stages.  One node = one stage ("Đọc toàn văn" and
+# The six chat-UI progress stages.  One node = one stage ("Đọc toàn văn" and
 # "Trích xuất bảng và tài liệu tham khảo" are the label and description of the
 # single ``read_paper`` stage; its facts carry the table/reference counts).
 # Nodes absent here (router, search, eval, refine, error_handler) are not stages.
@@ -389,15 +410,21 @@ NODE_DESCRIPTIONS: dict[str, str] = {
 NODE_STAGES: dict[str, int] = {
     "read_paper": 1,
     "write_notes": 2,
-    "citation_graph": 3,
-    "web_enrich": 4,
-    "final_report": 5,
+    "summarize": 3,
+    "citation_graph": 4,
+    "web_enrich": 5,
+    "final_report": 6,
 }
+# write_notes -> summarize is one chain that runs beside citation_graph and web_enrich.
 NODE_PARALLEL_GROUPS: dict[str, str] = {
     "write_notes": "analysis",
+    "summarize": "analysis",
     "citation_graph": "analysis",
     "web_enrich": "analysis",
 }
+# Top-level graph nodes that only wrap other nodes: their own task and update
+# events are not steps (the wrapped nodes report themselves).
+WRAPPER_NODES = frozenset({"notes_branch"})
 
 NODE_KINDS: dict[str, str] = {
     "router": "info",
@@ -407,6 +434,7 @@ NODE_KINDS: dict[str, str] = {
     "read_paper": "artifact",
     "web_enrich": "artifact",
     "write_notes": "artifact",
+    "summarize": "artifact",
     "citation_graph": "artifact",
     "final_report": "artifact",
     "error_handler": "error",
@@ -1387,9 +1415,70 @@ def _public_answer_summary(value: Any, *, depth: int = 0) -> Any:
     return None
 
 
+def _typed_papers(state: Mapping[str, Any]) -> list[PaperItem] | None:
+    """``selected_papers`` as ``PaperItem`` objects (``None`` if an item cannot be one).
+
+    The stream accumulator holds plain dicts (``_as_state_mapping`` dumps every
+    model); the checkpoint state holds objects.  Both are accepted.
+    """
+
+    papers: list[PaperItem] = []
+    for raw in state.get("selected_papers", []) or []:
+        if isinstance(raw, PaperItem):
+            papers.append(raw)
+            continue
+        try:
+            papers.append(PaperItem.model_validate(raw))
+        except Exception:
+            return None
+    return papers
+
+
+def _typed_branch_entries(value: Any, nested: Mapping[str, type[BaseModel]]) -> dict[str, Any]:
+    """Per-paper branch results with their nested models rebuilt (stream dicts -> models)."""
+
+    entries: dict[str, Any] = {}
+    for paper_id, entry in (value.items() if isinstance(value, Mapping) else []):
+        if not isinstance(entry, Mapping):
+            continue
+        fixed = dict(entry)
+        for key, model in nested.items():
+            raw = fixed.get(key)
+            if isinstance(raw, list):
+                fixed[key] = [model.model_validate(item) if isinstance(item, Mapping) else item for item in raw]
+            elif isinstance(raw, Mapping):
+                fixed[key] = model.model_validate(raw)
+        entries[str(paper_id)] = fixed
+    return entries
+
+
+def _merged_papers(state: Mapping[str, Any]) -> list[PaperItem] | None:
+    """``selected_papers`` with the notes and enrichment of the parallel branches joined in.
+
+    ``final_report`` does this join at the end.  Doing it here too lets a running
+    run show the notes, repository and BibTeX as soon as their branch is done.
+    ``None`` when the state does not hold papers (a fake graph, an empty run).
+    """
+
+    papers = _typed_papers(state)
+    if not papers:
+        return None
+    try:
+        return merge_branch_results(
+            papers,
+            _typed_branch_entries(state.get("paper_notes"), {"notes": PMRLNotes}),
+            _typed_branch_entries(state.get("paper_enrichment"), {"github_repos": GitHubRepoInfo}),
+        )
+    except Exception:
+        logger.exception("Could not join branch results")
+        return papers
+
+
 def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> RunResult:
+    merged = _merged_papers(state)
+    selected = merged if merged is not None else list(state.get("selected_papers", []) or [])
     papers: list[PaperDTO] = []
-    for paper in state.get("selected_papers", []) or []:
+    for paper in selected:
         dto = _paper_dto(paper)
         if dto is not None:
             papers.append(dto)
@@ -1400,11 +1489,21 @@ def _result_from_state(state: Mapping[str, Any], answer: str | None = None) -> R
         report_value,
         state.get("selected_papers") or [],
     ) if report_valid else None
+    report_id = _report_id_from_state(state) if report_valid else None
+    # The quick summary exists before the report: show it (patched with the graph
+    # and BibTeX data that is ready by now) even while final_report still runs.
+    summary = state.get("answer_summary")
+    if isinstance(summary, Mapping) and summary and merged is not None:
+        summary = patch_answer_summary(
+            dict(summary), merged, state.get("citation_graph"), report_id=report_id,
+            node_timings=state.get("node_timings"),
+        )
     return RunResult(
         papers=papers,
         report=report_content,
-        reportId=_report_id_from_state(state) if report_valid else None,
-        answerSummary=_public_answer_summary(state.get("answer_summary")) if report_valid else None,
+        reportId=report_id,
+        reportReady=report_valid,
+        answerSummary=_public_answer_summary(summary),
         bibtex="\n\n".join(bibtex_entries) if bibtex_entries else None,
         citationGraph=_public_citation_graph(state.get("citation_graph")),
         answer=_safe_answer(answer or (report_content if report_valid else None), 100_000)
@@ -1438,6 +1537,9 @@ def _normalise_updates(payload: Any) -> list[tuple[str, dict[str, Any]]]:
             updates.append((str(key), _as_state_mapping(value)))
     if updates:
         return updates
+    if payload and all(str(key) in WRAPPER_NODES for key in payload):
+        # The wrapper's output repeats what its inner nodes already streamed.
+        return []
 
     # ``stream_mode='values'`` and simple fakes often yield a complete state.
     # Infer the node from the append-only trace prefix when available.
@@ -1518,6 +1620,8 @@ def _step_summary(node: str, state: Mapping[str, Any], update: Mapping[str, Any]
         graph = state.get("citation_graph")
         nodes = graph.get("nodes") if isinstance(graph, Mapping) else None
         return f"Built citation graph ({len(nodes) if isinstance(nodes, list) else 0} node(s))"
+    if node == "summarize":
+        return "Prepared quick summary"
     if node == "final_report":
         return "Prepared final research report"
     if node == "error_handler":
@@ -1737,6 +1841,67 @@ def _web_enrich_facts(enrichment: Any) -> dict[str, Any]:
     }
 
 
+_LLM_CALL_FIELDS = ("ms", "inputTokens", "outputTokens", "reasoningTokens")
+
+
+def _llm_calls(value: Any) -> list[dict[str, Any]]:
+    """Allowlisted copy of a node's ``llmCalls``: kind, paper id and the numbers that exist."""
+
+    calls: list[dict[str, Any]] = []
+    for item in _sequence_items(value)[:64]:
+        if not isinstance(item, Mapping):
+            continue
+        kind = str(item.get("kind") or "").strip()
+        if not re.fullmatch(r"[a-z][a-z_]{0,23}", kind):
+            continue
+        call: dict[str, Any] = {"kind": kind}
+        paper_id = _public_identifier(item.get("paperId"))
+        if paper_id:
+            call["paperId"] = paper_id
+        for field_name in _LLM_CALL_FIELDS:
+            number = _nonnegative_int(item.get(field_name))
+            if number is not None:
+                call[field_name] = number
+        calls.append(call)
+    return calls
+
+
+def _llm_calls_of(timings: Any, node: str) -> list[dict[str, Any]]:
+    timing = _model_dump(timings)
+    entry = timing.get(node) if isinstance(timing, Mapping) else None
+    return _llm_calls(entry.get("llmCalls")) if isinstance(entry, Mapping) else []
+
+
+def _all_llm_calls(timings: Any) -> list[dict[str, Any]]:
+    """Every LLM call of a run as ``{node, kind, ...}``, in pipeline order (for the thread file)."""
+
+    timing = _model_dump(timings)
+    if not isinstance(timing, Mapping):
+        return []
+    order = ("router", "eval_search", "refine_query", "write_notes", "summarize", "final_report", "answer_followup")
+    return [
+        {"node": node, **call}
+        for node in order
+        for call in _llm_calls_of(timing, node)
+    ]
+
+
+def _summary_facts(summary: Any) -> dict[str, Any]:
+    """Counts shown for the quick-summary step: key results (or insights) and results-table rows."""
+
+    data = _model_dump(summary)
+    facts: dict[str, Any] = {}
+    for block in _sequence_items(data.get("blocks") if isinstance(data, Mapping) else None):
+        if not isinstance(block, Mapping):
+            continue
+        items = [item for item in _sequence_items(block.get("items")) if item]
+        if block.get("type") in {"keyResults", "insights"}:
+            facts["keyResultCount"] = facts.get("keyResultCount", 0) + len(items)
+        elif block.get("type") == "results":
+            facts["resultRowCount"] = len([row for row in _sequence_items(block.get("rows")) if row])
+    return facts
+
+
 def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) -> dict[str, Any]:
     """Build sparse, measured facts for a public state-update event.
 
@@ -1790,6 +1955,9 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
     elif node == "citation_graph" and "citation_graph" in update:
         facts.update(_citation_graph_facts(update))
 
+    elif node == "summarize" and "answer_summary" in update:
+        facts.update(_summary_facts(update.get("answer_summary")))
+
     elif node == "answer_followup" and "followup_sources" in update:
         facts["sources"] = [_safe_text(item, 80) for item in _sequence_items(update.get("followup_sources"))[:12]]
 
@@ -1805,6 +1973,9 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
             if report_id:
                 facts["reportId"] = report_id
 
+    llm_calls = _llm_calls_of(update.get("node_timings"), node)
+    if llm_calls:
+        facts["llmCalls"] = llm_calls
     measured_timings = _timings_from_mapping(update)
     if measured_timings:
         facts["timings"] = measured_timings
@@ -1814,6 +1985,7 @@ def _step_facts(node: str, state: Mapping[str, Any], update: Mapping[str, Any]) 
 _STAGE_COUNT_KEYS = (
     "tableCount", "referenceCount", "hardwareFoundCount", "insightCount", "hardwareStatedCount",
     "seeds", "pool", "nodeCount", "edgeCount", "refsTotal", "refsResolved", "durationMs", "sectionCount",
+    "keyResultCount", "resultRowCount",
 )
 
 
@@ -1872,6 +2044,9 @@ def _sanitize_stage_facts(facts: Mapping[str, Any]) -> dict[str, Any]:
     items = [item for item in items if item]
     if items:
         clean["paperFacts"] = items
+    calls = _llm_calls(facts.get("llmCalls"))
+    if calls:
+        clean["llmCalls"] = calls
     return clean
 
 
@@ -1989,6 +2164,7 @@ class _RunRecord:
     # finished run whose graph state is gone.
     stored_result: "RunResult | None" = None
     stored_followup: dict[str, Any] | None = None
+    stored_llm_calls: list[dict[str, Any]] | None = None
     started_nodes: set[str] = field(default_factory=set)
     completed_nodes: set[str] = field(default_factory=set)
     task_stream_seen: bool = False
@@ -2376,6 +2552,12 @@ class RunRegistry:
             "updatedAt": record.updated_at.isoformat(),
             "finishedAt": record.finished_at.isoformat() if record.finished_at else None,
             "result": _record_result(record).model_dump(mode="json", by_alias=True),
+            # Duration and token counts of every LLM call, per node (the trace is not stored).
+            "llmCalls": (
+                record.stored_llm_calls
+                if record.stored_llm_calls is not None
+                else _all_llm_calls(record.state.get("node_timings"))
+            ),
             # Private (never in a DTO): lets a follow-up work after a restart.
             "followupContext": record.stored_followup,
         }
@@ -2452,6 +2634,7 @@ class RunRegistry:
                         assistant_message_added=True,
                         stored_result=RunResult.model_validate(item.get("result") or {}),
                         stored_followup=item.get("followupContext") if isinstance(item.get("followupContext"), dict) else None,
+                        stored_llm_calls=[call for call in item.get("llmCalls") or [] if isinstance(call, dict)],
                     )
                     restored[record.run_id] = record
                     thread.run_ids.append(record.run_id)
@@ -2584,7 +2767,12 @@ class RunRegistry:
         duration_ms: int | None = None,
         timings: Mapping[str, Any] | None = None,
         progress: float = 0.0,
+        payload: Mapping[str, Any] | None = None,
     ) -> TraceEvent:
+        """Append one event.  ``payload`` (answer.summary / run.completed only) holds
+        ``answerSummary``, ``reportReady``, ``citationGraph`` and ``bibtex``."""
+
+        extra = dict(payload or {}) if event_type in {"answer.summary", "run.completed"} else {}
         with self.lock:
             record = self.runs.get(run_id)
             if record is None:
@@ -2604,6 +2792,10 @@ class RunRegistry:
                 # accidentally supplies a mapping.
                 facts=_sanitize_facts(facts) if event_type == "step.updated" else None,
                 delta=_safe_stream_text(delta, 8_000) if delta else None,
+                answerSummary=extra.get("answerSummary"),
+                reportReady=extra.get("reportReady"),
+                citationGraph=extra.get("citationGraph"),
+                bibtex=extra.get("bibtex"),
                 links=[
                     {"label": _safe_text(link.get("label"), 160), "href": safe_href}
                     for link in (links or [])
@@ -2672,6 +2864,18 @@ def _graph_stream(graph: Any, initial_state: dict[str, Any], graph_config: dict[
     stream = getattr(graph, "stream", None)
     if not callable(stream):
         raise TypeError("Configured research graph does not provide stream()")
+    try:
+        # ``subgraphs=True``: the notes branch (write_notes -> summarize) is an
+        # inner graph; this reports its nodes as they start and finish.
+        return stream(
+            initial_state,
+            graph_config,
+            stream_mode=["tasks", "updates", "messages"],
+            version="v2",
+            subgraphs=True,
+        )
+    except TypeError:
+        pass
     try:
         return stream(
             initial_state,
@@ -2947,6 +3151,37 @@ def _append_node_update(
         )
 
 
+def _append_answer_summary(
+    run_id: str,
+    registry_instance: RunRegistry,
+    state: Mapping[str, Any],
+) -> None:
+    """Send the current (partial) answer to the client as an ``answer.summary`` event.
+
+    Built from the run state by the same projection as ``GET /api/runs/{id}``, so
+    the event and the snapshot agree.  Sent when ``summarize`` finishes and again
+    when the graph or BibTeX arrives later.
+    """
+
+    result = _result_from_state(state)
+    if result.answer_summary is None:
+        return
+    registry_instance.append_event(
+        run_id,
+        "answer.summary",
+        node="summarize",
+        status="running",
+        summary="Quick summary ready",
+        progress=0.0,
+        payload={
+            "answerSummary": result.answer_summary,
+            "reportReady": result.report_ready,
+            "citationGraph": result.citation_graph,
+            "bibtex": result.bibtex,
+        },
+    )
+
+
 def _append_assistant_delta(
     run_id: str,
     node: str,
@@ -3151,9 +3386,10 @@ def _execute_run(
                         registry_instance.set_assistant_answer(run_id, final_answer)
                         _append_node_started(run_id, node, registry_instance, record)
                         _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
-                if node == "final_report":
+                if node in {"summarize", "final_report"}:
+                    # The quick summary carries the answer; final_report only completes it.
                     lead = _answer_lead(update.get("answer_summary"))
-                    if lead:
+                    if lead and not record.assistant_answer:
                         registry_instance.set_assistant_answer(run_id, lead)
                         _append_node_started(run_id, node, registry_instance, record)
                         _append_assistant_delta(run_id, node, record.assistant_answer, registry_instance, record)
@@ -3171,6 +3407,17 @@ def _execute_run(
                         failed=node_failed,
                         completed=not record.task_stream_seen or node_failed,
                     )
+                    # The quick summary goes out as soon as ``summarize`` is done.
+                    # The graph or BibTeX may arrive after it: send it again, patched.
+                    if not node_failed and (
+                        node == "summarize"
+                        or (
+                            node in {"citation_graph", "web_enrich"}
+                            and current_state.get("answer_summary")
+                            and not _valid_report(current_state.get("final_report"))
+                        )
+                    ):
+                        _append_answer_summary(run_id, registry_instance, current_state)
                     if node_failed:
                         node_error = _safe_text(update.get("error_message"), 600)
                         record.task_error = (
@@ -3222,6 +3469,10 @@ def _execute_run(
             return
 
         terminal_status: RunStatus = "degraded" if state_status == "degraded" or errors else "success"
+        final_result = _result_from_state(current_state)
+        if final_result.answer_summary is not None:
+            # Same measured wall time that GET /api/runs/{id} reports once the run has ended.
+            final_result.answer_summary["durationSec"] = max(0, int(round((_now() - record.started_at).total_seconds())))
         with registry_instance.lock:
             registry_instance.finalize_thread(run_id)
             registry_instance.append_event(
@@ -3232,6 +3483,12 @@ def _execute_run(
                 summary="Research workflow completed" if terminal_status == "success" else "Research workflow completed with warnings",
                 details={"reportId": _report_id_from_state(current_state)},
                 progress=1.0,
+                payload={
+                    "answerSummary": final_result.answer_summary,
+                    "reportReady": final_result.report_ready,
+                    "citationGraph": final_result.citation_graph,
+                    "bibtex": final_result.bibtex,
+                },
             )
             registry_instance.set_terminal(run_id, terminal_status)
     except Exception:

@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from prompts.followup_prompt import FOLLOWUP_SYSTEM, FOLLOWUP_USER
 from state import ResearchState
-from tools.llm_provider import extract_text_from_response, get_llm, invoke_text
+from tools.llm_provider import extract_text_from_response, get_llm, invoke_text, track_llm_call
 
 # Character budgets of the prompt parts.  Worst case: 3 report sections x 2.5k
 # + 2 paper blocks x 5k + 2 notes x 3.5k + 4 tables x 2k + 3 related x 0.9k
@@ -226,10 +226,12 @@ def answer_followup_node(state: ResearchState) -> Dict[str, Any]:
     question = (state.get("user_query") or "").strip()
     context = state.get("followup_context") or {}
     logs = ["[answer_followup] Trả lời từ báo cáo đã có"]
+    llm_calls: list = []
     try:
         system, user, sources = build_followup_messages(question, context)
         llm_started = time.perf_counter()
-        answer = _generate(get_llm(), system, user).strip()
+        with track_llm_call("followup", llm_calls):
+            answer = _generate(get_llm(), system, user).strip()
         llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
         if not answer:
             raise ValueError("Empty follow-up answer")
@@ -240,6 +242,7 @@ def answer_followup_node(state: ResearchState) -> Dict[str, Any]:
             "trace_logs": logs,
             "node_timings": {"answer_followup": {
                 "durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": llm_ms,
+                "llmCalls": llm_calls,
             }},
         }
     except Exception as exc:
@@ -252,5 +255,6 @@ def answer_followup_node(state: ResearchState) -> Dict[str, Any]:
             "trace_logs": logs,
             "node_timings": {"answer_followup": {
                 "durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": 0,
+                "llmCalls": llm_calls,
             }},
         }

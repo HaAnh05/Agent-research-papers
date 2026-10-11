@@ -2,7 +2,7 @@
 // Enabled by `?mock=1` on the vite dev server (or a build with VITE_MOCK=1). See src/lib/transport.ts.
 import { ApiError, type RunFrame, type Transport } from '../lib/api'
 import { STAGES } from '../lib/run'
-import type { RunResult, RunSnapshot, TraceEvent, TraceFacts } from '../types'
+import type { AnswerSummary, LlmCall, RunResult, RunSnapshot, TraceEvent, TraceFacts } from '../types'
 import {
   CHATCOT_BIBTEX,
   CHATCOT_ID,
@@ -59,7 +59,22 @@ function step(node: string, label: string, from: number, to: number, facts: Trac
   ]
 }
 
-function fullScript(multi: boolean): Scheduled[] {
+/** The summary as `summarize` makes it: no prior works, no graph size and no report id yet. */
+function earlySummary(final: AnswerSummary): AnswerSummary {
+  return {
+    ...final,
+    blocks: (final.blocks ?? []).filter((b) => b.type !== 'foundations'),
+    actions: { ...final.actions, reportId: null, graphNodes: 0 },
+  }
+}
+
+/**
+ * One full run, in the order the real backend sends it:
+ * write_notes -> summarize (answer.summary, report button grey) runs beside citation_graph and web_enrich;
+ * the graph arrives after the summary (second answer.summary with prior works and the graph);
+ * final_report then writes report.md; run.completed carries the final summary (report button black).
+ */
+function fullScript(multi: boolean, result: RunResult): Scheduled[] {
   const s: Scheduled[] = []
   s.push(...step('router', 'Phân tích yêu cầu', 0, 300, { intent: multi ? 'search' : 'direct_read' }, 3000))
   s[0].ev.description = 'Xác định đầu vào là bài báo hay chủ đề'
@@ -74,13 +89,37 @@ function fullScript(multi: boolean): Scheduled[] {
   }
   s.push(...step('read_paper', 'Đọc toàn văn', t, t + 1500, { paperCount: multi ? 5 : 1, tableCount: multi ? 61 : 17, referenceCount: multi ? 142 : 29, refsTotal: multi ? 142 : 29, refsResolved: multi ? 131 : 27, source: 'ar5iv' }, multi ? 22000 : 5000))
   t += 1600
-  s.push(...step('write_notes', 'Ghi chú có cấu trúc', t, t + 3600, { insightCount: multi ? 14 : 3, evalSettings: { proposed: multi ? 19 : 4, kept: multi ? 19 : 4, dropped: 0 } }, 58000))
-  s.push(...step('citation_graph', 'Dựng bản đồ liên quan', t, t + 1800, { seeds: 22, pool: 300, nodeCount: 40, graphStatus: 'ok' }, 5000))
-  s.push(...step('web_enrich', 'Tìm mã nguồn và BibTeX', t, t + 1200, { repositoryCount: 0, bibtexCount: multi ? 5 : 1 }, 3000))
-  t += 3600
-  s.push(...step('final_report', 'Viết báo cáo', t, t + 2500, { reportAvailable: true, sectionCount: 5 }, 150000))
-  t += 2500
-  s.push({ at: t + 100, ev: { type: 'run.completed', node: 'final_report', label: 'Hoàn tất', status: 'completed', summary: '' } })
+  const calls = (kind: string, n: number, ms: number, tokens: [number, number, number]): LlmCall[] =>
+    Array.from({ length: n }, (_, i) => ({ kind, paperId: multi ? `paper-${i + 1}` : undefined, ms: ms - i * 4000, inputTokens: tokens[0], outputTokens: tokens[1], reasoningTokens: tokens[2] }))
+  const n = multi ? 5 : 1
+  const final = result.answerSummary as AnswerSummary
+  const early = earlySummary(final)
+  const answer = (summary: AnswerSummary, reportReady: boolean, extra: Partial<RunResult> = {}): Partial<Draft> => ({
+    node: 'summarize',
+    label: 'Tóm tắt nhanh',
+    status: reportReady ? 'completed' : 'running',
+    summary: '',
+    answerSummary: summary,
+    reportReady,
+    bibtex: result.bibtex,
+    citationGraph: extra.citationGraph ?? null,
+  })
+  const tNotes = t + 3600
+  const tSummary = tNotes + 1500
+  const tGraph = tSummary + 3000
+  const tReport = tGraph + 2500
+  s.push(...step('write_notes', 'Ghi chú có cấu trúc', t, tNotes, { insightCount: multi ? 14 : 3, evalSettings: { proposed: multi ? 19 : 4, kept: multi ? 19 : 4, dropped: 0 }, llmCalls: calls('pmrl', n, 96000, [9400, 3100, 9400]) }, 96000))
+  s.push(...step('web_enrich', 'Tìm mã nguồn và BibTeX', t, t + 1200, { repositoryCount: 0, bibtexCount: multi ? 5 : 1 }, 1000))
+  s.push(...step('summarize', 'Tóm tắt nhanh', tNotes, tSummary, { keyResultCount: multi ? 3 : 3, resultRowCount: multi ? 0 : 4, llmCalls: calls('overview', 1, 74000, [5200, 1800, 6100]).slice(0, 1) }, 74000))
+  // The quick summary and its lead go out right when summarize completes.
+  const lead = early.lead ?? ''
+  s.push({ at: tSummary - 10, ev: { type: 'assistant.delta', node: 'summarize', label: 'Tóm tắt nhanh', delta: lead } })
+  s.push({ at: tSummary - 5, ev: { type: 'answer.summary', ...answer(early, false) } as Draft })
+  s.push(...step('citation_graph', 'Dựng bản đồ liên quan', t, tGraph, { seeds: 22, pool: 300, nodeCount: 40, graphStatus: 'ok' }, 91000))
+  s.push({ at: tGraph + 5, ev: { type: 'answer.summary', ...answer(final, false, { citationGraph: result.citationGraph }), } as Draft })
+  s.push(...step('final_report', 'Viết báo cáo đầy đủ', tGraph + 10, tReport, { reportAvailable: true, sectionCount: 5, llmCalls: calls('section', n, 420000, [11800, 5200, 15300]) }, 420000))
+  s.push({ at: tReport + 100, ev: { type: 'assistant.completed', node: 'final_report', label: 'Hoàn tất', status: 'completed' } })
+  s.push({ at: tReport + 110, ev: { type: 'run.completed', node: 'final_report', label: 'Hoàn tất', status: 'completed', summary: '', answerSummary: final, reportReady: true, bibtex: result.bibtex, citationGraph: result.citationGraph ?? null } })
   return s
 }
 
@@ -122,21 +161,15 @@ function buildRun(text: string, arxivField?: string): MockRun {
   }
   hasFullRun = true
 
+  const full = (multi: boolean, result: RunResult): MockRun => {
+    const done: RunResult = { ...result, reportReady: true }
+    return { id, startedAt, script: fullScript(multi, done), result: done }
+  }
   if (!arxiv) {
-    return {
-      id,
-      startedAt,
-      script: fullScript(true),
-      result: { ...reportBase, reportId: MULTI_SUMMARY.actions?.reportId, bibtex: MULTI_BIBTEX, answerSummary: MULTI_SUMMARY, citationGraph: { similarity: mockGraph(MULTI_IDS) } },
-    }
+    return full(true, { ...reportBase, reportId: MULTI_SUMMARY.actions?.reportId, bibtex: MULTI_BIBTEX, answerSummary: MULTI_SUMMARY, citationGraph: { similarity: mockGraph(MULTI_IDS) } })
   }
   if (arxiv === REFLECT_ID) {
-    return {
-      id,
-      startedAt,
-      script: fullScript(false),
-      result: { ...reportBase, papers: [{ paperId: 'arxiv:2605.05737', arxivId: REFLECT_ID, repository: { url: 'https://github.com/example/reflect', source: 'github_search' } }], reportId: REFLECT_SUMMARY.actions?.reportId, bibtex: REFLECT_BIBTEX, answerSummary: REFLECT_SUMMARY, citationGraph: { similarity: mockGraph([REFLECT_ID]) } },
-    }
+    return full(false, { ...reportBase, papers: [{ paperId: 'arxiv:2605.05737', arxivId: REFLECT_ID, repository: { url: 'https://github.com/example/reflect', source: 'github_search' } }], reportId: REFLECT_SUMMARY.actions?.reportId, bibtex: REFLECT_BIBTEX, answerSummary: REFLECT_SUMMARY, citationGraph: { similarity: mockGraph([REFLECT_ID]) } })
   }
   // Any other arXiv id (for example "Phân tích bài này" on a graph node): a short single-paper answer.
   const graph = mockGraph([arxiv])
@@ -146,12 +179,7 @@ function buildRun(text: string, arxivField?: string): MockRun {
     paper: { ...CHATCOT_SUMMARY.paper, arxivId: arxiv, title: node?.title ?? CHATCOT_SUMMARY.paper?.title, published: node?.year ? String(node.year) : undefined },
     lead: arxiv === CHATCOT_ID ? CHATCOT_SUMMARY.lead : `${node?.title ?? 'Bài này'} là một bài trên bản đồ liên quan; bản tóm tắt dưới đây là dữ liệu mẫu.`,
   }
-  return {
-    id,
-    startedAt,
-    script: fullScript(false),
-    result: { ...reportBase, reportId: CHATCOT_SUMMARY.actions?.reportId, bibtex: CHATCOT_BIBTEX, answerSummary: summary, citationGraph: { similarity: graph } },
-  }
+  return full(false, { ...reportBase, reportId: CHATCOT_SUMMARY.actions?.reportId, bibtex: CHATCOT_BIBTEX, answerSummary: summary, citationGraph: { similarity: graph } })
 }
 
 const scaled = (ms: number) => ms * slow
@@ -169,6 +197,11 @@ function snapshot(run: MockRun): RunSnapshot {
   const due = all.filter((e) => atOf(run, e.seq) <= elapsed)
   const done = due.length === all.length
   const answer = done ? run.result.answer ?? null : null
+  // A running snapshot carries the partial result of the last answer.summary that is due.
+  const lastAnswer = [...due].reverse().find((e) => e.type === 'answer.summary')
+  const partial: RunResult | undefined = lastAnswer
+    ? { answerSummary: lastAnswer.answerSummary, citationGraph: lastAnswer.citationGraph, bibtex: lastAnswer.bibtex, reportReady: false, papers: run.result.papers }
+    : undefined
   return {
     runId: run.id,
     threadId: 'mock-thread',
@@ -177,7 +210,7 @@ function snapshot(run: MockRun): RunSnapshot {
     seq: due.length ? due[due.length - 1].seq : 0,
     traceEvents: due,
     error: done && run.failed ? 'Không tải được bản HTML hoặc PDF của bài này.' : null,
-    result: done ? run.result : undefined,
+    result: done ? run.result : partial,
     startedAt: new Date(run.startedAt).toISOString(),
     updatedAt: new Date().toISOString(),
   }

@@ -32,11 +32,30 @@ export interface TraceFacts {
   source?: string
   sectionCount?: number
   reportId?: string
+  // quick-summary facts (P6)
+  keyResultCount?: number
+  resultRowCount?: number
+  /** Every LLM call of the step. Token fields exist only when the provider returned them. */
+  llmCalls?: LlmCall[]
   paperFacts?: Array<Record<string, unknown>>
   [key: string]: unknown
 }
 
-/** step.started | step.updated | step.completed | assistant.delta | assistant.completed | run.completed | run.failed */
+export interface LlmCall {
+  kind: string
+  paperId?: string
+  ms?: number
+  inputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+}
+
+/**
+ * step.started | step.updated | step.completed | assistant.delta | assistant.completed | answer.summary | run.completed | run.failed
+ *
+ * `answer.summary` carries the early answer (`answerSummary`, `reportReady: false`) and is sent again when the
+ * graph or BibTeX arrives later. `run.completed` carries the final values (`reportReady: true`).
+ */
 export interface TraceEvent {
   runId: string
   seq: number
@@ -53,6 +72,10 @@ export interface TraceEvent {
   delta?: string | null
   durationMs?: number | null
   timestamp?: string
+  answerSummary?: AnswerSummary | null
+  reportReady?: boolean | null
+  citationGraph?: { similarity?: unknown; [key: string]: unknown } | null
+  bibtex?: string | null
 }
 
 // ---- answerSummary (P3) ------------------------------------------------------
@@ -175,6 +198,8 @@ export interface PaperResult {
 export interface RunResult {
   report?: string | null
   reportId?: string | null
+  /** False while report.md is still being written; `answerSummary` is already available then. */
+  reportReady?: boolean
   bibtex?: string | null
   answer?: string | null
   answerSummary?: AnswerSummary | null
@@ -208,7 +233,10 @@ export interface StepView {
   parallelGroup?: string
   status: StepStatus
   facts: TraceFacts
+  /** Server-measured duration; shown once the step is completed. */
   durationMs?: number
+  /** Client time (ms) the step started; the running timer counts from here. */
+  startedMs?: number
 }
 
 export interface RunView {
@@ -220,6 +248,8 @@ export interface RunView {
   startedMs?: number
   endedMs?: number
   error?: string
+  /** True once report.md exists (`reportReady` of the API). */
+  reportReady: boolean
   result?: RunResult
   summary?: AnswerSummary
   graph?: SimilarityGraph

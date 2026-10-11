@@ -1,16 +1,20 @@
 import type { AnswerSummary, GraphNode, RunSnapshot, RunView, SimilarityGraph, StepView, SummaryBlock, TraceEvent } from '../types'
 
-/** The five stages of a paper analysis; used to show waiting rows before their events arrive. */
+/**
+ * The six stages of a paper analysis; used to show waiting rows before their events arrive.
+ * Stages 2-5 run at the same time: notes then the quick summary form one chain, beside the graph and the BibTeX lookup.
+ */
 export const STAGES = [
   { stage: 1, node: 'read_paper', label: 'Đọc toàn văn', description: 'Trích xuất bảng và tài liệu tham khảo' },
   { stage: 2, node: 'write_notes', label: 'Ghi chú có cấu trúc', description: 'Rút vấn đề, phương pháp, kết quả, hạn chế', parallelGroup: 'analysis' },
-  { stage: 3, node: 'citation_graph', label: 'Dựng bản đồ liên quan', description: 'Tìm bài nền tảng và bài kế thừa', parallelGroup: 'analysis' },
-  { stage: 4, node: 'web_enrich', label: 'Tìm mã nguồn và BibTeX', description: 'Tìm repository chính thức và tạo BibTeX', parallelGroup: 'analysis' },
-  { stage: 5, node: 'final_report', label: 'Viết báo cáo', description: 'Tổng hợp báo cáo Markdown' },
+  { stage: 3, node: 'summarize', label: 'Tóm tắt nhanh', description: 'Viết câu trả lời ngắn từ ghi chú, không chờ bản đồ', parallelGroup: 'analysis' },
+  { stage: 4, node: 'citation_graph', label: 'Dựng bản đồ liên quan', description: 'Tìm bài nền tảng và bài kế thừa', parallelGroup: 'analysis' },
+  { stage: 5, node: 'web_enrich', label: 'Tìm mã nguồn và BibTeX', description: 'Tìm repository chính thức và tạo BibTeX', parallelGroup: 'analysis' },
+  { stage: 6, node: 'final_report', label: 'Viết báo cáo đầy đủ', description: 'Viết các mục và ghép report.md, chạy nền' },
 ] as const
 
 export function emptyRun(runId: string): RunView {
-  return { runId, status: 'running', steps: [], answerText: '', lastSeq: 0 }
+  return { runId, status: 'running', steps: [], answerText: '', lastSeq: 0, reportReady: false }
 }
 
 const parseMs = (iso?: string | null): number | undefined => {
@@ -19,7 +23,7 @@ const parseMs = (iso?: string | null): number | undefined => {
   return Number.isFinite(ms) ? ms : undefined
 }
 
-function upsertStep(steps: StepView[], ev: TraceEvent): StepView[] {
+function upsertStep(steps: StepView[], ev: TraceEvent, startedMs?: number): StepView[] {
   const index = steps.findIndex((s) => s.node === ev.node)
   const previous = index >= 0 ? steps[index] : undefined
   let status = previous?.status ?? 'running'
@@ -38,6 +42,8 @@ function upsertStep(steps: StepView[], ev: TraceEvent): StepView[] {
     status,
     facts: { ...(previous?.facts ?? {}), ...(ev.facts ?? {}) },
     durationMs: ev.durationMs ?? previous?.durationMs,
+    // The timer counts from the first event of the step (normally step.started).
+    startedMs: previous?.startedMs ?? startedMs,
   }
   if (index < 0) return [...steps, next]
   const copy = steps.slice()
@@ -45,21 +51,51 @@ function upsertStep(steps: StepView[], ev: TraceEvent): StepView[] {
   return copy
 }
 
-/** Idempotent: an event whose seq is not newer than the last applied one is dropped. */
-export function applyEvent(run: RunView, ev: TraceEvent): RunView {
+/** The partial or final result carried by `answer.summary` and `run.completed`. */
+function applyAnswer(run: RunView, ev: TraceEvent): Partial<RunView> {
+  if (!ev.answerSummary && !ev.citationGraph && ev.reportReady == null) return {}
+  const summary = normalizeSummary(ev.answerSummary) ?? run.summary
+  const incoming = normalizeGraph(ev.citationGraph?.similarity)
+  // Keep the previous graph object when the same graph arrives again, so the panel does not re-layout.
+  const graph = incoming && run.graph && incoming.nodes.length === run.graph.nodes.length ? run.graph : incoming ?? run.graph
+  const reportReady = ev.reportReady ?? run.reportReady
+  return {
+    summary,
+    graph,
+    reportReady,
+    result: {
+      ...run.result,
+      answerSummary: ev.answerSummary ?? run.result?.answerSummary,
+      citationGraph: ev.citationGraph ?? run.result?.citationGraph,
+      bibtex: ev.bibtex ?? run.result?.bibtex,
+      reportReady,
+    },
+  }
+}
+
+/**
+ * Idempotent: an event whose seq is not newer than the last applied one is dropped.
+ * `receivedMs` is the client time a live event arrived; the step and run timers count from it.
+ * A replayed event (snapshot) has none and falls back to its server timestamp.
+ */
+export function applyEvent(run: RunView, ev: TraceEvent, receivedMs?: number): RunView {
   if (ev.seq > 0 && ev.seq <= run.lastSeq) return run
-  const at = parseMs(ev.timestamp)
+  const at = receivedMs ?? parseMs(ev.timestamp)
   const next: RunView = { ...run, lastSeq: Math.max(run.lastSeq, ev.seq), startedMs: run.startedMs ?? at }
   switch (ev.type) {
     case 'step.started':
     case 'step.updated':
     case 'step.completed':
-      next.steps = upsertStep(run.steps, ev)
+      next.steps = upsertStep(run.steps, ev, at)
       break
     case 'assistant.delta':
       next.answerText = run.answerText + (ev.delta ?? '')
       break
+    case 'answer.summary':
+      Object.assign(next, applyAnswer(run, ev))
+      break
     case 'run.completed':
+      Object.assign(next, applyAnswer(run, ev))
       next.status = 'success'
       next.endedMs = at ?? run.endedMs
       next.steps = run.steps.map((s) => (s.status === 'running' ? { ...s, status: 'completed' } : s))
@@ -96,6 +132,8 @@ export function runFromSnapshot(snap: RunSnapshot): RunView {
     run.result = result
     run.summary = normalizeSummary(result.answerSummary) ?? undefined
     run.graph = normalizeGraph(result.citationGraph?.similarity) ?? undefined
+    // An older backend has no reportReady: a report id then means the report exists.
+    run.reportReady = result.reportReady ?? !!result.reportId
   }
   return run
 }

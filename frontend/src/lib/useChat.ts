@@ -7,7 +7,7 @@ import { transport } from './transport'
 type Action =
   | { type: 'add'; turn: Turn }
   | { type: 'run'; turnId: string; run: RunView }
-  | { type: 'event'; turnId: string; event: TraceEvent }
+  | { type: 'event'; turnId: string; event: TraceEvent; receivedMs: number }
   | { type: 'fail'; turnId: string; message: string }
   | { type: 'reset' }
 
@@ -24,11 +24,11 @@ function reducer(turns: Turn[], action: Action): Turn[] {
         if (t.id !== action.turnId) return t
         // A snapshot is authoritative, except when it is older than what the stream already delivered.
         const current = t.run
-        if (current && !action.run.result && action.run.lastSeq < current.lastSeq) return t
+        if (current && action.run.lastSeq < current.lastSeq) return t
         return { ...t, run: action.run }
       })
     case 'event':
-      return turns.map((t) => (t.id === action.turnId && t.run ? { ...t, run: applyEvent(t.run, action.event) } : t))
+      return turns.map((t) => (t.id === action.turnId && t.run ? { ...t, run: applyEvent(t.run, action.event, action.receivedMs) } : t))
   }
 }
 
@@ -78,7 +78,7 @@ export function useChat() {
           if (run.status !== 'running') settle()
           return
         }
-        dispatch({ type: 'event', turnId, event: frame.data as TraceEvent })
+        dispatch({ type: 'event', turnId, event: frame.data as TraceEvent, receivedMs: Date.now() })
         if (TERMINAL.has(frame.type)) settle()
       },
       () => {

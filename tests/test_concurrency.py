@@ -363,7 +363,7 @@ def test_single_paper_english_mode_headings(monkeypatch, tmp_path):
 
 def test_report_cache_key_includes_version(monkeypatch):
     paper = _paper("p1", "First Paper", "2303.04137")
-    assert final_report.REPORT_VERSION == "p12"
+    assert final_report.REPORT_VERSION == "p13"
     first, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])
     monkeypatch.setattr(final_report, "REPORT_VERSION", "next")
     second, _ = final_report._report_cache_key("q", "T", "English", "b", [paper])

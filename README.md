@@ -73,7 +73,8 @@ uvicorn api:app --port 8000
 Một màn hình chat duy nhất (spec ngắn trong [`DESIGN.md`](DESIGN.md)):
 
 - Landing "Bạn muốn hiểu điều gì?" với một composer nhận topic, ArXiv ID/URL hoặc PDF; khi gửi, composer chuyển xuống thanh chat.
-- Mỗi run có một dòng tiến độ mở rộng được: 5 stage với mô tả, facts đo thật và thời gian; ba stage phân tích chạy "song song".
+- Mỗi run có một dòng tiến độ mở rộng được: 6 stage với mô tả, facts đo thật, thời gian đếm từng giây khi đang chạy và dòng số đo LLM (thời gian, token); bốn stage phân tích chạy "song song".
+- Câu trả lời hiện ngay khi "Tóm tắt nhanh" xong (SSE `answer.summary`), trong lúc báo cáo đầy đủ còn được viết nền. Nút Tải `report.md` màu xám, không bấm được, đến khi `reportReady`; hỏi tiếp bị khóa cùng lúc. Bài nền tảng và bản đồ hiện khi dữ liệu có.
 - Câu trả lời dựng từ `result.answerSummary` (các block); có nút Tải `report.md`, Sao chép BibTeX, Bản đồ liên quan.
 - Panel bên phải hiện đồ thị bài liên quan (`citationGraph.similarity`) với tab Tương tự / Nền tảng / Kế thừa; từ một bài có thể "Hỏi về bài này" hoặc "Phân tích bài này".
 - Xem UI không cần backend: `cd frontend && npm run dev`, mở <http://localhost:5173/?mock=1> (dữ liệu mẫu, chỉ có ở dev server).

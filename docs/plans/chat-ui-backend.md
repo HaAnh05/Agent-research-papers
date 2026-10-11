@@ -28,4 +28,22 @@ One chat screen: landing → chat. Each run shows an expandable progress line (5
 | P3 | Summary and report: PMRL adds `intuition`; overview returns JSON (D2, D3); section/overview prompts get STE rules and `<terms>`; `answerSummary` + structured fields in the API (camelCase graph); fix `_merge_answer`; store `reportId` in state; verify.py style checks |
 | P4 | Follow-ups: router intent `followup` answers from the thread's report and notes (1 streamed LLM call); endpoint to analyse a paper from the graph; thread context includes report content; threads persist to disk |
 | P5 | React frontend per mockup v3 |
+| P6 | Early summary, live timers, per-call LLM metrics (see below) |
 | — | One real-model e2e on arXiv 2605.05737 + one topic query; compare latency, reasoning tokens and style metrics with the 2026-10-10 runs |
+
+## P6: early summary, live timers, LLM metrics
+
+Measured on arXiv 2210.03629 (8:38 in total): read 0:01, then write_notes 1:36 ∥ citation_graph 1:31 ∥ web_enrich 0:01, then final_report about 7:00 (the user sees the answer only after it). Goal: the answer appears right after the notes, the UI shows live time, and every LLM call has measured numbers.
+
+| # | Decision |
+|---|---|
+| E1 | New node `summarize` = overview LLM call + `build_answer_summary` (code). It reads the PMRL notes only. State keys: `overview` (JSON, `{}` when the call failed, `None` before) and `answer_summary` |
+| E2 | `final_report` reuses `state["overview"]` (no second overview call), writes the paper sections and `report.md`, and patches `answer_summary` with `patch_answer_summary()`: `foundations`, `actions.graphNodes`, `actions.bibtexCount`, `actions.reportId`. A state without `overview` (direct call, bench) still makes the overview call itself. Call count per run is unchanged: PMRL (n), overview (1), section (n) |
+| E3 | Topology: LangGraph runs in supersteps, so plain top-level `write_notes -> summarize` would make `summarize` wait for `citation_graph` (checked with a toy graph). The chain therefore runs in one top-level node `notes_branch` that invokes an inner graph. `final_report` joins `[notes_branch, citation_graph, web_enrich]`. The API streams with `subgraphs=True` so the inner nodes emit their own step events |
+| E4 | API: new SSE event `answer.summary` (`answerSummary`, `reportReady`, `citationGraph`, `bibtex`), sent when `summarize` ends (with the lead as `assistant.delta`) and again when the graph or BibTeX arrives later. `run.completed` carries the final values. `GET /api/runs/{id}` returns the partial `answerSummary` while running and `result.reportReady` |
+| E5 | Stages (6): read_paper, write_notes, summarize ("Tóm tắt nhanh"), citation_graph, web_enrich, final_report ("Viết báo cáo đầy đủ"). New facts: `keyResultCount`, `resultRowCount`, `llmCalls` |
+| E6 | UI: ticking step and run timers (client time of `step.started`), server `durationMs` on completion; answer renders on `answer.summary`; "Tải report.md" grey until `reportReady`; follow-ups disabled with a hint until then; mock transport replays the new order |
+| E7 | LLM metrics: `tools.llm_provider.track_llm_call` records `ms` and the token counts the provider returns (omitted when absent) for router, eval_search, refine_query, PMRL, overview, section and followup. Stored in `node_timings[node].llmCalls`, exposed in `facts.llmCalls` and in `data/threads/*.json` (`runs[].llmCalls`) |
+| E8 | Versions: `REPORT_VERSION` p12 -> p13 (cache key changed: overview JSON in the report key, separate `overview_` key). Thread file format version stays 1 (new optional `llmCalls`) |
+
+Checks without a real model (D8 still holds: no new tests): `.venv/bin/python -m pytest -q`; `cd frontend && npm run build`; an offline run of the real graph with a fake chat model (read/graph/web stubbed) shows `summarize` starting when `write_notes` ends, while `citation_graph` is still running; `frontend/scripts/screenshots_p6.mjs` takes mock-mode screenshots.

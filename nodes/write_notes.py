@@ -12,7 +12,7 @@ from prompts.pmrl_notes_prompt import PMRL_NOTES_SYSTEM, PMRL_NOTES_USER
 from pydantic import BaseModel, Field
 from state import EvalSetting, Insight, PMRLNotes, PaperItem, PaperTable, ResearchState, Setup
 from tools.cache_manager import load_json_cache, prompt_fingerprint, save_json_cache, summary_cache_path
-from tools.llm_provider import get_llm, invoke_structured_output
+from tools.llm_provider import get_llm, invoke_structured_output, track_llm_call
 
 
 # Bump when the PMRL schema or its grounding rules change: old cache entries
@@ -309,16 +309,18 @@ def analyze_paper_notes(
         timing = {"durationMs": total_ms, "llmMs": 0, "cache": "hit"}
         result.processing_metadata["pmrl"] = timing
         return result, "ok:cache", timing
+    llm_calls: List[Dict[str, Any]] = []
     try:
         model = llm or get_llm()
         llm_started = time.perf_counter()
-        generated: PMRLCoreGeneration = invoke_structured_output(
-            user_text,
-            PMRLCoreGeneration,
-            llm=model,
-            provider=config.DEFAULT_PROVIDER,
-            system=system_text,
-        )
+        with track_llm_call("pmrl", llm_calls, paperId=paper.paper_id):
+            generated: PMRLCoreGeneration = invoke_structured_output(
+                user_text,
+                PMRLCoreGeneration,
+                llm=model,
+                provider=config.DEFAULT_PROVIDER,
+                system=system_text,
+            )
         llm_ms = max(0, int((time.perf_counter() - llm_started) * 1000))
         notes = PMRLNotes(
             problem=generated.problem,
@@ -353,8 +355,9 @@ def analyze_paper_notes(
     total_ms = max(0, int((time.perf_counter() - started) * 1000))
     timing = {"durationMs": total_ms, "llmMs": llm_ms}
     result.processing_metadata = dict(result.processing_metadata or {})
-    result.processing_metadata["pmrl"] = timing
-    return result, status, timing
+    result.processing_metadata["pmrl"] = dict(timing)
+    # ``llmCalls`` (duration and token counts of the PMRL call) goes to node_timings only.
+    return result, status, {**timing, "llmCalls": llm_calls}
 
 
 def _run_notes_in_parallel(
@@ -410,10 +413,15 @@ def write_notes_node(state: ResearchState) -> Dict[str, Any]:
     analyzed, worker_logs, errors, paper_timings = _run_notes_in_parallel(papers, llm=llm)
     logs.extend(worker_logs)
     total_llm_ms = sum(int(item.get("llmMs") or 0) for item in paper_timings.values())
+    llm_calls = [call for item in paper_timings.values() for call in item.get("llmCalls", [])]
     timing = {
         "durationMs": max(0, int((time.perf_counter() - started) * 1000)),
         "llmMs": total_llm_ms,
-        "papers": paper_timings,
+        "papers": {
+            paper_id: {key: value for key, value in item.items() if key != "llmCalls"}
+            for paper_id, item in paper_timings.items()
+        },
+        "llmCalls": llm_calls,
     }
     paper_notes: Dict[str, Dict[str, Any]] = {}
     for paper in analyzed:
