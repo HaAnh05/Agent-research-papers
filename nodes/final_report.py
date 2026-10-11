@@ -575,8 +575,7 @@ def _context_item(node: Dict[str, Any], reason: str, texts: Dict[str, str]) -> s
         head += f" ({year})"
     parts = [head]
     count = node.get("cited_by_count")
-    if isinstance(count, int) and count >= 0:
-        parts.append(texts["count"].format(c=count))
+    parts.append(texts["count"].format(c=count) if isinstance(count, int) and count >= 0 else texts["count"].format(c="—"))
     parts.append(reason)
     return "- " + " — ".join(parts)
 
