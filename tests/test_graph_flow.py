@@ -44,7 +44,7 @@ def test_routing_logic():
     # Test route_after_router
     direct_paper = PaperItem(paper_id="direct", title="Direct paper")
     assert route_after_router({"intent": "direct_read", "selected_papers": [direct_paper], "status": "running"}) == "read_paper"
-    assert route_after_router({"intent": "direct_compare", "selected_papers": [direct_paper], "status": "running"}) == "read_paper"
+    assert route_after_router({"intent": "direct_read", "selected_papers": [direct_paper], "status": "running"}) == "read_paper"
     assert route_after_router({"intent": "direct_read", "selected_papers": [], "status": "running"}) == "search_papers"
     assert route_after_router({"intent": "search", "status": "running"}) == "search_papers"
     assert route_after_router({"status": "error"}) == "error_handler"
@@ -64,5 +64,5 @@ def test_routing_logic():
     dummy_paper = PaperItem(paper_id="p1", title="Test Paper 1")
     assert route_after_write_notes({"selected_papers": [dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
     assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "search", "status": "running"}) == "citation_graph"
-    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "direct_compare", "status": "running"}) == "citation_graph"
+    assert route_after_write_notes({"selected_papers": [dummy_paper, dummy_paper], "intent": "direct_read", "status": "running"}) == "citation_graph"
     assert route_after_write_notes({"selected_papers": [dummy_paper], "status": "error"}) == "error_handler"

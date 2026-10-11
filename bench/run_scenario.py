@@ -304,10 +304,6 @@ def run_scenario(
         (out_dir / "state.json").write_text(
             json.dumps(serialize_state(state), ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        quality = {
-            str(_paper_field(p, "paper_id")): getattr(_paper_field(p, "notes"), "summary_quality", "missing")
-            for p in papers
-        }
         run = {
             "description": label or "bench/run_scenario.py run",
             "intent": state.get("intent") or scenario.get("intent"),
@@ -328,7 +324,6 @@ def run_scenario(
                 "source_text_papers": sources,
                 "llm_cache_files": cache_files,
             },
-            "summary_quality": quality,
         }
         (out_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
         return run

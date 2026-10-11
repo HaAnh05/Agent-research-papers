@@ -70,9 +70,6 @@ def make_run(**overrides) -> v.Run:
                               "node_wall_seconds": {"read_paper": 10.0}},
         paper_ids=["arxiv_1111.11111", "arxiv_2222.22222"],
         notes={pid: {name: words(50) for name in v.PMRL_FIELDS} for pid in ("arxiv_1111.11111", "arxiv_2222.22222")},
-        summary_quality={"arxiv_1111.11111": "complete", "arxiv_2222.22222": "partial"},
-        card_statuses={"arxiv_1111.11111": {"tldr": "complete", "problem": "complete"},
-                       "arxiv_2222.22222": {"tldr": "complete", "problem": "unsupported"}},
         report=GOOD_REPORT,
         sources={"arxiv_1111.11111": "The gain was 46.9 percent on 15 tasks.", "arxiv_2222.22222": "More 1,500 data."},
         arxiv_ids={"arxiv_1111.11111": "1111.11111", "arxiv_2222.22222": "2222.22222"},
@@ -175,20 +172,6 @@ def test_table_numbers_must_occur_in_the_paper_source() -> None:
 # --- QUALITY ---
 
 
-def test_summary_quality_rank() -> None:
-    worse = make_run(summary_quality={"arxiv_1111.11111": "partial", "arxiv_2222.22222": "partial"})
-    assert v.check_summary_quality(make_run(), worse).status == "WARN"
-    assert v.check_summary_quality(make_run(), worse, strict=True).status == "FAIL"
-    better = make_run(summary_quality={"arxiv_1111.11111": "complete", "arxiv_2222.22222": "complete"})
-    assert v.check_summary_quality(make_run(), better).status == "PASS"
-
-
-def test_complete_card_count() -> None:
-    fewer = make_run(card_statuses={"arxiv_1111.11111": {"tldr": "complete"}})
-    assert v.check_card_statuses(make_run(), fewer).status == "WARN"
-    assert v.check_card_statuses(make_run(), make_run()).status == "PASS"
-
-
 def test_pmrl_word_count_band() -> None:
     notes = make_run().notes
     notes["arxiv_1111.11111"]["method"] = " ".join(["w"] * 10)  # 0.2x
@@ -259,7 +242,8 @@ def test_hard_failure_sets_exit_code() -> None:
 
 
 def test_quality_warning_does_not_fail_unless_strict() -> None:
-    worse = make_run(summary_quality={"arxiv_1111.11111": "invalid", "arxiv_2222.22222": "partial"})
+    shorter = {pid: {name: "w w w" for name in v.PMRL_FIELDS} for pid in ("arxiv_1111.11111", "arxiv_2222.22222")}
+    worse = make_run(notes=shorter)
     assert v.exit_code(v.verify(make_run(), worse)) == 0
     assert v.exit_code(v.verify(make_run(), worse, strict=True)) == 1
 
@@ -280,7 +264,7 @@ def test_real_baseline_verifies_against_itself(tmp_path: Path) -> None:
     # copy whose section 3 is replaced by a research-context stub.
     baseline = _five_section_copy(tmp_path)
     run = v.load_run(baseline)
-    assert len(run.paper_ids) == 3 and run.sources and run.card_statuses
+    assert len(run.paper_ids) == 3 and run.sources
     checks = v.verify(run, run)
     # The frozen baseline predates the results format (Insight/Metrics/Setup), so skip those checks.
     failed = [c for c in checks if c.group in ("HARD", "QUALITY") and c.status != "PASS" and not c.name.startswith("results_")]

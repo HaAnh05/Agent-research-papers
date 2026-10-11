@@ -22,7 +22,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 PMRL_FIELDS = ("problem", "method", "result", "limitation")
-QUALITY_RANK = {"complete": 2, "partial": 1}
 SECTION_HEADING_RE = re.compile(r"^##\s+([1-5])\s*[.)]", re.MULTILINE)
 
 
@@ -56,8 +55,6 @@ class Run:
     meta: dict[str, Any]
     paper_ids: list[str]
     notes: dict[str, dict[str, str]]
-    summary_quality: dict[str, str]
-    card_statuses: dict[str, dict[str, str]]
     report: str
     sources: dict[str, str]
     arxiv_ids: dict[str, str] = field(default_factory=dict)
@@ -100,20 +97,11 @@ def load_baseline(path: Path) -> Run:
     artifacts = meta.get("artifacts", {})
     by_paper: dict[str, str] = artifacts.get("pmrl_by_paper", {})
     notes = {pid: _read_json(path / rel) for pid, rel in by_paper.items()}
-    cards: dict[str, Any] = {}
-    report_cache = artifacts.get("report_cache")
-    if report_cache and (path / report_cache).is_file():
-        cards = _read_json(path / report_cache).get("cards", {})
-    quality = dict(meta.get("summary_quality") or {})
-    for pid, entry in cards.items():
-        quality.setdefault(pid, entry.get("quality", "unknown"))
     report_file = path / artifacts.get("report_markdown", "report.md")
-    ids = list(by_paper) or list(quality)
+    ids = list(by_paper)
     return Run(
         path=path, meta=meta, paper_ids=ids,
         notes={pid: {k: str(v or "") for k, v in n.items()} for pid, n in notes.items()},
-        summary_quality=quality,
-        card_statuses={pid: dict(e.get("card_statuses") or {}) for pid, e in cards.items()},
         report=report_file.read_text(encoding="utf-8") if report_file.is_file() else "",
         sources=load_sources(path / artifacts.get("source_text_dir", "source_text")),
         arxiv_ids={pid: _arxiv_id(pid) for pid in ids},
@@ -126,19 +114,15 @@ def load_candidate(path: Path) -> Run:
     papers = state.get("selected_papers") or []
     ids = [str(p["paper_id"]) for p in papers]
     notes: dict[str, dict[str, str]] = {}
-    quality: dict[str, str] = {}
-    statuses: dict[str, dict[str, str]] = {}
     for paper in papers:
         pid = str(paper["paper_id"])
         raw = paper.get("notes") or {}
-        notes[pid] = {k: str(raw.get(k) or "") for k in (*PMRL_FIELDS, "brief_summary")}
-        quality[pid] = str(raw.get("summary_quality") or "missing")
-        statuses[pid] = dict(raw.get("summary_card_statuses") or {})
+        notes[pid] = {k: str(raw.get(k) or "") for k in PMRL_FIELDS}
     report_file = path / "report.md"
     report = report_file.read_text(encoding="utf-8") if report_file.is_file() else str(state.get("final_report") or "")
     return Run(
         path=path, meta={**meta, "status": state.get("status", meta.get("status"))}, paper_ids=ids,
-        notes=notes, summary_quality=quality, card_statuses=statuses, report=report,
+        notes=notes, report=report,
         sources=load_sources(path / "source_text"),
         arxiv_ids={str(p["paper_id"]): str(p.get("arxiv_id") or _arxiv_id(str(p["paper_id"]))) for p in papers},
     )
@@ -413,28 +397,6 @@ def _quality_status(ok: bool, strict: bool) -> str:
     return "PASS" if ok else ("FAIL" if strict else "WARN")
 
 
-def _rank(value: str | None) -> int:
-    return QUALITY_RANK.get(str(value or "").lower(), 0)
-
-
-def check_summary_quality(baseline: Run, candidate: Run, strict: bool = False) -> Check:
-    worse = [
-        f"{pid}: {baseline.summary_quality.get(pid)}->{candidate.summary_quality.get(pid)}"
-        for pid in baseline.paper_ids
-        if _rank(candidate.summary_quality.get(pid)) < _rank(baseline.summary_quality.get(pid))
-    ]
-    return Check("summary_quality_rank", "QUALITY", _quality_status(not worse, strict), "; ".join(worse) or "not worse than baseline")
-
-
-def count_complete_cards(run: Run) -> int:
-    return sum(1 for statuses in run.card_statuses.values() for s in statuses.values() if s == "complete")
-
-
-def check_card_statuses(baseline: Run, candidate: Run, strict: bool = False) -> Check:
-    base, cand = count_complete_cards(baseline), count_complete_cards(candidate)
-    return Check("complete_cards", "QUALITY", _quality_status(cand >= base, strict), f"candidate={cand} baseline={base}")
-
-
 def word_count(text: str) -> int:
     return len(text.split())
 
@@ -521,8 +483,6 @@ def verify(baseline: Run, candidate: Run, th: Thresholds | None = None, *, stric
         check_table_numbers(candidate.report, candidate),
         check_arxiv_links(candidate.report, candidate),
         check_no_internal_lines(candidate.report),
-        check_summary_quality(baseline, candidate, strict),
-        check_card_statuses(baseline, candidate, strict),
         check_pmrl_word_counts(baseline, candidate, th, strict),
         check_report_length(baseline, candidate, th, strict),
         check_grounding(baseline, candidate, th, strict),

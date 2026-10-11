@@ -47,8 +47,6 @@ QUALITY (WARN by default, FAIL under `--strict`):
 
 | Check | Meaning |
 |---|---|
-| `summary_quality_rank` | per paper, complete > partial > other; not worse than baseline |
-| `complete_cards` | total card statuses `complete` not lower than baseline |
 | `pmrl_word_counts` | each P/M/R/L field word count within 0.6x-1.6x baseline |
 | `report_length` | report characters within 0.6x-1.6x baseline |
 | `number_grounding` | share of report numbers found in the union of source texts (`,`/`.` decimals and `%` tolerated; arXiv ids, URLs, code, LaTeX and bare integers below 10 skipped) not below baseline minus 5 points |

@@ -11,7 +11,7 @@ flowchart TD
     Start([Start: User Query / Local PDF / ArXiv Links]) --> Router["router (Intent Classifier)"]
 
     %% CE1 Routing
-    Router -->|CE1: direct_read / direct_compare| ReadPaper["read_paper (ThreadPool + Two-column Parser)"]
+    Router -->|CE1: direct_read| ReadPaper["read_paper (ThreadPool + Two-column Parser)"]
     Router -->|CE1: search| SearchPapers["search_papers (ArXiv API + Thread-Safe Lock)"]
     Router -->|CE1: error| ErrorHandler["error_handler (Graceful Fallback)"]
 
@@ -53,7 +53,7 @@ flowchart TD
 
 | Bước | Node                  | Mô tả                                                                                         |
 | :----: | :-------------------- | :---------------------------------------------------------------------------------------------- |
-|   1   | `router`            | Phân loại intent (search / direct_read / direct_compare) dựa trên rule-based + LLM fallback |
+|   1   | `router`            | Phân loại intent (search / direct_read) dựa trên rule-based + LLM fallback |
 |   2   | `search_papers`     | Gọi ArXiv API với rate-limit thread-safe, trả về danh sách`PaperItem`                    |
 |   3   | `eval_search`       | LLM chấm điểm relevance, chọn top-K bài tốt nhất hoặc yêu cầu refine                  |
 |   4   | `refine_query`      | LLM tối ưu lại từ khóa tìm kiếm dựa trên feedback → quay lại bước 2                |
@@ -74,7 +74,6 @@ d:\LABAI\agentresearch\
 ├── config.py                   # AppConfig tập trung (paths, limits, model defaults)
 ├── state.py                    # Pydantic models & TypedDict ResearchState
 ├── graph.py                    # StateGraph definition, conditional edges & checkpointer
-├── app.py                      # Giao diện Streamlit (3 tabs)
 ├── main.py                     # CLI entry point
 │
 ├── prompts/                    # Prompt templates tách biệt theo node
@@ -164,7 +163,6 @@ Class `AppConfig` tập trung mọi hằng số cấu hình, đọc từ `.env` 
 | **ArXiv**    | `ARXIV_MIN_INTERVAL_SEC=3.0`                                  | Khoảng cách tối thiểu giữa 2 request ArXiv (tránh HTTP 429)           |
 | **ArXiv metadata** | `ARXIV_METADATA_TIMEOUT_SEC=6`, `ARXIV_METADATA_MAX_ATTEMPTS=1`, `ARXIV_METADATA_GRACE_SEC=3` | Request metadata gộp 1 lần cho `read_paper`: timeout ngắn, không retry, chờ thêm tối đa 3s sau khi PDF xong |
 | **Concurrency** | `READ_PAPER_MAX_WORKERS=8`, `GITHUB_MAX_CONCURRENCY=4`, `LLM_MAX_CONCURRENCY=6` | Mỗi stage dùng pool riêng; GitHub và LLM không chờ nhau |
-| **Report**   | `REPORT_PARALLEL_SECTIONS=true`                                | `false` = quay lại 1 lệnh gọi LLM cũ cho toàn báo cáo                  |
 | **Search**   | `MAX_RETRIES=2`, `MAX_SEARCH_RESULTS=5`, `TOP_K_PAPERS=3` | Giới hạn vòng lặp refine, số kết quả tìm kiếm, số bài chọn      |
 | **Local index** | `LOCAL_INDEX_ENABLED=false`, `LOCAL_INDEX_PATH=data/arxiv/index.sqlite`, `LOCAL_INDEX_CUTOFF=2026-08-27` | Cờ tắt mặc định (env `LOCAL_INDEX_ENABLED=true` để bật). Xem mục 3.5 |
 | **PDF**      | `PDF_MAX_PAGES=8`, `PDF_MAX_CHARS=15000`                    | Giới hạn trang/ký tự khi parse PDF                                      |
@@ -183,7 +181,7 @@ File trung tâm gắn kết 9 node thành 1 `StateGraph` hoàn chỉnh.
 ```python
 def route_after_router(state) -> str:
     # CE1: error → error_handler
-    #       direct_read/direct_compare → read_paper (bỏ qua search)
+    #       direct_read → read_paper (bỏ qua search)
     #       search → search_papers
 
 def route_after_eval_search(state) -> str:
@@ -216,12 +214,11 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 
 1. **Rule-Based (Ưu tiên #1)** — Không cần gọi LLM, chạy tức thì:
 
-   - Nếu `raw_inputs` có đúng 1 phần tử → `direct_read`
-   - Nếu `raw_inputs` có ≥ 2 phần tử → `direct_compare`
+   - Nếu `raw_inputs` có ≥ 1 phần tử → `direct_read` (nhiều phần tử = nhiều bài)
    - Tự động phát hiện ArXiv ID (`\d{4}\.\d{4,5}`) và local PDF path
 2. **LLM Classifier (Fallback)** — Cho câu hỏi tự nhiên:
 
-   - Gọi LLM với `with_structured_output(RouterDecision)` → đảm bảo JSON output
+   - Gọi LLM với `with_structured_output(RouterDecision)` (trường `intent`, `search_query`; không có `reasoning`) → đảm bảo JSON output
    - Prompt yêu cầu trích xuất **từ khóa tiếng Anh học thuật** nếu câu hỏi bằng tiếng Việt
    - Ví dụ: `"Tôi muốn tìm bài báo unlearning"` → `search_query = "machine unlearning in AI"`
 
@@ -357,15 +354,14 @@ Tạo citation key theo format `{LastName}{Year}{FirstWord}` (ví dụ: `vaswani
 
 **Chức năng**: Tổng hợp mọi thông tin thành **báo cáo nghiên cứu chuyên sâu** dạng Markdown.
 
-**Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Bối cảnh nghiên cứu` (code, từ `citation_graph`) → `## 4. Kết luận` → `## 5. Tài liệu tham khảo`. Không còn mục so sánh/benchmark; ý định `direct_compare` chỉ còn dùng ở router để chọn nhiều bài.
+**Cấu trúc báo cáo**: `## 1. Tóm tắt` → `## 2. Phân tích bài báo` (PMRL) → `## 3. Bối cảnh nghiên cứu` (code, từ `citation_graph`) → `## 4. Kết luận` → `## 5. Tài liệu tham khảo`. Không còn mục so sánh/benchmark và không còn summary card; nhiều bài đầu vào cũng đi theo `direct_read`.
 
 **Đặc điểm**:
 
-- Chế độ mặc định (`REPORT_PARALLEL_SECTIONS=true`): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_PROMPT`, chỉ nhận `_paper_breakdown` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 4. Kết luận` (`REPORT_OVERVIEW_*`; `_parse_overview` vẫn nhận số 3 cũ, bản 1 bài và nhiều bài), cộng các lệnh summary card — tất cả trong **1 pool** (`min(2n+1, 2*LLM_MAX_CONCURRENCY)` worker). H1, header mục 2, thứ tự bài, mục 3 (Bối cảnh nghiên cứu) và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded`, không cache, và không bao giờ gọi lại lệnh đơn cũ. Timing thêm `sectionPapers` và `overviewMs`.
-- `REPORT_PARALLEL_SECTIONS=false` hoặc không có bài: giữ đường cũ — gộp PMRL notes + GitHub info + BibTeX vào 1 prompt duy nhất (`FINAL_REPORT_PROMPT`)
+- Đường duy nhất (song song): mỗi bài 1 lệnh LLM viết khối `### Tên bài` (`PAPER_SECTION_*`, chỉ nhận `_paper_section_input` của bài đó), 1 lệnh overview viết `## 1. Tóm tắt`, `## 4. Kết luận` (`REPORT_OVERVIEW_*`; `_parse_overview` vẫn nhận số 3 cũ, bản 1 bài và nhiều bài) — tất cả trong **1 pool** (`min(n+1, 2*LLM_MAX_CONCURRENCY)` worker). Số lệnh LLM của `final_report` = n + 1 (1 bài: 2 lệnh). Không có bài → không gọi LLM, báo cáo dựng từ văn bản dự phòng. H1, header mục 2, thứ tự bài, mục 3 (Bối cảnh nghiên cứu) và mục 5 (Tài liệu tham khảo) được dựng bằng code từ metadata và link đã xác minh. Lệnh section lỗi → khối dựng từ notes; overview lỗi → văn bản tối thiểu; cả hai đặt status `degraded` và không cache. Timing thêm `sectionPapers` và `overviewMs`.
 - **Khối "Kết quả chính" (PR 3)**: LLM nhận notes kèm insights, dòng eval_settings và setup, viết các sub-bullet `Insight` (đánh số), `Đại lượng đo`, `Thiết lập`, `Nhận xét` (tiếng Anh: Insight, Metrics, Setup, Remarks). **Code** dựng bảng kết quả từ `eval_settings` đã grounding (cột: Benchmark, Metric kèm đơn vị và ↑/↓, tên phương pháp, Baseline tốt nhất; `—` khi thiếu; dòng `*Nguồn: Table N trong paper*` khi nhãn bảng đã xác minh) và chèn trước sub-bullet `Nhận xét` (hoặc cuối khối Kết quả chính nếu thiếu); bảng thụt 2 dấu cách để nằm trong mục danh sách. Nếu `setup.hardware` rỗng mà `Thiết lập` không có câu về hardware, code thêm `Hardware: paper không nêu` (tiếng Anh: `Hardware: not stated in the paper`). Không có dòng đã grounding thì không có bảng. Lệnh section lỗi → `_deterministic_paper_section` dựng cùng cấu trúc từ notes. Overview nhận insights từng bài để "Tóm tắt" nêu insight xuyên suốt các bài.
-- Khóa cache báo cáo chứa chế độ; hai chế độ không dùng chung entry. Phiên bản: `PARALLEL_REPORT_VERSION = "p10"`, `SUMMARY_PIPELINE_VERSION = "v5"`; khóa cũng chứa input section và context overview nên đổi notes là đổi khóa
-- Mục 3 do `_context_section()` dựng từ `state["citation_graph"]` (thiếu graph → một dòng "chưa có dữ liệu"); nội dung mục 3 nằm trong khóa cache báo cáo. Đường cũ (1 prompt) chèn mục 3 bằng `_insert_context_section()` trước `## 4.`
+- Cache báo cáo chỉ lưu `report_text` (không còn card). Phiên bản: `REPORT_VERSION = "p11"`; khóa cũng chứa `_paper_breakdown`, input section, context overview và mục 3 nên đổi notes là đổi khóa
+- Mục 3 do `_context_section()` dựng từ `state["citation_graph"]` (thiếu graph → một dòng "chưa có dữ liệu"); nội dung mục 3 nằm trong khóa cache báo cáo
 - Lưu file Markdown tự động vào `reports/report_{title}_{timestamp}.md`
 - Dùng `extract_text_from_response()` để xử lý an toàn response từ mọi LLM provider
 
@@ -478,11 +474,10 @@ Mỗi call LLM gửi **2 message**: `X_SYSTEM` (tĩnh: vai trò, luật, định
 | `router_prompt.py`       | `ROUTER_SYSTEM` / `ROUTER_USER`                    | `router`                                                                  |
 | `eval_search_prompt.py`  | `EVAL_SEARCH_SYSTEM` / `_USER`                     | `eval_search`                                                             |
 | `refine_query_prompt.py` | `REFINE_QUERY_SYSTEM` / `_USER`                    | `refine_query`                                                            |
-| `pmrl_notes_prompt.py`   | `PMRL_NOTES_SYSTEM` / `_USER`                      | `write_notes` (schema `PMRLCoreGeneration`, không có `brief_summary`)    |
-| `results_summary_prompt.py` | `RESULTS_SUMMARY_SYSTEM` / `_USER`              | 5 summary card                                                            |
-| `final_report_prompt.py` | `PAPER_SECTION_*`, `REPORT_OVERVIEW_*`, `REPORT_OVERVIEW_SINGLE_*`, `FINAL_REPORT_PROMPT` (cũ) | `final_report` song song / đường cũ 1 chuỗi |
+| `pmrl_notes_prompt.py`   | `PMRL_NOTES_SYSTEM` / `_USER`                      | `write_notes` (schema `PMRLCoreGeneration`)    |
+| `final_report_prompt.py` | `PAPER_SECTION_*`, `REPORT_OVERVIEW_*`, `REPORT_OVERVIEW_SINGLE_*` | `final_report` |
 
-Builder thuần (không đọc cache), dùng chung bởi production và `bench/prompt_bench.py`: `write_notes.build_pmrl_messages`, `final_report.build_cards_messages`, `build_section_messages`, `build_overview_messages` — đều trả `(system, user)`.
+Builder thuần (không đọc cache), dùng chung bởi production và `bench/prompt_bench.py`: `write_notes.build_pmrl_messages`, `final_report.build_section_messages`, `build_overview_messages` — đều trả `(system, user)`.
 
 `tools/llm_provider.py`: `invoke_structured_output(prompt, schema, system=None)` — không có `system` thì request là 1 chuỗi như cũ; có `system` thì gửi `[SystemMessage, HumanMessage]` (Z.AI: JSON Schema nối vào system). `invoke_text(llm, system, user)` cho call văn bản. Gemini map `SystemMessage` đầu tiên sang `system_instruction`, Anthropic sang tham số `system`, OpenAI-compatible sang role `system` (đã kiểm tra trong source đã cài).
 
@@ -491,7 +486,7 @@ Builder thuần (không đọc cache), dùng chung bởi production và `bench/p
 | `eval_search_prompt.py`  | `EVAL_SEARCH_PROMPT`      | `eval_search` — chấm điểm & chọn bài                  |
 | `refine_query_prompt.py` | `REFINE_QUERY_PROMPT`     | `refine_query` — tối ưu từ khóa                        |
 | `pmrl_notes_prompt.py`   | `PMRL_NOTES_PROMPT`       | `write_notes` — tổng hợp PMRL                            |
-| `final_report_prompt.py` | `FINAL_REPORT_PROMPT` (+ `PAPER_SECTION_PROMPT`, `REPORT_OVERVIEW_PROMPT`) | `final_report` — báo cáo 1 lệnh (cũ) hoặc theo từng phần song song |
+| `final_report_prompt.py` | `PAPER_SECTION_*`, `REPORT_OVERVIEW_*` | `final_report` — báo cáo theo từng phần song song |
 
 ---
 
@@ -511,18 +506,6 @@ python main.py --query "machine unlearning" --provider gemini --model gemini-3.6
 ```
 
 Chạy `graph.stream()` đồng bộ, in trace log từng bước, xuất final report ra terminal.
-
-#### `app.py` — Streamlit Web UI
-
-Giao diện 3 tabs:
-
-| Tab                       | Nội dung                                         |
-| :------------------------ | :------------------------------------------------ |
-| 📄 Báo Cáo Tổng Hợp   | Markdown report + nút Download                   |
-| 📝 Ghi Chú PMRL & GitHub | Card từng bài: PMRL notes, GitHub repos, BibTeX |
-| ⏱️ Nhật Ký Thực Thi  | Trace logs real-time từng node                   |
-
-Sidebar cho phép chọn LLM provider/model, override API keys, xem sơ đồ luồng xử lý.
 
 ---
 

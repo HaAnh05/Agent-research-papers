@@ -5,7 +5,7 @@ with a future prompt rewrite ("new": system+user builders).  Tokens are the
 primary metric, because latency is driven by output + reasoning tokens and the
 reasoning length varies several-fold between identical requests.
 
-Stages: pmrl, cards, section, overview.  Fixed inputs live in
+Stages: pmrl, section, overview.  Fixed inputs live in
 ``bench/prompt_variants/v0/inputs/`` (tracked), the captured v0 prompt strings
 in ``bench/prompt_variants/v0/rendered/<stage>__<case>.json``.
 
@@ -16,7 +16,7 @@ Usage::
 
     # 2. benchmark (real provider calls)
     .venv/bin/python bench/prompt_bench.py --variants v0,new \
-        --stages pmrl,cards,section,overview --cases all --n 3 --concurrency 8 \
+        --stages pmrl,section,overview --cases all --n 3 --concurrency 8 \
         --out bench/runs/prompt_bench_<ts>/
 
     # no provider calls: fake LLM with synthetic token counts
@@ -26,12 +26,11 @@ Variant "new" calls builders that must exist in the nodes (reported as
 unavailable when missing; the v0 run is never affected):
 
 * ``nodes.write_notes.build_pmrl_messages(paper) -> (system, user)``
-* ``nodes.final_report.build_cards_messages(paper, language_mode)``
 * ``nodes.final_report.build_section_messages(paper, index, user_query, language_mode)``
 * ``nodes.final_report.build_overview_messages(papers, user_query, title,
   language_mode)``
 
-Structured stages (pmrl, cards) go through
+The structured stage (pmrl) goes through
 ``tools.llm_provider.invoke_structured_output(user, schema, system=system, ...)``;
 text stages send ``[SystemMessage(system), HumanMessage(user)]``.  No retries:
 a failed call is recorded as failed.
@@ -68,30 +67,20 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage  # no
 from bench import verify  # noqa: E402
 from bench.run_scenario import prompt_chars  # noqa: E402
 from config import config, resolved_provider  # noqa: E402
-from state import PMRLGeneration, PaperItem, SummaryCards  # noqa: E402
+from nodes.write_notes import PMRLCoreGeneration  # noqa: E402
+from state import PaperItem  # noqa: E402
 from text_utils import detect_response_language  # noqa: E402
 from tools import llm_provider  # noqa: E402
 
 VARIANTS_DIR = ROOT / "bench" / "prompt_variants"
-STAGES = ("pmrl", "cards", "section", "overview")
-STRUCTURED_SCHEMAS = {"pmrl": PMRLGeneration, "cards": SummaryCards}
-
-
-def _new_schema(stage: str) -> Any:
-    """Schema production sends for the "new" variant (PMRL dropped brief_summary)."""
-
-    if stage == "pmrl":
-        from nodes.write_notes import PMRLCoreGeneration
-
-        return PMRLCoreGeneration
-    return STRUCTURED_SCHEMAS[stage]
+STAGES = ("pmrl", "section", "overview")
+STRUCTURED_SCHEMAS = {"pmrl": PMRLCoreGeneration}
 KNOWN_VARIANTS = ("v0", "new")
 # Saved runs the fixed inputs come from (name -> directory under bench/runs/).
 DEFAULT_RUNS = {"single": "20261010_180106_single_v2", "multi": "20261010_180642_parallel_v2"}
 # stage -> (module, builder name) for variant "new".
 BUILDERS = {
     "pmrl": ("nodes.write_notes", "build_pmrl_messages"),
-    "cards": ("nodes.final_report", "build_cards_messages"),
     "section": ("nodes.final_report", "build_section_messages"),
     "overview": ("nodes.final_report", "build_overview_messages"),
 }
@@ -256,10 +245,7 @@ class CaptureLLM:
 
 _CAPTURE_RESPONSES = {
     "pmrl": json.dumps({
-        "problem": "p ok", "method": "m ok", "result": "r ok", "limitation": "l ok", "brief_summary": "",
-    }),
-    "cards": json.dumps({
-        "tldr": "t", "problem": "p", "method": "m", "key_results": "k", "why_it_matters": "w",
+        "problem": "p ok", "method": "m ok", "result": "r ok", "limitation": "l ok",
     }),
     "section": "### Title\n- **Problem**: text\n- **Methodology**: text\n",
     "overview": "## 1. Summary\ntext\n\n## 3. Conclusion\ntext\n",
@@ -294,8 +280,6 @@ def _capture_one(case: Case, run: RunInput) -> str:
             raise RuntimeError(f"capture failed for {case.stage}/{case.id}: {status}")
         if not llm.prompts[0].startswith(wn._notes_prompt(paper)):
             raise RuntimeError(f"captured pmrl prompt does not start with _notes_prompt: {case.id}")
-    elif case.stage == "cards":
-        fr._summarize_one(paper, "", run.language_mode, llm)
     elif case.stage == "section":
         fr._write_paper_section(llm, paper, case.index, run.user_query, run.language_mode)
     else:
@@ -406,7 +390,7 @@ def _words(seed: int, count: int) -> str:
     return " ".join(f"w{(seed + i) % 97}" for i in range(count))
 
 
-_FAKE_BASE_TOKENS = {"pmrl": 2400, "cards": 900, "section": 1600, "overview": 1800}
+_FAKE_BASE_TOKENS = {"pmrl": 2400, "section": 1600, "overview": 1800}
 
 
 class FakeLLM:
@@ -446,12 +430,7 @@ class FakeLLM:
         if stage == "pmrl":
             return json.dumps({
                 "problem": _words(seed, 60), "method": _words(seed + 1, 90), "result": _words(seed + 2, 70),
-                "limitation": _words(seed + 3, 40), "brief_summary": "",
-            })
-        if stage == "cards":
-            return json.dumps({
-                "tldr": _words(seed, 30), "problem": _words(seed + 1, 40), "method": _words(seed + 2, 40),
-                "key_results": _words(seed + 3, 40), "why_it_matters": _words(seed + 4, 40),
+                "limitation": _words(seed + 3, 40),
             })
         if stage == "section":
             return f"### Paper\n- **Problem**: {_words(seed, 80)}\n\n$$\nx = y\n$$\n\n- **Results**: {_words(seed + 1, 80)}\n"
@@ -515,8 +494,6 @@ def _builder_args(case: Case, run: RunInput) -> tuple[Any, ...]:
     paper = papers[case.index - 1]
     if case.stage == "section":
         return (paper, case.index, run.user_query, run.language_mode)
-    if case.stage == "cards":
-        return (paper, run.language_mode)
     return (paper,)
 
 
@@ -544,7 +521,7 @@ def _call_new(task: Task, run: RunInput, backend: Backend) -> None:
     if task.stage in STRUCTURED_SCHEMAS:
         llm_provider.invoke_structured_output(
             user,
-            _new_schema(task.stage),
+            STRUCTURED_SCHEMAS[task.stage],
             system=system,
             llm=backend.get_llm(json_mode=True),
             provider=config.DEFAULT_PROVIDER,
@@ -561,10 +538,8 @@ def _parse_model(text: str, schema: Any) -> Any:
 
 
 def quality_pmrl(text: str) -> dict[str, Any]:
-    from nodes.write_notes import validate_brief_summary
-
     try:
-        generated = _parse_model(text, PMRLGeneration)
+        generated = _parse_model(text, PMRLCoreGeneration)
     except Exception as exc:
         return {"parse_ok": False, "parse_error": type(exc).__name__}
     words = {name: verify.word_count(getattr(generated, name, "") or "") for name in PMRL_FIELDS}
@@ -572,30 +547,6 @@ def quality_pmrl(text: str) -> dict[str, Any]:
         "parse_ok": True,
         "words": words,
         "all_nonempty": all(count > 0 for count in words.values()),
-        "brief_summary_ok": bool(validate_brief_summary(generated.brief_summary)),
-    }
-
-
-def quality_cards(text: str, paper: PaperItem) -> dict[str, Any]:
-    from nodes.final_report import _summary_source_evidence
-    from nodes.write_notes import SUMMARY_CARD_FIELDS, validate_summary_cards
-
-    try:
-        cards = _parse_model(text, SummaryCards)
-    except Exception as exc:
-        return {"parse_ok": False, "parse_error": type(exc).__name__}
-    # Production validation, exactly as _summarize_one calls it.
-    validated, status, reason, card_statuses, card_reasons = validate_summary_cards(
-        cards, source_text=_summary_source_evidence(paper)
-    )
-    return {
-        "parse_ok": True,
-        "status": status,
-        "reason": reason,
-        "card_statuses": dict(card_statuses),
-        "card_reasons": dict(card_reasons),
-        "n_complete": sum(1 for value in card_statuses.values() if value == "complete"),
-        "words": {name: verify.word_count(str(getattr(validated, name, "") or "")) for name in SUMMARY_CARD_FIELDS},
     }
 
 
@@ -627,8 +578,6 @@ def compute_quality(task: Task, text: str, run: RunInput) -> dict[str, Any]:
     stage = task.stage
     if stage == "pmrl":
         return quality_pmrl(text)
-    if stage == "cards":
-        return quality_cards(text, run.papers[task.case.index - 1])
     if stage == "section":
         return quality_text(text, {task.case.paper_id: run.sources.get(task.case.paper_id, "")})
     return quality_overview(text, run.sources, len(run.papers))
@@ -719,16 +668,8 @@ def _quality_aggregate(stage: str, records: list[dict[str, Any]]) -> dict[str, A
     out: dict[str, Any] = {"parse_rate": _mean([1.0 if q.get("parse_ok") else 0.0 for q in qualities])}
     if stage == "pmrl":
         out["all_nonempty_rate"] = _mean([1.0 if q.get("all_nonempty") else 0.0 for q in parsed])
-        out["brief_summary_ok_rate"] = _mean([1.0 if q.get("brief_summary_ok") else 0.0 for q in parsed])
         for name in PMRL_FIELDS:
             out[f"words_{name}_median"] = _round(statistics.median([q["words"][name] for q in parsed])) if parsed else None
-    elif stage == "cards":
-        out["complete_rate"] = _mean([1.0 if q.get("status") == "complete" else 0.0 for q in parsed])
-        out["cards_complete_mean"] = _mean([float(q["n_complete"]) for q in parsed])
-        statuses: dict[str, int] = {}
-        for q in parsed:
-            statuses[q["status"]] = statuses.get(q["status"], 0) + 1
-        out["status_counts"] = statuses
     else:
         out["words_median"] = _round(statistics.median([q["words"] for q in parsed])) if parsed else None
         out["equations_mean"] = _mean([float(q["equations"]) for q in parsed])

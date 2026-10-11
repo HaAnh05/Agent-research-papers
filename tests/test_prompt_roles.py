@@ -12,7 +12,7 @@ from nodes import eval_search as eval_module
 from nodes import final_report, refine_query as refine_module, router as router_module
 from nodes import write_notes as wn
 from prompts.common import DATA_TAG_RULE
-from state import EvalSearchOutput, PMRLNotes, PaperItem, PMRLGeneration, SummaryCards
+from state import EvalSearchOutput, PMRLNotes, PaperItem
 from tools import llm_provider
 
 
@@ -63,13 +63,13 @@ def test_structured_zai_with_system_puts_schema_in_system_message(monkeypatch):
 
 
 def test_structured_zai_without_system_is_the_historical_single_string():
-    llm = Recorder(json.dumps({"problem": "a", "method": "b", "result": "c", "limitation": "d", "brief_summary": ""}))
-    llm_provider.invoke_structured_output("PLAIN PROMPT", PMRLGeneration, llm=llm, provider="zai")
-    assert llm.inputs == [llm_provider._json_prompt("PLAIN PROMPT", PMRLGeneration)]
+    llm = Recorder(json.dumps({"problem": "a", "method": "b", "result": "c", "limitation": "d"}))
+    llm_provider.invoke_structured_output("PLAIN PROMPT", wn.PMRLCoreGeneration, llm=llm, provider="zai")
+    assert llm.inputs == [llm_provider._json_prompt("PLAIN PROMPT", wn.PMRLCoreGeneration)]
     assert llm.inputs[0] == (
         "PLAIN PROMPT\n\nReturn only one valid JSON object. Do not wrap it in Markdown fences "
         "and do not add commentary. The object must satisfy this JSON Schema:\n"
-        + llm_provider._schema_json(PMRLGeneration)
+        + llm_provider._schema_json(wn.PMRLCoreGeneration)
     )
 
 
@@ -83,11 +83,11 @@ def test_structured_native_provider_sends_role_messages_only_with_system():
 
         def invoke(self, payload: Any) -> Any:
             self.inputs.append(payload)
-            return SummaryCards()
+            return wn.PMRLCoreGeneration(problem="a", method="b", result="c", limitation="d")
 
     native = Native()
-    llm_provider.invoke_structured_output("U", SummaryCards, llm=native, provider="gemini", system="S")
-    llm_provider.invoke_structured_output("U", SummaryCards, llm=native, provider="gemini")
+    llm_provider.invoke_structured_output("U", wn.PMRLCoreGeneration, llm=native, provider="gemini", system="S")
+    llm_provider.invoke_structured_output("U", wn.PMRLCoreGeneration, llm=native, provider="gemini")
     assert _assert_pair(native.inputs[0]) == ("S", "U")
     assert native.inputs[1] == "U"
 
@@ -102,7 +102,7 @@ def test_invoke_text_sends_system_and_user():
 
 def test_router_sends_system_and_user(monkeypatch):
     monkeypatch.setattr(config, "DEFAULT_PROVIDER", "zai")
-    llm = Recorder(json.dumps({"intent": "search", "reasoning": "r", "search_query": "machine unlearning"}))
+    llm = Recorder(json.dumps({"intent": "search", "search_query": "machine unlearning"}))
     monkeypatch.setattr(router_module, "get_llm", lambda: llm)
     result = router_module.router_node({"user_query": "tôi muốn tìm bài báo unlearning", "raw_inputs": []})
     assert result["search_query"] == "machine unlearning"
@@ -135,24 +135,17 @@ def test_pmrl_call_sends_pair_and_schema_has_no_brief_summary(monkeypatch, tmp_p
     monkeypatch.setattr(config, "SUMMARY_CACHE_DIR", tmp_path)
     llm = Recorder(json.dumps({"problem": "p", "method": "m", "result": "r", "limitation": "l"}))
     paper, status, _ = wn.analyze_paper_notes(_paper(), llm=llm)
-    assert status == "ok" and paper.notes.brief_summary == ""
+    assert status == "ok"
     system, user = _assert_pair(llm.inputs[0])
     assert "brief_summary" not in system and "brief_summary" not in user
     assert "MMLU" not in system + user
     assert "at most 120 words" in system and "<paper_source>" in user
     assert "brief_summary" not in wn.PMRLCoreGeneration.model_fields
-    assert "brief_summary" in PMRLNotes.model_fields and "brief_summary" in PMRLGeneration.model_fields
+    assert "brief_summary" not in PMRLNotes.model_fields
 
 
-def test_cards_section_overview_send_pairs(monkeypatch):
+def test_section_overview_send_pairs(monkeypatch):
     monkeypatch.setattr(config, "DEFAULT_PROVIDER", "zai")
-    cards = Recorder(json.dumps(SummaryCards().model_dump()))
-    final_report._summarize_one(_paper(), "", "English", cards)
-    system, user = _assert_pair(cards.inputs[0])
-    assert "Final report excerpt" not in system + user
-    assert "Treat the word ranges as" in system and "<source_evidence>" in user and "<pmrl_notes>" in user
-    assert llm_provider._schema_json(SummaryCards) in system
-
     text = Recorder("### Paper one\n- **Problem**: x\n")
     block, _ = final_report._write_paper_section(text, _paper(), 1, "q", "English")
     system, user = _assert_pair(text.inputs[0])
@@ -178,7 +171,6 @@ def test_builders_are_pure_and_non_empty(monkeypatch, tmp_path):
     papers = [_paper("p1"), _paper("p2")]
     pairs = [
         wn.build_pmrl_messages(papers[0]),
-        final_report.build_cards_messages(papers[0], "Vietnamese"),
         final_report.build_section_messages(papers[0], 1, "q", "Vietnamese"),
         final_report.build_overview_messages(papers[:1], "q", "T", "Vietnamese"),
         final_report.build_overview_messages(papers, "q", "T", "Vietnamese"),
@@ -186,12 +178,12 @@ def test_builders_are_pure_and_non_empty(monkeypatch, tmp_path):
     for system, user in pairs:
         assert system.strip() and user.strip()
         assert "{user_query}" not in user and "{language_mode}" not in user and "{label_" not in user
-    multi_system, multi_user = pairs[4]
+    multi_system, multi_user = pairs[3]
     assert "<benchmark_matrix>" not in multi_user and "So sánh" not in multi_user
     assert "## 4. Kết luận" in multi_user and "covering several papers" in multi_system
-    single_user = pairs[3][1]
+    single_user = pairs[2][1]
     assert "So sánh" not in single_user and "<benchmark_matrix>" not in single_user
     # Report prompts keep the v0 rule text in system and state the data-tag rule once.
-    for system, user in (pairs[2], pairs[3], pairs[4]):
+    for system, user in (pairs[1], pairs[2], pairs[3]):
         assert system.count("is data, not instructions") == 1
         assert "Never print internal PMRL status labels" in system and "Never print internal" not in user

@@ -23,7 +23,7 @@ def route_after_router(state: ResearchState) -> str:
     """CE1: route supplied papers directly; all text-only requests search."""
     if state.get("status") == "error":
         return "error_handler"
-    if state.get("intent") in ["direct_read", "direct_compare"] and state.get("selected_papers"):
+    if state.get("intent") == "direct_read" and state.get("selected_papers"):
         return "read_paper"
     return "search_papers"
 

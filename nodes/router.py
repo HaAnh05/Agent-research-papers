@@ -14,10 +14,9 @@ from tools.llm_provider import get_llm, invoke_structured_output
 
 
 class RouterDecision(BaseModel):
-    intent: Literal["direct_read", "direct_compare", "search"] = Field(
-        description="One of: 'direct_read', 'direct_compare', 'search'"
+    intent: Literal["direct_read", "search"] = Field(
+        description="One of: 'direct_read', 'search'"
     )
-    reasoning: str = Field(description="Explanation of classification decision")
     search_query: str = Field(default="", description="Cleaned core search query if searching")
 
 
@@ -32,38 +31,8 @@ def _safe_paper_label(item: str, index: int | None = None) -> str:
     return "Paper" if index is None else f"Paper {index}"
 
 
-def _looks_like_explicit_compare_query(query: str) -> bool:
-    """Only trigger on very clear comparison requests like 'compare A and B' or 'so sánh A và B'."""
-    text = (query or "").strip()
-    if not text:
-        return False
-
-    lowered = text.lower()
-    compare_markers = ["compare", "comparison", "vs", "versus", "so sánh", "so sanh", "đối chiếu", "đánh giá"]
-    if not any(marker in lowered for marker in compare_markers):
-        return False
-
-    named_terms = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+", text)
-    if len(named_terms) >= 2:
-        return True
-
-    token_pairs = re.findall(r"\b[A-Z][A-Za-z0-9]+\b", text)
-    return len(token_pairs) >= 2
-
-
-def _build_safe_compare_search_query(query: str) -> str:
-    """Keep exact paper names together and avoid turning them into generic MoE keywords."""
-    text = (query or "").strip()
-    named_terms = re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)+", text)
-    if len(named_terms) >= 2:
-        return " ".join(named_terms[:2])
-
-    split_terms = re.findall(r"\b[A-Z][A-Za-z0-9]+\b", text)
-    return " ".join(split_terms[:2]) if len(split_terms) >= 2 else text
-
-
 def router_node(state: ResearchState) -> Dict[str, Any]:
-    """Xác định intent: đọc trực tiếp, so sánh, hoặc tìm kiếm bài báo."""
+    """Xác định intent: đọc trực tiếp (1 hoặc nhiều paper) hoặc tìm kiếm bài báo."""
     started = time.perf_counter()
     user_query = state.get("user_query", "").strip()
     raw_inputs = state.get("raw_inputs", [])
@@ -130,25 +99,15 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
             )
             selected.append(paper)
             
-        logs.append(f"[router] Có {len(selected)} input -> direct_compare")
+        logs.append(f"[router] Có {len(selected)} input -> direct_read")
         return {
-            "intent": "direct_compare",
+            "intent": "direct_read",
             "selected_papers": selected,
             "trace_logs": logs,
             "node_timings": {"router": {"durationMs": max(0, int((time.perf_counter() - started) * 1000)), "llmMs": 0}},
         }
 
-    # 2. Nếu là câu so sánh rõ ràng, giữ tên paper nguyên vẹn thay vì rút thành keyword quá rộng.
-    if _looks_like_explicit_compare_query(user_query):
-        safe_query = _build_safe_compare_search_query(user_query)
-        logs.append("[router] Explicit comparison query -> search")
-        return {
-            "intent": "search",
-            "search_query": safe_query,
-            "trace_logs": logs,
-        }
-
-    # 3. Với query tự nhiên, dùng LLM để phân loại ý định.
+    # 2. Với query tự nhiên, dùng LLM để phân loại ý định.
     try:
         llm = get_llm()
         llm_started = time.perf_counter()
@@ -170,7 +129,7 @@ def router_node(state: ResearchState) -> Dict[str, Any]:
         # A direct workflow requires a concrete ArXiv/PDF input. Natural-language
         # paper titles still need an ArXiv search before there is anything for
         # the PDF reader to consume.
-        if chosen_intent in {"direct_read", "direct_compare"} and not raw_inputs:
+        if chosen_intent == "direct_read" and not raw_inputs:
             logs.append(f"[router] Bỏ direct intent không có paper input -> search")
             chosen_intent = "search"
         search_q = decision.search_query.strip() or user_query

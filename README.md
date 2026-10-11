@@ -1,6 +1,6 @@
 # Research Scout
 
-Research Scout là research assistant dạng chat chạy trên một LangGraph. React là giao diện chính; FastAPI quản lý thread trong RAM, SSE trace/answer và thư viện report. Streamlit và CLI vẫn được giữ làm fallback. [FEPlan.md](FEPlan.md) ghi các quyết định, tiến độ đã kiểm chứng và acceptance gate còn mở.
+Research Scout là research assistant dạng chat chạy trên một LangGraph. React là giao diện chính; FastAPI quản lý thread trong RAM, SSE trace/answer và thư viện report. CLI (`main.py`) vẫn được giữ. [FEPlan.md](FEPlan.md) ghi các quyết định, tiến độ đã kiểm chứng và acceptance gate còn mở.
 
 ## Workflow
 
@@ -103,11 +103,9 @@ Z.AI dùng `ChatOpenAI` với `ZAI_API_BASE` tường minh. Các call có Pydant
 
 Frontend không nhận hoặc lưu API key.
 
-## Streamlit fallback và CLI
+## CLI
 
 ```bash
-streamlit run app.py
-
 python main.py --query "Mixture of Experts in Large Language Models"
 python main.py --inputs "1706.03762"
 python main.py --inputs "1706.03762" "2005.14165"
@@ -136,7 +134,6 @@ state.py               ResearchState và Pydantic models
 nodes/                 10 workflow nodes
 tools/                 ArXiv, PDF, GitHub, BibTeX, LLM adapters
 frontend/              React/Vite + TypeScript
-app.py                 Streamlit fallback
 main.py                CLI
 reports/               Markdown reports đã tạo
 tests/                 Backend tests
