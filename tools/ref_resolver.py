@@ -75,6 +75,15 @@ def normalize_title(title: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text))
 
 
+def title_jaccard(a: str, b: str) -> float:
+    """Token Jaccard of two normalized titles (0.0 when either side is empty)."""
+
+    left, right = set(normalize_title(a).split()), set(normalize_title(b).split())
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
 def normalize_doi(doi: Optional[str]) -> str:
     text = (doi or "").strip().lower()
     text = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "", text)

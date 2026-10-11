@@ -143,3 +143,10 @@ def test_hardware_line_enforced_only_when_paper_states_none():
     # no Setup sub-bullet at all: the line is created
     missing = LLM_VI.replace("  - **Thiết lập**: Datasets: Maze2D.\n", "")
     assert "**Thiết lập**: Hardware: paper không nêu" in fr._normalize_paper_section(missing, _paper(absent), "Vietnamese")
+
+
+def test_unknown_top_level_bullet_is_dropped_but_known_and_nested_stay():
+    llm = LLM_VI.replace("- **Hạn chế**: L.\n", "- **Bối cảnh — các hướng hiện có**: trả lời câu hỏi của người dùng.\n  - **Insight**: lồng nhau.\n- **Hạn chế**: L.\n")
+    block = fr._normalize_paper_section(llm, _paper(PMRLNotes(problem="p", method="m", result="r", limitation="l")), "Vietnamese")
+    assert "Bối cảnh" not in block and "trả lời câu hỏi" not in block and "lồng nhau" not in block
+    assert all(label in block for label in ("**Vấn đề**", "**Phương pháp**", "**Kết quả chính**", "**Hạn chế**", "**Thiết lập**"))
