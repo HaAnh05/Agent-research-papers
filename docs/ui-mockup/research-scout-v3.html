@@ -104,6 +104,16 @@ button{font:inherit;color:inherit;cursor:pointer}
 .step.wait{color:var(--ink-3)}
 .step.wait .d{color:var(--ink-3)}
 .step .t{color:var(--ink-3);font-size:13px}
+.par{display:inline-block;margin-left:8px;font:500 11.5px var(--sans);color:var(--accent-ink);background:var(--accent-wash);border-radius:5px;padding:1px 6px;vertical-align:1px}
+.node-id{font:400 12.5px var(--sans);color:var(--ink-3);margin-left:6px}
+.est{color:var(--ink-3);font-size:13px}
+.quick{display:flex;align-items:center;gap:8px;color:var(--ink-3);font-size:14px;margin:0 0 10px}
+.quick svg{width:14px;height:14px;color:var(--ok)}
+.fullreport h2{font:400 26px/1.25 var(--serif);margin:28px 0 10px}
+.fullreport h4{font:600 15px var(--sans);margin:18px 0 6px}
+.fullreport pre{background:var(--subtle);border-radius:8px;padding:10px 12px;font:12.5px/1.5 ui-monospace,monospace;white-space:pre-wrap}
+.banner{border:1px solid var(--rule);border-radius:12px;padding:10px 14px;margin:0 0 16px;font-size:13.5px;color:var(--ink-2);background:var(--surface)}
+.banner b{color:var(--ink);font-weight:500}
 
 /* answer */
 .answer{opacity:0;transform:translateY(6px);transition:opacity .45s,transform .45s var(--ease)}
@@ -288,6 +298,7 @@ table.res td.up{color:var(--ok)}
 
 <div class="mock" aria-label="Điều khiển mockup">
   <span>Mockup</span>
+  <button id="mMode" aria-pressed="true">Sau điều chỉnh</button>
   <button id="mReplay">Phát lại</button>
   <button id="mMulti">Kết quả nhiều bài</button>
   <button id="mSkip">Bỏ qua chờ</button>
@@ -311,32 +322,52 @@ const ICON = {
 };
 
 /* ---------- progress block ---------- */
-const STEPS_MAIN = [
+let MODE = 'after';
+/* step = [label, description, facts, time, group]; rows with the same group run in parallel */
+const STEPS_AFTER = [
   ['Đọc toàn văn', 'Đọc bản HTML trên ar5iv; không cần tải PDF.', 'methodology 8.000 ký tự, setup 6.000, experiments 12.000', '0:04'],
   ['Trích xuất bảng và tài liệu tham khảo', '17 bảng; 27/29 tài liệu tham khảo khớp được với arXiv.', 'Table 3: success rate, 6 domain × 6 model. Hardware: 4 GPU.', '0:01'],
-  ['Ghi chú có cấu trúc', '3 insight và 4 hàng kết quả; code kiểm tra từng con số.', '4/4 hàng khớp nguồn, 0 hàng bị loại', '0:58'],
-  ['Dựng bản đồ liên quan', 'Tìm các bài dùng chung tài liệu tham khảo trên OpenAlex.', '22 bài gốc, 300 ứng viên, giữ 40 bài', '0:05'],
-  ['Viết báo cáo', 'Viết bản tóm tắt và báo cáo đầy đủ.', 'report.md, 5 mục', '2:33']
+  ['Ghi chú có cấu trúc', 'LLM viết insight, đại lượng đo, thiết lập; code kiểm tra từng con số.', '3 insight; 4/4 hàng kết quả khớp nguồn, 0 hàng bị loại', '0:58', 'p'],
+  ['Dựng bản đồ liên quan', 'Tìm các bài dùng chung tài liệu tham khảo trên OpenAlex.', '22 bài gốc, 300 ứng viên, giữ 40 bài', '0:05', 'p'],
+  ['Tìm mã nguồn và BibTeX', 'Không có link repo trong HTML, nên tìm trên GitHub.', '1 BibTeX', '0:03', 'p'],
+  ['Viết báo cáo', 'LLM viết phần phân tích và đoạn mở đầu; code dựng bảng và câu trả lời.', 'report.md 5 mục; câu trả lời khoảng 350 từ', '2:30']
+];
+const STEPS_BEFORE = [
+  ['Read paper', 'read_paper: tải và trích xuất văn bản.', 'source: ar5iv', '0:04'],
+  ['GitHub and BibTeX enrichment', 'web_enrich: chạy lời gọi LLM PMRL, rồi tìm GitHub, rồi tạo BibTeX (nối tiếp).', 'repositoryCount 1, bibtexCount 1', '3:17'],
+  ['PMRL notes', 'write_notes: chỉ hoàn tất dữ liệu.', 'noteFallbackPaperIds: []', '0:00'],
+  ['Citation graph', 'citation_graph: đồ thị và OpenAlex. Không có fact.', '—', '0:05'],
+  ['Final report', 'final_report: summary cards (LLM) + section (LLM) + overview (LLM).', 'reportAvailable: true, summaryCardReasons: {…}', '3:55']
 ];
 const STEPS_CHATCOT = [
   ['Đọc toàn văn', 'Đọc bản HTML trên ar5iv.', '', '0:04'],
   ['Trích xuất bảng và tài liệu tham khảo', 'Bảng kết quả và danh sách tham khảo.', '', '0:01'],
-  ['Ghi chú có cấu trúc', 'Insight, đại lượng đo và thiết lập.', '', '0:51'],
-  ['Dựng bản đồ liên quan', 'Cập nhật bản đồ cho ChatCoT.', '', '0:06'],
-  ['Viết báo cáo', 'Viết bản tóm tắt.', '', '2:10']
+  ['Ghi chú có cấu trúc', 'Insight, đại lượng đo và thiết lập.', '', '0:51', 'p'],
+  ['Dựng bản đồ liên quan', 'Cập nhật bản đồ cho ChatCoT.', '', '0:06', 'p'],
+  ['Tìm mã nguồn và BibTeX', 'Link repo có trong HTML; bỏ qua tìm GitHub.', '', '0:00', 'p'],
+  ['Viết báo cáo', 'Viết phần phân tích và câu trả lời.', '', '2:10']
 ];
 function progressBlock(steps, doneLabel){
   const el = document.createElement('div'); el.className = 'prog';
   el.innerHTML = `<button aria-expanded="false"><span class="pulse"></span><span class="pl">${esc(steps[0][0])}…</span>${ICON.chev}</button>
-    <div class="steps">${steps.map(s => `<div class="step wait"><span class="s-ico"></span><div><b>${esc(s[0])}</b><div class="d">${esc(s[1])}</div>${s[2]?`<div class="facts">${esc(s[2])}</div>`:''}</div><span class="t tnum">—</span></div>`).join('')}</div>`;
+    <div class="steps">${steps.map(s => `<div class="step wait"><span class="s-ico"></span><div><b>${esc(s[0])}</b>${s[4]?'<span class="par">song song</span>':''}<div class="d">${esc(s[1])}</div>${s[2]?`<div class="facts">${esc(s[2])}</div>`:''}</div><span class="t tnum">—</span></div>`).join('')}</div>`;
   const btn = el.querySelector('button');
   btn.onclick = () => { const o = el.classList.toggle('open'); btn.setAttribute('aria-expanded', o); };
+  const secs = t => { const [m, x] = t.split(':').map(Number); return m * 60 + x; };
   el.run = async () => {
     const rows = el.querySelectorAll('.step');
-    for (let i = 0; i < steps.length; i++){
-      rows[i].className = 'step now'; el.querySelector('.pl').textContent = steps[i][0] + '…';
-      await wait(i === 2 || i === 4 ? 1100 : 750);
-      rows[i].className = 'step done'; rows[i].querySelector('.t').textContent = steps[i][3];
+    for (let i = 0; i < steps.length;){
+      const grp = steps[i][4]; let j = i + 1;
+      while (grp && j < steps.length && steps[j][4] === grp) j++;
+      const idx = []; for (let k = i; k < j; k++) idx.push(k);
+      idx.forEach(k => rows[k].className = 'step now');
+      el.querySelector('.pl').textContent = idx.length > 1 ? idx.map(k => steps[k][0]).join(', ') + '…' : steps[i][0] + '…';
+      const longest = Math.max(...idx.map(k => secs(steps[k][3])));
+      await Promise.all(idx.map(async k => {
+        await wait(idx.length > 1 ? 350 + 900 * secs(steps[k][3]) / Math.max(longest, 1) : (secs(steps[k][3]) > 60 ? 1200 : 700));
+        rows[k].className = 'step done'; rows[k].querySelector('.t').textContent = steps[k][3];
+      }));
+      i = j;
     }
     el.querySelector('.pulse').outerHTML = ICON.tick;
     el.querySelector('.pl').textContent = doneLabel;
@@ -345,42 +376,93 @@ function progressBlock(steps, doneLabel){
 }
 
 /* ---------- answers ---------- */
-const ANSWER_MAIN = `
-<div class="paper-ref"><a href="https://arxiv.org/abs/2605.05737">ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning</a>, arXiv 2605.05737, 05/2026</div>
-<p class="lead">ReFlect chuyển việc phát hiện và sửa lỗi ra khỏi prompt, sang một lớp code bao quanh model. Nhờ vậy, model nhỏ có harness vượt model lớn không có harness, mà dùng ít token hơn.</p>
+/* answerSummary as the API would return it (C1 in the plan); the chat answer is rendered from these blocks */
+const SUMMARY = {
+  kind: 'single',
+  paper: {arxivId: '2605.05737', title: 'ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning', published: '05/2026'},
+  lead: 'ReFlect chuyển việc phát hiện và sửa lỗi ra khỏi prompt, sang một lớp code bao quanh model. Nhờ vậy, model nhỏ có harness vượt model lớn không có harness, mà dùng ít token hơn.',
+  blocks: [
+    {type: 'insights', items: [
+      {finding: 'Tự phê bình bằng prompt gần như không bắt được lỗi.', why: '90/100 khối reflection không nêu vấn đề nào, và model chấp nhận đáp án sai ít nhất 76% số lần. Việc phát hiện lỗi cần nằm ngoài model.'},
+      {finding: 'Harness quan trọng hơn kích thước model.', why: 'Claude Haiku 4.5 có ReFlect đạt trung bình 48,0%; Claude Sonnet 4.5 không có harness chỉ đạt 27,1%.'},
+      {finding: 'Lợi ích không đến từ việc tiêu nhiều token hơn.', why: 'Trên tập 70B, Full ReFlect dùng 1.993 token mỗi bài và đạt 48,8%; Reflexion dùng 32.062 token và đạt 27,8%.'}]},
+    {type: 'metrics', items: [
+      {name: 'Success rate', meaning: 'Tỉ lệ bài giải đúng trên 50 bài mỗi domain, tính bằng %.', higherIsBetter: true},
+      {name: 'Acc / 1K tokens', meaning: 'Độ chính xác chia cho số nghìn token đã dùng; đo hiệu quả chi phí.', higherIsBetter: true}]},
+    {type: 'setup', text: '6 domain (SWE-bench, QASPER, Proof, AIME, ALFWorld, FinQA), 50 bài mỗi domain, 6 model ở 3 tầng năng lực. Model 70B chạy trên vLLM, bf16, tensor-parallel 4 GPU.', missing: ['Loại GPU']},
+    {type: 'results', grounded: true, source: ['Table 3', 'Table 17'], rows: [
+      {setting: 'Claude Haiku 4.5, TB 6 domain', metric: 'Success %', method: '48.0', baseline: '25.5 Direct CoT', delta: '+22.5'},
+      {setting: 'Claude Sonnet 4.5, TB 6 domain', metric: 'Success %', method: '56.4', baseline: '27.1 Direct CoT', delta: '+29.3'},
+      {setting: 'Qwen2.5-72B, TB 6 domain', metric: 'Success %', method: '41.8', baseline: '35.2 Direct CoT', delta: '+6.6'},
+      {setting: 'Tập 70B, cùng ngân sách', metric: 'Acc / 1K tok', method: '24.5', baseline: '0.9 Reflexion', delta: '×27'}]},
+    {type: 'caveats', text: 'SWE-bench dùng bộ chấm cấu trúc riêng (Appendix L), nên điểm SWE không so trực tiếp được với bài khác. QASPER gần như không cải thiện (6,3–13,0). Bản harness không phụ thuộc domain chỉ đạt 17,0%, thấp hơn cả Direct CoT.'},
+    {type: 'foundations', items: ['Chain-of-Thought', 'Self-Consistency', 'Tree of Thoughts', 'Reflexion', 'Self-Refine', 'ReAct']}
+  ],
+  actions: {reportId: 'report_reflect_20261011', bibtexCount: 1, graphNodes: 40},
+  duration: '3 phút 33 giây (ước lượng)'
+};
+function renderSummary(S){
+  const B = t => S.blocks.find(x => x.type === t) || {};
+  const ins = B('insights'), met = B('metrics'), set = B('setup'), res = B('results'), cav = B('caveats'), fnd = B('foundations');
+  return `
+<div class="paper-ref"><a href="https://arxiv.org/abs/${S.paper.arxivId}">${esc(S.paper.title)}</a>, arXiv ${S.paper.arxivId}, ${S.paper.published}</div>
+<p class="lead">${esc(S.lead)}</p>
 <h3>Insight</h3>
-<ul>
-  <li><strong>Tự phê bình bằng prompt gần như không bắt được lỗi.</strong> 90/100 khối reflection không nêu vấn đề nào, và model chấp nhận đáp án sai ít nhất 76% số lần. Việc phát hiện lỗi cần nằm ngoài model.</li>
-  <li><strong>Harness quan trọng hơn kích thước model.</strong> Claude Haiku 4.5 có ReFlect đạt trung bình 48,0%; Claude Sonnet 4.5 không có harness chỉ đạt 27,1%.</li>
-  <li><strong>Lợi ích không đến từ việc tiêu nhiều token hơn.</strong> Trên tập 70B, Full ReFlect dùng 1.993 token mỗi bài và đạt 48,8%; Reflexion dùng 32.062 token và đạt 27,8%.</li>
-</ul>
+<ul>${ins.items.map(i => `<li><strong>${esc(i.finding)}</strong> ${esc(i.why)}</li>`).join('')}</ul>
 <h3>Đại lượng đo</h3>
-<dl class="defs">
-  <dt>Success rate</dt><dd>Tỉ lệ bài giải đúng trên 50 bài mỗi domain, tính bằng %. Cao hơn là tốt hơn.</dd>
-  <dt>Acc / 1K tokens</dt><dd>Độ chính xác chia cho số nghìn token đã dùng; đo hiệu quả chi phí. Cao hơn là tốt hơn.</dd>
-</dl>
+<dl class="defs">${met.items.map(m => `<dt>${esc(m.name)}</dt><dd>${esc(m.meaning)} ${m.higherIsBetter ? 'Cao hơn là tốt hơn.' : 'Thấp hơn là tốt hơn.'}</dd>`).join('')}</dl>
 <h3>Thiết lập</h3>
-<p>6 domain (SWE-bench, QASPER, Proof, AIME, ALFWorld, FinQA), 50 bài mỗi domain, 6 model ở 3 tầng năng lực. Model 70B chạy trên vLLM, bf16, tensor-parallel 4 GPU. <span class="absent">Loại GPU: paper không nêu</span></p>
+<p>${esc(set.text)} ${set.missing.map(m => `<span class="absent">${esc(m)}: paper không nêu</span>`).join(' ')}</p>
 <h3>Kết quả chính</h3>
-<table class="res">
-  <thead><tr><th>Thiết lập</th><th>Metric</th><th>ReFlect</th><th>Đối chứng</th><th>Chênh lệch</th></tr></thead>
-  <tbody>
-    <tr><td>Claude Haiku 4.5, TB 6 domain</td><td>Success %</td><td class="m">48.0</td><td>25.5 Direct CoT</td><td class="up">+22.5</td></tr>
-    <tr><td>Claude Sonnet 4.5, TB 6 domain</td><td>Success %</td><td class="m">56.4</td><td>27.1 Direct CoT</td><td class="up">+29.3</td></tr>
-    <tr><td>Qwen2.5-72B, TB 6 domain</td><td>Success %</td><td class="m">41.8</td><td>35.2 Direct CoT</td><td class="up">+6.6</td></tr>
-    <tr><td>Tập 70B, cùng ngân sách</td><td>Acc / 1K tok</td><td class="m">24.5</td><td>0.9 Reflexion</td><td class="up">×27</td></tr>
-  </tbody>
-</table>
-<div class="prov"><span class="ok">${ICON.ok} Mọi số khớp nguồn</span><span>Nguồn: Table 3 và Table 17 trong paper</span></div>
+<table class="res"><thead><tr><th>Thiết lập</th><th>Metric</th><th>ReFlect</th><th>Đối chứng</th><th>Chênh lệch</th></tr></thead><tbody>
+${res.rows.map(r => `<tr><td>${esc(r.setting)}</td><td>${esc(r.metric)}</td><td class="m">${r.method}</td><td>${esc(r.baseline)}</td><td class="up">${r.delta}</td></tr>`).join('')}
+</tbody></table>
+<div class="prov">${res.grounded ? `<span class="ok">${ICON.ok} Mọi số khớp nguồn</span>` : ''}<span>Nguồn: ${res.source.join(' và ')} trong paper</span></div>
 <h3>Cần lưu ý</h3>
-<p>SWE-bench dùng bộ chấm cấu trúc riêng (Appendix L), nên điểm SWE không so trực tiếp được với bài khác. QASPER gần như không cải thiện (6,3–13,0). Bản harness không phụ thuộc domain chỉ đạt 17,0%, thấp hơn cả Direct CoT.</p>
+<p>${esc(cav.text)}</p>
 <h3>Nền tảng</h3>
-<p>Bài dựa trên hai dòng nghiên cứu: suy luận nhiều bước (Chain-of-Thought, Self-Consistency, Tree of Thoughts) và tự sửa lỗi (Reflexion, Self-Refine, ReAct). Bản đồ bên phải cho thấy 40 bài gần nhất.</p>
+<p>Bài dựa trên ${fnd.items.slice(0, -1).join(', ')} và ${fnd.items.slice(-1)}. Bản đồ bên phải cho thấy ${S.actions.graphNodes} bài gần nhất.</p>
 <div class="actions">
   <button class="btn primary" data-act="md">${ICON.dl} Tải report.md</button>
   <button class="btn" data-act="bib">${ICON.copy} Sao chép BibTeX</button>
   <button class="btn" data-act="map">${ICON.map} Bản đồ liên quan</button>
-  <span class="meta-line tnum">3 phút 41 giây</span>
+  <span class="meta-line tnum">${esc(S.duration)}</span>
+</div>`;
+}
+const ANSWER_AFTER = renderSummary(SUMMARY);
+
+/* current behaviour: answer = the whole report.md, streamed */
+const ANSWER_BEFORE = `<div class="banner"><b>Hành vi hiện tại:</b> câu trả lời là toàn bộ report.md (khoảng 1.650 từ), không có bản tóm tắt.</div>
+<div class="fullreport">
+<h2>Research Report: ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning</h2>
+<h3>1. Tóm tắt</h3>
+<p>ReFlect đề xuất một harness tất định quanh LLM để phát hiện và sửa lỗi trên các tác vụ suy luận dài nhiều bước…</p>
+<h3>2. Phân tích bài báo</h3>
+<h4>ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning (arXiv 2605.05737)</h4>
+<ul>
+<li><strong>Vấn đề</strong>: Chain-of-thought, ReAct và tự phê bình đều giả định model tự nhận ra lỗi của mình…</li>
+<li><strong>Phương pháp</strong>: Một harness tất định: định tuyến theo dạng tính toán, kiểm tra bằng CHECK độc lập, kích hoạt REFLECT khi CHECK thất bại…</li>
+<li><strong>Kết quả chính</strong>: Insight, Đại lượng đo, Thiết lập, bảng kết quả, Nhận xét (như bản tóm tắt nhưng dài hơn)…</li>
+<li><strong>Hạn chế</strong>: Harness đầy đủ cần công cụ riêng cho từng domain…</li>
+<li><strong>Mã nguồn</strong>: Không tìm thấy repository được xác minh trong lần chạy này.</li>
+<li><strong>Liên kết nguồn</strong>: ArXiv abstract | PDF</li>
+<li><strong>Trích dẫn</strong>:</li>
+</ul>
+<pre>@article{huang2026reflect,
+  title   = {ReFlect: An Effective Harness System for Complex Long-Horizon LLM Reasoning},
+  journal = {arXiv preprint arXiv:2605.05737},
+  year    = {2026}
+}</pre>
+<h3>3. Bối cảnh nghiên cứu</h3>
+<p>Bài nền tảng: Chain-of-Thought (2022), Self-Consistency (2022), Reflexion (2023), ReAct (2022)… Bài kế thừa: chưa có (0 trích dẫn).</p>
+<h3>4. Kết luận</h3>
+<p>Khuyến nghị thực tiễn cho nhà nghiên cứu và kỹ sư ML…</p>
+<h3>5. Tài liệu tham khảo</h3>
+<p>1. <strong>ReFlect: An Effective Harness System…</strong> (Fan Huang et al., 2026-05-07) — ArXiv | PDF</p>
+</div>
+<div class="actions">
+  <button class="btn" data-act="map">${ICON.map} Bản đồ liên quan</button>
+  <span class="meta-line tnum">7 phút 21 giây</span>
 </div>`;
 
 const ANSWER_QUICK = `<p class="lead" style="font-size:19px">Vì model đánh giá lại chính lập luận của mình bằng cùng một cách nghĩ, nên nó thường không thấy lỗi.</p>
@@ -467,9 +549,12 @@ async function runMain(input){
   $('#q').value = ''; autosize();
   const turn = addTurn();
   await wait(420);
-  const p = progressBlock(STEPS_MAIN, 'Đã phân tích bài trong 3 phút 41 giây'); turn.appendChild(p);
+  const p = MODE === 'after'
+    ? progressBlock(STEPS_AFTER, 'Đã phân tích bài trong 3 phút 33 giây (ước lượng)')
+    : progressBlock(STEPS_BEFORE, 'Đã chạy 5 node trong 7 phút 21 giây');
+  turn.appendChild(p);
   await p.run();
-  addAnswer(turn, ANSWER_MAIN);
+  addAnswer(turn, MODE === 'after' ? ANSWER_AFTER : ANSWER_BEFORE);
   main.classList.add('has-result');
   await wait(300);
   if (innerWidth > 820) openPanel(true);
@@ -479,17 +564,24 @@ async function runMulti(){
   reset(); q.value = ''; autosize(); busy = true; toChat(); $('#conv').textContent = 'Harness cho suy luận LLM dài hạn';
   addUser('harness cho suy luận LLM dài hạn');
   const turn = addTurn();
-  const p = progressBlock([['Tìm bài trong index local','Tìm trên 1 triệu bài cs.* và arXiv API.','40 ứng viên, giữ 5','0:02'],...STEPS_MAIN], 'Đã phân tích 5 bài trong 7 phút 05 giây');
+  const p = progressBlock([['Tìm bài trong index local','Tìm trên 1 triệu bài cs.* và arXiv API.','40 ứng viên, giữ 5','0:02'],...STEPS_AFTER], 'Đã phân tích 5 bài trong 6 phút 40 giây (ước lượng)');
   turn.appendChild(p); await p.run();
   addAnswer(turn, ANSWER_MULTI); main.classList.add('has-result'); await wait(300); openPanel(true); busy = false;
 }
+function quickLine(t, secs){ const q = document.createElement('div'); q.className = 'quick'; q.innerHTML = `${ICON.tick.replace('class="tick"','')}Trả lời từ báo cáo đã có, ${secs} giây <span class="est">(ước lượng)</span>`; t.appendChild(q); }
 async function follow(kind){
   if (busy) return; busy = true;
-  if (kind === 'quick'){ addUser('Vì sao tự phê bình bằng prompt thất bại?'); const t = addTurn(); scrollEnd(); await wait(700); addAnswer(t, ANSWER_QUICK); }
-  if (kind === 'table'){ addUser('Table 17 đo compute thế nào?'); const t = addTurn(); scrollEnd(); await wait(700); addAnswer(t, ANSWER_TABLE); }
+  if (MODE === 'before' && kind !== 'run'){
+    addUser(kind === 'quick' ? 'Vì sao tự phê bình bằng prompt thất bại?' : 'Table 17 đo compute thế nào?'); const t = addTurn(); scrollEnd(); await wait(300);
+    const b = document.createElement('div'); b.className = 'banner'; b.innerHTML = '<b>Hành vi hiện tại:</b> mọi câu hỏi tiếp đều tạo một run đầy đủ mới. Router có thể coi câu hỏi là một tìm kiếm mới.'; t.appendChild(b);
+    const p = progressBlock([['Router','router: LLM chọn intent.','intent: search','0:03'],['Search papers','search_papers: arXiv API.','resultCount: 5','0:09'],['Evaluate search','eval_search: LLM chấm kết quả.','selectedCount: 2','0:12'],...STEPS_BEFORE], 'Run mới xong trong 8 phút 02 giây'); t.appendChild(p); scrollEnd();
+    await p.run(); addAnswer(t, '<p class="lead" style="font-size:19px">Một báo cáo mới về các bài search tìm được, thay vì câu trả lời cho câu hỏi của bạn.</p>'); setTimeout(scrollEnd, 60); busy = false; return;
+  }
+  if (kind === 'quick'){ addUser('Vì sao tự phê bình bằng prompt thất bại?'); const t = addTurn(); scrollEnd(); await wait(700); quickLine(t, 8); addAnswer(t, ANSWER_QUICK); }
+  if (kind === 'table'){ addUser('Table 17 đo compute thế nào?'); const t = addTurn(); scrollEnd(); await wait(700); quickLine(t, 6); addAnswer(t, ANSWER_TABLE); }
   if (kind === 'run'){
     addUser('Phân tích ChatCoT'); const t = addTurn(); scrollEnd(); await wait(300);
-    const p = progressBlock(STEPS_CHATCOT, 'Đã phân tích ChatCoT trong 3 phút 12 giây'); t.appendChild(p); scrollEnd();
+    const p = MODE === 'after' ? progressBlock(STEPS_CHATCOT, 'Đã phân tích ChatCoT trong 3 phút 12 giây (ước lượng)') : progressBlock(STEPS_BEFORE, 'Đã chạy 5 node trong 7 phút 05 giây'); t.appendChild(p); scrollEnd();
     await p.run(); addAnswer(t, ANSWER_CHATCOT);
   }
   setTimeout(scrollEnd, 60); busy = false;
@@ -569,7 +661,7 @@ function draw(){
     const txt = n.o ? 'ReFlect' : `${short(n)}, ${n.y}`, lw = txt.length*5.9, left = n.px > W*.62;
     const bx = left ? n.px - radius(n) - 4 - lw : n.px + radius(n) + 4, box = [bx, n.py - 8, bx + lw, n.py + 6];
     const hits = q => !(box[2] < q[0] || box[0] > q[2] || box[3] < q[1] || box[1] > q[3]);
-    const free = n.o || (LABELS.has(n.id) && bx > 2 && box[2] < W - 2 && !placed.some(hits) && !N.some(m => m !== n && hits([m.px - radius(m), m.py - radius(m), m.px + radius(m), m.py + radius(m)])));
+    const free = n.o || (LABELS.has(n.id) && bx > 2 && box[2] < W - 2 && !placed.some(hits) && !(N[ORIGIN] !== n && hits([N[ORIGIN].px - 40, N[ORIGIN].py - 14, N[ORIGIN].px + 60, N[ORIGIN].py + 14])));
     if (free){ placed.push(box); const t = document.createElementNS(ns,'text'); t.setAttribute('class','lbl'); if (n.o) t.style.cssText = 'fill:#1B1B19;font-weight:600';
       t.setAttribute('x', left ? n.px - radius(n) - 4 : n.px + radius(n) + 4); t.setAttribute('y', n.py + 3.5); if (left) t.setAttribute('text-anchor','end');
       t.textContent = txt; lbls.push(t); }
@@ -616,6 +708,7 @@ function reset(){
   $('#conv').textContent = 'ReFlect: harness cho suy luận dài hạn'; q.value = 'https://arxiv.org/abs/2605.05737'; autosize(); busy = false; skip = false;
 }
 $('#mReplay').onclick = () => reset();
+$('#mMode').onclick = () => { MODE = MODE === 'after' ? 'before' : 'after'; const b = $('#mMode'); b.textContent = MODE === 'after' ? 'Sau điều chỉnh' : 'Hiện tại'; b.setAttribute('aria-pressed', MODE === 'after'); reset(); };
 $('#mMulti').onclick = () => runMulti();
 $('#mSkip').onclick = () => { skip = true; };
 setTab('sim'); autosize();
