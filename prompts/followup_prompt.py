@@ -13,6 +13,7 @@ Rules:
 - Answer the question that was asked. Put the answer first. Use at most 8 short bullets, or at most 150 words.
 - Take every number from the material. Copy it exactly.
 - Do not print internal labels, file names or pipeline text.
+- This call has no <terms> block: use each term exactly as it appears in the material.
 
 {STE_RULES}"""
 
