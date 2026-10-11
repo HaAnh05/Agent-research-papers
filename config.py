@@ -67,6 +67,16 @@ class AppConfig:
         "0", "false", "no", "off", ""
     }
 
+    # Local arXiv metadata index (SQLite FTS5, built by bench/build_local_index.py).
+    # Off by default: search_papers then uses only the arXiv API.  When on and the
+    # index file exists, local hits come first and API hits fill in the rest.
+    LOCAL_INDEX_ENABLED: bool = os.getenv("LOCAL_INDEX_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    LOCAL_INDEX_PATH: Path = Path(os.getenv("LOCAL_INDEX_PATH") or (DATA_DIR / "arxiv" / "index.sqlite"))
+    # Snapshot date of the metadata; newer papers come only from the arXiv API.
+    LOCAL_INDEX_CUTOFF: str = os.getenv("LOCAL_INDEX_CUTOFF", "2026-08-27")
+
     # Workflow & Search Tuning
     MAX_RETRIES: int = 2
     MAX_SEARCH_RESULTS: int = 5

@@ -86,6 +86,8 @@ d:\LABAI\agentresearch\
 │
 ├── tools/                      # Công cụ chuyên sâu (không gọi LLM)
 │   ├── arxiv_search.py         # Thread-safe ArXiv API (Lock + Exponential Backoff)
+│   ├── local_index.py          # Index SQLite FTS5 offline trên metadata arXiv (bm25), build + search_local
+│   ├── pdf_parser.py           # Two-column PDF parser + Section extractor
 │   ├── pdf_parser.py           # Orchestrator đọc bài (HTML trước, PDF dự phòng) + PDF parser 2 cột
 │   ├── html_source.py          # Tải LaTeXML HTML: ar5iv → arxiv.org/html (qua rate limiter)
 │   ├── html_extractor.py       # Parse LaTeXML HTML → sections, tables, references, repo links (không mạng)
@@ -164,10 +166,8 @@ Class `AppConfig` tập trung mọi hằng số cấu hình, đọc từ `.env` 
 | **Concurrency** | `READ_PAPER_MAX_WORKERS=8`, `GITHUB_MAX_CONCURRENCY=4`, `LLM_MAX_CONCURRENCY=6` | Mỗi stage dùng pool riêng; GitHub và LLM không chờ nhau |
 | **Report**   | `REPORT_PARALLEL_SECTIONS=true`                                | `false` = quay lại 1 lệnh gọi LLM cũ cho toàn báo cáo                  |
 | **Search**   | `MAX_RETRIES=2`, `MAX_SEARCH_RESULTS=5`, `TOP_K_PAPERS=3` | Giới hạn vòng lặp refine, số kết quả tìm kiếm, số bài chọn      |
-| **PDF**      | `PDF_MAX_PAGES=8`, `PDF_MAX_CHARS=15000`                    | Giới hạn trang/ký tự khi parse PDF (đường PDF giữ nguyên cap 4000/2000 ký tự mỗi section) |
-| **Pacing HTML/PDF** | `ARXIV_HOST_MIN_INTERVAL_SEC=15`, `AR5IV_MIN_INTERVAL_SEC=3` | Khoảng cách tối thiểu giữa 2 lần *bắt đầu* request tới cùng host. `arxiv.org` (cả `/html` và `/pdf`) theo `Crawl-delay: 15` trong robots.txt; ar5iv không có crawl-delay. Ghi đè bằng biến môi trường cùng tên |
-| **Cap section HTML** | `HTML_EXPERIMENTS_MAX_CHARS=12000`, `HTML_METHODOLOGY_MAX_CHARS=8000`, `HTML_SETUP_MAX_CHARS=6000`, `HTML_ABSTRACT_MAX_CHARS=3000`, `HTML_LIMITATIONS_MAX_CHARS=3000` | Giới hạn ký tự mỗi section lấy từ HTML (env ghi đè được) |
-| **PMRL input** | `PMRL_INPUT_MAX_CHARS=40000` | Trần ký tự text gửi cho lệnh PMRL (thay cho cắt cứng 14000). Tổng cap section HTML là 32000; bảng có nhãn nằm cuối nên bị cắt trước |
+| **Local index** | `LOCAL_INDEX_ENABLED=false`, `LOCAL_INDEX_PATH=data/arxiv/index.sqlite`, `LOCAL_INDEX_CUTOFF=2026-08-27` | Cờ tắt mặc định (env `LOCAL_INDEX_ENABLED=true` để bật). Xem mục 3.5 |
+| **PDF**      | `PDF_MAX_PAGES=8`, `PDF_MAX_CHARS=15000`                    | Giới hạn trang/ký tự khi parse PDF                                      |
 | **Paths**    | `PDF_CACHE_DIR`, `TEXT_CACHE_DIR`, `REPORTS_DIR`          | Thư mục cache và xuất báo cáo                                         |
 
 Constructor `__init__` tự động tạo các thư mục cache nếu chưa tồn tại.
@@ -236,6 +236,7 @@ Kết quả trả về là 1 `CompiledGraph` object có thể gọi `.stream()` 
 - Nhận `search_query` từ state (đã được router hoặc refine_query chuẩn hóa)
 - Trả về danh sách `PaperItem` (title, summary, authors, arxiv_id, pdf_url)
 - Nếu API lỗi → set `status="error"` để CE1 chuyển sang `error_handler`
+- **Local index (tùy chọn)**: khi `config.LOCAL_INDEX_ENABLED` bật và file `LOCAL_INDEX_PATH` tồn tại, node gọi thêm `tools.local_index.search_local()` (chỉ bài `first_version_date <= LOCAL_INDEX_CUTOFF`). Kết quả gộp: bài local trước, rồi bài API chưa có (so khớp `paper_id`). Một phía lỗi thì dùng phía còn lại. Cờ tắt → đường code cũ, không đổi.
 
 ---
 
@@ -405,7 +406,17 @@ Báo cáo fallback chứa: lý do lỗi, query gốc, intent, số lần retry �
 | `_clean_arxiv_query()` | Loại bỏ stopwords tiếng Anh + tiếng Việt, format`all:term1 AND all:term2`             |
 | `STOPWORDS`            | Bao gồm cả`"toi", "muon", "tim", "bai", "bao", "trong"` — hỗ trợ query tiếng Việt   |
 
-#### `tools/pdf_parser.py` — Orchestrator đọc bài + PDF Parser
+#### `tools/local_index.py` — Index tìm kiếm offline
+
+| Thành phần             | Chi tiết                                                                                    |
+| :----------------------- | :------------------------------------------------------------------------------------------- |
+| `build_index()`        | Đọc `metadata.parquet` (HF `secemp9/arxiv-complete`) theo row group, ghi SQLite vào file `.tmp` rồi `rename` (idempotent). Bảng `papers` + bảng FTS5 external-content `papers_fts(title, abstract)`, tokenizer `porter unicode61` |
+| `search_local()`       | Trả về `PaperItem` cùng dạng với `arxiv_search()`; điểm bm25 (title nặng gấp 10 lần abstract) nằm ở `processing_metadata["local_bm25"]`. Query người dùng được tách thành từ có trích dẫn nên không bao giờ lỗi cú pháp FTS5; AND trước, thiếu kết quả thì bổ sung bằng OR |
+| Bộ lọc                 | `date_before` (`<=`, YYYY-MM-DD), `categories` (token đúng, hoặc `cs.*` là tiền tố); id kiểu cũ (`cs/0101001`) bị bỏ qua trừ khi `include_legacy_ids=True` |
+| Kết nối                | Mỗi thread một kết nối chỉ-đọc (`threading.local`)                                           |
+| Build + đo             | `bench/build_local_index.py --parquet ... --out data/arxiv/index.sqlite` (in thời gian build, kích thước, p50/p90). `data/arxiv/` nằm trong `.gitignore` |
+
+#### `tools/pdf_parser.py` — Two-column Parser
 
 - **`sync_extract_pdf_content()`**: Orchestrator: cache check → HTML (ar5iv → arxiv.org/html) → PDF nếu cần → gộp → save cache
 - **`_download_pdf()`**: mỗi request (kể cả redirect) lấy 1 slot từ limiter `arxiv.org`
